@@ -1,0 +1,112 @@
+/* =========================================================================
+   USWDS — @font-face declarations
+   Public Sans (UI / body / sans), Merriweather (headings / serif),
+   Roboto Mono (code / mono), Source Sans Pro (alternate sans).
+   Font files live in ../assets/fonts (relative to this file).
+   ========================================================================= */
+
+/* ---------- Public Sans — primary sans / UI / body ---------- */
+@font-face {
+  font-family: "Public Sans";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("../assets/fonts/PublicSans-Light.otf") format("opentype");
+}
+@font-face {
+  font-family: "Public Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/PublicSans-Regular.otf") format("opentype");
+}
+@font-face {
+  font-family: "Public Sans";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/PublicSans-Italic.otf") format("opentype");
+}
+@font-face {
+  font-family: "Public Sans";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../assets/fonts/PublicSans-Bold.otf") format("opentype");
+}
+@font-face {
+  font-family: "Public Sans";
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("../assets/fonts/PublicSans-ExtraBold.otf") format("opentype");
+}
+
+/* ---------- Merriweather — serif / headings / alt ---------- */
+@font-face {
+  font-family: "Merriweather";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("../assets/fonts/Merriweather-Light.otf") format("opentype");
+}
+@font-face {
+  font-family: "Merriweather";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/Merriweather-Regular.otf") format("opentype");
+}
+@font-face {
+  font-family: "Merriweather";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/Merriweather-Italic.otf") format("opentype");
+}
+@font-face {
+  font-family: "Merriweather";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../assets/fonts/Merriweather-Bold.otf") format("opentype");
+}
+
+/* ---------- Roboto Mono — monospace / code ---------- */
+@font-face {
+  font-family: "Roboto Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/RobotoMono-Regular.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Roboto Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../assets/fonts/RobotoMono-Medium.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Roboto Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../assets/fonts/RobotoMono-Bold.ttf") format("truetype");
+}
+
+/* ---------- Source Sans Pro — alternate sans ---------- */
+@font-face {
+  font-family: "Source Sans Pro";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/SourceSansPro-Regular.otf") format("opentype");
+}
+@font-face {
+  font-family: "Source Sans Pro";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../assets/fonts/SourceSansPro-Bold.otf") format("opentype");
+}

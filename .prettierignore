@@ -1,0 +1,18 @@
+node_modules
+dist
+.output
+databricks-app/server
+databricks-app/public
+databricks-app/build-info.json
+.vinxi
+pnpm-lock.yaml
+package-lock.json
+routeTree.gen.ts
+
+# Vendored agent skills (mattpocock/skills) — keep byte-identical to upstream
+.agents
+.claude/skills
+skills-lock.json
+
+# Source artifacts (bundled HTML exports) — keep as delivered
+docs/sources

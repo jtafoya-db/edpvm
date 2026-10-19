@@ -1,0 +1,278 @@
+# The bootstrap EIR definition (#200): EDP's "Employee Identity Record (EIR)"
+# form, version 1.3, as data. It reproduces what form 1.3 encoded in
+# `config.ts` before #200: the same sections, labels, help text, required
+# answers, field types, layout, declaration, flags and validity period.
+#
+# The app parses this as plain data (YAML 1.2 core schema) and refuses
+# anchors, aliases, merge keys, tags, environment-style `${...}` values and
+# any key it doesn't know (`load.ts`). Screens and rules only ever see the
+# typed definition it becomes.
+#
+# A definition names no version of its own (#224): `definitionVersion` and
+# `form.version` are refused. The server numbers each published version 1,
+# 2, 3…, and EIR drafts keep the number they started on. This file is the
+# built-in definition `bootstrap` (version 0), which no publish can take;
+# answers stored before #224 under its old form version, 1.3, still show
+# with its labels.
+#
+# Dispositions are bootstrap values pending Safeguards (#148): a `blocking`
+# rule refuses a submission (as form 1.3's ID check always has), and no
+# compliance answer blocks one (decision 7). The validator view flags them:
+# `manual-review` for compliance answers, `warning` for MBI dates that don't
+# add up. This file doesn't authorize automatic validity or FTI use.
+validityDays: 365
+reviewSlaBusinessDays: 3
+
+form:
+  title: Enterprise Data Platform - Employee Identity Record (EIR)
+  intro: EDP will use this document and the answers you provide to establish your identity, and to align you and any access requests you submit.
+  trainingRule: "Training is yearly: each date should be within the year before you started this form, and not in the future."
+  sections:
+    - id: user
+      title: User details
+      help: Your identity at the IRS. We filled in what we could from your sign-in.
+      fields:
+        - id: userId
+          label: User ID
+          type: text
+          required: true
+          help: Your IRS user ID (SEID), not your Databricks account ID.
+          maxLength: 12
+          size: short
+        - id: firstName
+          label: First name
+          type: text
+          required: true
+          prefill: first-name
+        - id: lastName
+          label: Last name
+          type: text
+          required: true
+          prefill: last-name
+        - id: workEmail
+          label: Work email
+          type: email
+          required: true
+          prefill: email
+        - id: team
+          label: Team or project
+          type: text
+          required: true
+        - id: subTeam
+          label: Sub-team or sub-project
+          type: text
+          required: false
+        - id: contractingCompany
+          label: Contracting company
+          type: text
+          required: false
+          help: Leave blank if you aren't a contractor.
+      layout:
+        - rows:
+            - [userId]
+            - [firstName, lastName]
+            - [workEmail]
+            - [team, subTeam]
+            - [contractingCompany]
+    - id: manager
+      title: Your manager
+      help: "Your current manager: an IRS full-time employee who can confirm your identity."
+      fields:
+        - id: managerFirstName
+          label: Manager's first name
+          type: text
+          required: true
+        - id: managerLastName
+          label: Manager's last name
+          type: text
+          required: true
+        - id: managerId
+          label: Manager's user ID
+          type: text
+          required: true
+          maxLength: 12
+          size: short
+        - id: managerEmail
+          label: Manager's work email
+          type: email
+          required: true
+      layout:
+        - rows:
+            - [managerFirstName, managerLastName]
+            - [managerId, managerEmail]
+    - id: compliance
+      title: Compliance
+      help: Checked before you can enter a sensitive environment such as preprod or prod. A No doesn't stop you submitting.
+      fields:
+        - id: unauthorizedAccessTrainingDate
+          label: Unauthorized Access training date
+          type: date
+          required: true
+          size: short
+        - id: privacyTrainingDate
+          label: Privacy training date
+          type: date
+          required: true
+          size: short
+        - id: cyberAwarenessTrainingDate
+          label: Cyber Awareness training date
+          type: date
+          required: true
+          size: short
+        - id: irmAcknowledged
+          label: Have you read, acknowledged and signed the IRM 10.5.8 manual transmittal?
+          type: yes-no
+          required: true
+        - id: ndaSigned
+          label: Have you agreed to and signed the IRS non-disclosure agreement (NDA)?
+          type: yes-no
+          required: true
+        - id: mbiInitialDate
+          label: MBI or staff-like access start date
+          type: date
+          required: true
+          size: short
+        - id: mbiExpirationDate
+          label: MBI or staff-like access expiration date
+          type: date
+          required: true
+          size: short
+        - id: mbiPreliminary
+          label: Does your MBI or staff-like access show a preliminary or incomplete background investigation?
+          type: yes-no
+          required: true
+      layout:
+        - legend: Training certificates
+          hint: "Training is yearly: each date should be within the year before you started this form, and not in the future."
+          rows:
+            - [unauthorizedAccessTrainingDate, privacyTrainingDate, cyberAwarenessTrainingDate]
+        - rows:
+            - [irmAcknowledged]
+            - [ndaSigned]
+        - legend: MBI or staff-like access
+          hint: From your MBI or staff-like access record.
+          rows:
+            - [mbiInitialDate, mbiExpirationDate]
+            - [mbiPreliminary]
+  declaration:
+    text: I hereby declare that the information submitted is accurate and complete to the best of my knowledge. I understand that any false statement, omission, or misrepresentation may result in disciplinary action and could lead to the suspension or revocation of any access, entitlements, or permissions granted based on this submission.
+    attestation:
+      id: declarationAgreed
+      label: I agree
+
+# How far back a yearly certificate may be dated: no earlier than `max` years
+# before the form was started, and no later than the day it's submitted
+# (`min: 0`).
+timelines:
+  - id: training-certificate
+    unit: years
+    min: 0
+    max: 1
+
+# Each rule checks one field. `irs-id` refuses a submission; the others flag
+# it for the validator.
+rules:
+  - id: user-id-format
+    field: userId
+    operator: irs-id
+    disposition: blocking
+    reasonCode: EIR-USER-ID-FORMAT
+  - id: manager-id-format
+    field: managerId
+    operator: irs-id
+    disposition: blocking
+    reasonCode: EIR-MANAGER-ID-FORMAT
+  - id: unauthorized-access-training-current
+    field: unauthorizedAccessTrainingDate
+    operator: within-timeline
+    timeline: training-certificate
+    disposition: manual-review
+    reasonCode: EIR-UA-TRAINING-NOT-CURRENT
+  - id: privacy-training-current
+    field: privacyTrainingDate
+    operator: within-timeline
+    timeline: training-certificate
+    disposition: manual-review
+    reasonCode: EIR-PRIVACY-TRAINING-NOT-CURRENT
+  - id: cyber-awareness-training-current
+    field: cyberAwarenessTrainingDate
+    operator: within-timeline
+    timeline: training-certificate
+    disposition: manual-review
+    reasonCode: EIR-CYBER-TRAINING-NOT-CURRENT
+  - id: irm-acknowledged
+    field: irmAcknowledged
+    operator: equals
+    value: "no"
+    message: IRM 10.5.8 not acknowledged
+    disposition: manual-review
+    reasonCode: EIR-IRM-NOT-ACKNOWLEDGED
+  - id: nda-signed
+    field: ndaSigned
+    operator: equals
+    value: "no"
+    message: IRS NDA not signed
+    disposition: manual-review
+    reasonCode: EIR-NDA-NOT-SIGNED
+  - id: mbi-start-not-future
+    field: mbiInitialDate
+    operator: not-future
+    disposition: warning
+    reasonCode: EIR-MBI-START-IN-FUTURE
+  - id: mbi-expiration-after-start
+    field: mbiExpirationDate
+    operator: on-or-after
+    otherField: mbiInitialDate
+    disposition: warning
+    reasonCode: EIR-MBI-EXPIRES-BEFORE-START
+  - id: mbi-investigation-complete
+    field: mbiPreliminary
+    operator: equals
+    value: "yes"
+    message: Preliminary or incomplete background investigation
+    disposition: manual-review
+    reasonCode: EIR-MBI-PRELIMINARY
+
+# Synthetic answers (no real person) and the outcome each must produce. A
+# scenario may start from an earlier one's answers (`extends`) and change some.
+scenarios:
+  - id: pass
+    expect: pass
+    formStartedAt: "2026-09-01"
+    submittedAt: "2026-09-02"
+    answers:
+      userId: TST0001
+      firstName: Test
+      lastName: Person
+      workEmail: test.person@example.gov
+      team: Synthetic Team
+      subTeam: ""
+      contractingCompany: ""
+      managerFirstName: Sample
+      managerLastName: Manager
+      managerId: TST0002
+      managerEmail: sample.manager@example.gov
+      unauthorizedAccessTrainingDate: "2026-03-01"
+      privacyTrainingDate: "2026-03-01"
+      cyberAwarenessTrainingDate: "2026-03-01"
+      irmAcknowledged: "yes"
+      ndaSigned: "yes"
+      mbiInitialDate: "2025-01-15"
+      mbiExpirationDate: "2030-01-15"
+      mbiPreliminary: "no"
+      declarationAgreed: "yes"
+  - id: blocking-user-id
+    expect: blocking
+    extends: pass
+    answers:
+      userId: not an id!
+  - id: warning-mbi-dates
+    expect: warning
+    extends: pass
+    answers:
+      mbiExpirationDate: "2024-01-15"
+  - id: manual-review-nda
+    expect: manual-review
+    extends: pass
+    answers:
+      ndaSigned: "no"

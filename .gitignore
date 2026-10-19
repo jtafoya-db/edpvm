@@ -1,0 +1,54 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+__pycache__/
+dist
+dist-ssr
+.output
+.vinxi
+.tanstack/**
+.nitro
+*.local
+
+# Vitest reporter output (generated on each run)
+.vitest/
+
+# Wrangler / Cloudflare
+.wrangler/
+.dev.vars
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Lovable sandbox workspace directory
+.workspace/
+
+# Lovable editor metadata (not needed for the real build)
+.lovable/
+
+# npm is the canonical package manager; prevent accidental Bun lockfiles.
+bun.lock
+bun.lockb
+
+# Prebuilt server staged by scripts/deploy.sh (synced by databricks.yml).
+/databricks-app/server/
+/databricks-app/public/
+/databricks-app/build-info.json
+
+# Vitest browser-mode failure screenshots
+.vitest/

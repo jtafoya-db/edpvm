@@ -1,0 +1,55 @@
+# Databricks App runtime config.
+#
+# This directory (databricks-app/) is the app's source: databricks.yml sets
+# `source_code_path: ./databricks-app`. Databricks Apps run `npm install` and
+# then `npm run build` when the app source root has a package.json, and
+# `pip install` when it has a requirements.txt. This directory has neither,
+# on purpose, so the app compute installs nothing and never contacts the npm
+# proxy. A registry outage or a missing tarball can't break a deploy.
+#
+# The app is built on the deployer's machine instead. scripts/deploy.sh runs
+# `npm run build:databricks` with the target's VITE_DATA_BACKEND, then stages
+# the self-contained Nitro node-server bundle in here (server/, public/,
+# build-info.json; all gitignored) before `databricks bundle deploy`. The
+# bundle has no node_modules: it imports only Node built-ins.
+#
+# When deployed from the bundle, databricks.yml's app `config` supplies the
+# command and env; keep the command here identical (a test checks it). The env
+# below is the default production config.
+command:
+  - node
+  - serve.mjs
+
+env:
+  - name: NODE_ENV
+    value: production
+  - name: EIR_VOLUME_CATALOG
+    value: edp_vending
+  - name: EIR_VOLUME_SCHEMA
+    value: documents
+  - name: EIR_VOLUME_NAME
+    value: eir
+  - name: EIR_MAX_UPLOAD_BYTES
+    value: "10485760"
+  - name: EDP_SLA_EDP_ROI_REVIEW_BUSINESS_DAYS
+    value: "5"
+  - name: EDP_SLA_CCB_BUSINESS_DAYS
+    value: "5"
+  - name: EDP_SLA_EIR_VALIDATION_BUSINESS_DAYS
+    value: "3"
+  - name: EDP_SLA_ACCESS_REQUEST_DECISION_BUSINESS_DAYS
+    value: "3"
+  - name: EDP_SLA_DUE_SOON_BUSINESS_DAYS
+    value: "1"
+  - name: EDP_SLA_HOLIDAYS
+    value: "[]"
+  - name: EDP_EIR_VALIDITY_DAYS
+    value: "365"
+  - name: EDP_ACCESS_REQUEST_SLA_PROVISIONAL
+    value: "true"
+  - name: EDP_EIR_SUPPORT_EMAIL
+    value: none
+# VITE_DATA_BACKEND selects the data backend. It is baked into the bundle at
+# BUILD time (import.meta.env). serve.mjs compares the runtime value with the
+# value the build recorded in build-info.json, and refuses to start on a
+# mismatch. Unset means "memory". See docs/databricks-app.md.

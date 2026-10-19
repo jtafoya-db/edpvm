@@ -1,0 +1,33 @@
+{
+  "kind": "challenge_response",
+  "sectionId": "business-case",
+  "suggestions": [
+    {
+      "suggestionId": "bound-first-mvp",
+      "targetFieldId": "useCase",
+      "operation": "append",
+      "proposedValue": "For the MVP, use Preparer e-file submissions (curated) to enable weekly preparer risk scoring; document the current scoring baseline, first user group, and how the change contributes to the selected tax-gap lever.",
+      "rationale": "The draft names a weekly workflow and dataset but not the baseline, first users, or causal measure reviewers need to assess the selected mission outcome.",
+      "citations": [
+        { "fieldId": "useCase", "quote": "Enable weekly preparer risk scoring and retire three contractor-run extracts." },
+        { "fieldId": "dataName", "quote": "Preparer e-file submissions (curated)" },
+        { "fieldId": "outcome", "quote": "taxgap" }
+      ],
+      "requiresHumanConfirmation": true
+    },
+    {
+      "suggestionId": "explain-benefit-basis",
+      "targetFieldId": "useCase",
+      "operation": "append",
+      "proposedValue": "Explain the baseline and calculation supporting the submitted $750,000 annual benefit and 1,200 hours saved, separating tax-gap impact from contractor-extract savings to avoid double counting.",
+      "rationale": "The submitted values identify scale but do not state their baseline, calculation method, or allocation across the two selected levers.",
+      "citations": [
+        { "fieldId": "annualBenefit", "quote": "750000" },
+        { "fieldId": "hoursSaved", "quote": "1200" },
+        { "fieldId": "levers", "quote": "taxgap" },
+        { "fieldId": "levers", "quote": "cost" }
+      ],
+      "requiresHumanConfirmation": true
+    }
+  ]
+}

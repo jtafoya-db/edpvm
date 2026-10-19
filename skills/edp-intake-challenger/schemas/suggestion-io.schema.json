@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.irs.gov/schemas/edp-intake-challenger/suggestion-io.schema.json",
+  "title": "EDP intake challenger I/O",
+  "oneOf": [
+    { "$ref": "#/$defs/challengeRequest" },
+    { "$ref": "#/$defs/challengeResponse" }
+  ],
+  "$defs": {
+    "sectionId": {
+      "enum": ["source-profile", "architecture", "delivery-support", "business-case", "sizing", "review-submit"]
+    },
+    "fieldId": {
+      "enum": ["dataName", "sourceSystem", "domain", "sensitivity", "pattern", "access", "engModel", "useCase", "outcome", "levers", "annualBenefit", "hoursSaved", "priority", "sizeGb", "freq", "complexity", "users"]
+    },
+    "fieldValue": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "number" },
+        { "type": "array", "items": { "type": "string" }, "minItems": 1, "uniqueItems": true }
+      ]
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fieldId", "value"],
+      "properties": {
+        "fieldId": { "$ref": "#/$defs/fieldId" },
+        "value": { "$ref": "#/$defs/fieldValue" }
+      }
+    },
+    "challengeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "sectionId", "sectionFields", "contextFields"],
+      "properties": {
+        "kind": { "const": "challenge_request" },
+        "sectionId": { "$ref": "#/$defs/sectionId" },
+        "sectionFields": { "type": "array", "items": { "$ref": "#/$defs/field" }, "minItems": 1 },
+        "contextFields": { "type": "array", "items": { "$ref": "#/$defs/field" } }
+      }
+    },
+    "citation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fieldId", "quote"],
+      "properties": {
+        "fieldId": { "$ref": "#/$defs/fieldId" },
+        "quote": { "type": "string", "minLength": 1, "description": "Exact text or lexical representation copied from a submitted field value." }
+      }
+    },
+    "suggestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["suggestionId", "targetFieldId", "operation", "proposedValue", "rationale", "citations", "requiresHumanConfirmation"],
+      "properties": {
+        "suggestionId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+        "targetFieldId": { "$ref": "#/$defs/fieldId" },
+        "operation": { "enum": ["replace", "append"] },
+        "proposedValue": { "$ref": "#/$defs/fieldValue" },
+        "rationale": { "type": "string", "minLength": 1 },
+        "citations": { "type": "array", "items": { "$ref": "#/$defs/citation" }, "minItems": 1 },
+        "requiresHumanConfirmation": { "const": true }
+      }
+    },
+    "challengeResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "sectionId", "suggestions"],
+      "properties": {
+        "kind": { "const": "challenge_response" },
+        "sectionId": { "$ref": "#/$defs/sectionId" },
+        "suggestions": { "type": "array", "items": { "$ref": "#/$defs/suggestion" }, "maxItems": 8 }
+      }
+    }
+  }
+}

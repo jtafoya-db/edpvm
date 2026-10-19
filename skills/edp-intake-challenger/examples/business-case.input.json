@@ -1,0 +1,16 @@
+{
+  "kind": "challenge_request",
+  "sectionId": "business-case",
+  "sectionFields": [
+    { "fieldId": "useCase", "value": "Enable weekly preparer risk scoring and retire three contractor-run extracts." },
+    { "fieldId": "outcome", "value": "taxgap" },
+    { "fieldId": "levers", "value": ["taxgap", "cost"] },
+    { "fieldId": "annualBenefit", "value": 750000 },
+    { "fieldId": "hoursSaved", "value": 1200 },
+    { "fieldId": "priority", "value": "Mission-critical" }
+  ],
+  "contextFields": [
+    { "fieldId": "dataName", "value": "Preparer e-file submissions (curated)" },
+    { "fieldId": "sensitivity", "value": "SBU (FTI)" }
+  ]
+}

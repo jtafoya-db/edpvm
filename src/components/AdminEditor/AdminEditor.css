@@ -1,0 +1,21 @@
+.admin-editor__step-indicator {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.admin-editor__step-indicator > * {
+  min-width: max-content;
+}
+
+@media (max-width: 30rem) {
+  .admin-editor button {
+    min-height: 44px;
+  }
+
+  .admin-editor input:not([type="checkbox"]),
+  .admin-editor textarea,
+  .admin-editor select,
+  .admin-editor label:has(> input[type="checkbox"]) {
+    min-height: 44px;
+  }
+}

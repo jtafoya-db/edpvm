@@ -1,0 +1,16 @@
+# Python dev dependencies for the Unity Catalog tenant provisioning notebook + tests.
+#
+# This is an ISOLATED Python toolchain for notebooks/provisioning/ only. It is
+# intentionally separate from the repo's Node/Vite/Vitest app build and does not
+# affect it. Create a venv scoped to this folder, e.g.:
+#
+#   python3.12 -m venv .venv-provision
+#   . .venv-provision/bin/activate
+#   pip install -r notebooks/provisioning/requirements-dev.txt
+#   python -m pytest notebooks/provisioning/tests
+#
+# The tests mock the SDK clients, so no Databricks credentials or network calls
+# are needed; databricks-sdk is present only for real type/enum references.
+
+databricks-sdk>=0.30
+pytest>=7.0

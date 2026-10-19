@@ -1,0 +1,684 @@
+# Databricks Asset Bundle (DAB) for deploying the EDP Vending Machine as a
+# Databricks App.
+#
+# This describes the app resource for `databricks bundle deploy`. The runtime
+# command is set in the app-wide config and mirrored in databricks-app/app.yaml.
+#
+# TURNKEY DEPLOY (#138): a deployer picks a Unity Catalog catalog and a SQL
+# warehouse and runs scripts/deploy-turnkey.sh, the one operator entry point. It
+# runs the preflight and the validate + plan gates, then scripts/deploy.sh
+# (build locally, stage the build into databricks-app/, the app's source, and
+# `bundle deploy` + `bundle run`), then provision_store, the EIR schema/volume
+# and the grants. One `--var catalog=<x>` configures the
+# store tables, the EIR tables and the EIR volume together. The wrapper's
+# resolved-config gate aborts if the rendered store/EIR catalogs ever diverge.
+# `catalog` and `sql_warehouse_id` are REQUIRED variables (no default), so a
+# bare `bundle` command fails loudly naming them instead of deploying a broken
+# or placeholder config. scripts/deploy-preflight.ts names any empty/invalid
+# input before the first workspace call.
+#
+# What a DAB genuinely cannot create stays a documented human pre-step: the
+# catalog itself, the SQL warehouse, and the SCIM account groups (see
+# docs/production-checklist.md). The EIR volume + its parent schema are
+# bundle-managed on the prod target below (prevent_destroy); the store schemas
+# (including the EIR tables) stay in the provision_store job and every grant is
+# applied by the wrapper (reasons documented at their definitions). The prod host
+# comes from the CLI profile. See docs/databricks-app.md.
+bundle:
+  name: edp-vending-machine
+
+# scripts/deploy.sh stages the build into databricks-app/. It is gitignored,
+# and the bundle skips gitignored files unless they are included here.
+sync:
+  include:
+    - databricks-app/server/**
+    - databricks-app/public/**
+    - databricks-app/build-info.json
+
+variables:
+  app_name:
+    description: Unique Databricks App name
+    default: edp-vending-machine
+  catalog:
+    description: >-
+      REQUIRED. The single Unity Catalog catalog this deploy targets. It feeds
+      BOTH the store schemas/tables (store_catalog / EDP_STORE_CATALOG) AND the
+      EIR volume (eir_volume_catalog / EIR_VOLUME_CATALOG), so one input
+      configures everything. The wrapper's resolved-config gate aborts if they
+      ever diverge. The catalog must already exist (a DAB cannot create it); see
+      docs/production-checklist.md.
+  store_catalog:
+    description: >-
+      The catalog that contains the store schemas. Defaults to `catalog`; set
+      this only to override the store catalog independently (the preflight
+      flags a value that diverges from `catalog`).
+    default: ${var.catalog}
+  eir_volume_catalog:
+    description: >-
+      The catalog that contains the signed EIR documents volume. Defaults to
+      `catalog`; set this only to override independently (the preflight flags a
+      value that diverges from `catalog`).
+    default: ${var.catalog}
+  eir_volume_schema:
+    description: Unity Catalog schema containing the EIR volume
+    default: documents
+  eir_volume_name:
+    description: Unity Catalog volume containing signed EIR documents
+    default: eir
+  safeguards_validator_group_id:
+    description: >-
+      Reserved for a later role split; the app ignores it. In the MVP the EDP
+      admin group (edp_admin_group_id) holds the Safeguards validator role
+      (#226, ADR-0008). The preflight warns if it's supplied.
+    default: ""
+  prod_root_path:
+    description: >-
+      REQUIRED for -t prod. Absolute workspace folder that holds the one
+      production copy of the bundle (app source + state). It must be a folder
+      owned by the EDP deployment group or the deploying service principal, with
+      CAN_MANAGE limited to that group; NEVER under /Workspace/Shared, which is
+      writable by all workspace users (anyone could change the deployed app
+      source). The default is deliberately not a valid path, so a prod bundle
+      command without it fails ("doesn't start with '/'"); the preflight rejects
+      it, any /Workspace/Shared path, and anything not absolute under
+      /Workspace. Setup steps: docs/databricks-app.md -> "Production bundle
+      root". Unused by preview/dev.
+    default: configure-prod-root-path
+  eir_allow_self_validation:
+    description: >-
+      PR previews only (human decision 2026-10-07): "true" lets a safeguards
+      validator decide their own EIR, for testing. The server also requires a
+      PR preview's store prefix (edp_vm_pr<N>_). Production must never set it.
+    default: "false"
+  eir_max_upload_bytes:
+    description: Maximum accepted signed EIR PDF size in bytes
+    default: "10485760"
+  sla_edp_roi_review_business_days:
+    description: Business days for EDP business & ROI review
+    default: "5"
+  sla_ccb_business_days:
+    description: Business days for CCB review
+    default: "5"
+  sla_eir_validation_business_days:
+    description: Business days for safeguards validator EIR review
+    default: "3"
+  sla_access_request_decision_business_days:
+    description: Business days for dataset-owner access-request decisions
+    default: "3"
+  sla_due_soon_business_days:
+    description: Business days remaining at which SLA is due soon
+    default: "1"
+  sla_holidays:
+    description: Optional comma-separated ISO dates excluded by the SLA business-day clock (`[]` = none)
+    default: "[]"
+  eir_validity_days:
+    description: Calendar days an EIR remains valid after validation
+    default: "365"
+  access_request_sla_provisional:
+    description: Whether the access-request SLA is still labelled provisional
+    default: "true"
+  eir_support_email:
+    description: >-
+      Optional support mailbox shown beside the EIR privacy notice. "none"
+      renders honest plain text with no link; pass a deliverable address at deploy time.
+    default: none
+  business_office_group_id:
+    description: >-
+      Reserved for a later role split; the app ignores it. In the MVP the EDP
+      admin group (edp_admin_group_id) holds the EDP business office role
+      (#226, ADR-0008). The preflight warns if it's supplied.
+    default: ""
+  ccb_group_id:
+    description: >-
+      Reserved for a later role split; the app ignores it. In the MVP the EDP
+      admin group (edp_admin_group_id) holds the CCB role (#226, ADR-0008).
+      The preflight warns if it's supplied.
+    default: ""
+  store_schema_prefix:
+    description: >-
+      Prefix for every store schema ('' in production). A preview sets its own
+      (e.g. edp_vm_pr<N>_) so it keeps its own copy of each schema in a shared
+      catalog. The EDP_STORE_SCHEMA_PREFIX runtime env entry is emitted only
+      where this is non-empty (the preview target) — an empty value is omitted
+      so the Apps API never sees a value-less env entry (#138).
+    default: ""
+  data_backend:
+    description: >-
+      VITE_DATA_BACKEND for the app build: memory (default) or delta. Delta
+      makes the browser use the server's command and read API (#76).
+    default: memory
+  sql_warehouse_id:
+    description: >-
+      REQUIRED. SQL warehouse for the store provisioning job, and the app's
+      sql-warehouse resource (CAN_USE for its service principal) for the Delta
+      API. A 16-hex-char id; the warehouse must already exist (a DAB cannot
+      create it). No default: a bare `bundle` command fails naming this var
+      instead of deploying the old 0000000000000000 placeholder, which the API
+      rejects with "0 is not a valid endpoint id".
+  pilot_config_json:
+    description: >-
+      The pilot initiative, tenant, datasets and owners to load into the Delta
+      store (EDP_PILOT_CONFIG_JSON), as one JSON string; shape and example in
+      docs/delta-backend.md. "none" (the default; Apps refuses an empty env
+      value) loads nothing in production and the sample datasets on a
+      preview. Pass with --var at deploy.
+    default: none
+  seed_dataset_owner_ids:
+    description: >-
+      Preview only. Comma-separated SCIM ids that own the in-memory seed
+      dataset (EDP_SEED_DATASET_OWNER_IDS), usually the UAT reviewer. Pass with
+      --var at deploy; never committed.
+    default: ""
+  edp_admin_group_id:
+    description: >-
+      Stable SCIM id of the EDP admin group (EDP_ADMIN_GROUP_ID). In the MVP
+      its members hold every staff role: EDP staff, Safeguards validator, EDP
+      business office and CCB (#226, ADR-0008). Emitted on preview and prod;
+      prod requires a real id via --var.
+    default: ""
+  membership_catalog:
+    description: >-
+      Existing Unity Catalog catalog for the membership snapshot. Defaults to
+      `catalog`, like the store and EIR catalogs.
+    default: ${var.catalog}
+  membership_schema:
+    description: Schema owned by the snapshot job identity
+    default: membership
+  membership_allowlist_json:
+    description: JSON allowlist including managed_by for every group
+    default: "[]"
+  membership_schedule:
+    description: Quartz cadence for the snapshot job (default every 15 minutes)
+    default: 0 0/15 * * * ?
+  membership_monitor_schedule:
+    description: >-
+      Quartz cadence for the freshness monitor. Must stay on the SAME period as
+      membership_schedule but OFFSET within it (default fires at :07/:22/:37/:52,
+      seven minutes after the snapshot) so a just-completed run is already
+      recorded before the monitor checks and the two-cadence boundary cannot
+      false-fire.
+    default: 0 7/15 * * * ?
+  membership_monitor_since:
+    description: >-
+      ISO-8601 UTC baseline (the snapshot schedule's go-live) the freshness
+      monitor counts missed cadences from when no run has completed yet. Set it
+      when unpausing the schedule. Empty means the monitor fails closed and
+      alerts on a snapshot_runs table with no completed run.
+    default: ""
+  membership_cadence_seconds:
+    description: >-
+      membership_schedule expressed in seconds, used by the freshness monitor to
+      count missed runs. Keep it in sync with membership_schedule.
+    default: 900
+  membership_max_removals:
+    description: Per-group mass-removal guard
+    default: 10
+  membership_job_sp:
+    description: Production job service-principal application ID (not a secret)
+  membership_require_service_principal:
+    description: Refuse startup unless current principal is a service principal
+    default: false
+  alert_emails:
+    description: Addresses notified when the membership snapshot job fails
+    type: complex
+    default: []
+
+resources:
+  apps:
+    edp_vending_machine:
+      name: ${var.app_name}
+      description: >-
+        EDP Vending Machine — IRS Data Access Broker. Self-serve data access,
+        governed catalog and request tracking, served as a Databricks App with
+        a durable Delta request store (memory remains the default backend).
+      # The app source: the prebuilt server only, with no package.json, so the
+      # platform runs no npm install or build (see databricks-app/app.yaml).
+      source_code_path: ./databricks-app
+      # App-wide runtime config. It mirrors app.yaml. The preview and prod
+      # targets add to it with their own blocks below (the bundle appends
+      # lists), including the EDP admin group id, which differs per workspace.
+      # The Delta API (#76) runs statements as this app's service principal
+      # on this warehouse; Databricks injects its OAuth client credentials.
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.sql_warehouse_id}
+            permission: CAN_USE
+      config:
+        command:
+          - node
+          - serve.mjs
+        env:
+          - name: NODE_ENV
+            value: production
+          - name: EIR_VOLUME_CATALOG
+            value: ${var.eir_volume_catalog}
+          - name: EIR_VOLUME_SCHEMA
+            value: ${var.eir_volume_schema}
+          - name: EIR_VOLUME_NAME
+            value: ${var.eir_volume_name}
+          - name: EIR_MAX_UPLOAD_BYTES
+            value: ${var.eir_max_upload_bytes}
+          - name: EDP_SLA_EDP_ROI_REVIEW_BUSINESS_DAYS
+            value: ${var.sla_edp_roi_review_business_days}
+          - name: EDP_SLA_CCB_BUSINESS_DAYS
+            value: ${var.sla_ccb_business_days}
+          - name: EDP_SLA_EIR_VALIDATION_BUSINESS_DAYS
+            value: ${var.sla_eir_validation_business_days}
+          - name: EDP_SLA_ACCESS_REQUEST_DECISION_BUSINESS_DAYS
+            value: ${var.sla_access_request_decision_business_days}
+          - name: EDP_SLA_DUE_SOON_BUSINESS_DAYS
+            value: ${var.sla_due_soon_business_days}
+          - name: EDP_SLA_HOLIDAYS
+            value: ${var.sla_holidays}
+          - name: EDP_EIR_VALIDITY_DAYS
+            value: ${var.eir_validity_days}
+          - name: EDP_ACCESS_REQUEST_SLA_PROVISIONAL
+            value: ${var.access_request_sla_provisional}
+          - name: EDP_EIR_SUPPORT_EMAIL
+            value: ${var.eir_support_email}
+          # "false" except on the preview target (src/server/eir-test-mode.ts).
+          - name: EDP_EIR_ALLOW_SELF_VALIDATION
+            value: ${var.eir_allow_self_validation}
+          # Baked in at build time by scripts/deploy.sh. serve.mjs checks it
+          # against the build and refuses to start on a mismatch.
+          - name: VITE_DATA_BACKEND
+            value: ${var.data_backend}
+          # Server-only: where the store lives, and which warehouse runs it.
+          - name: EDP_STORE_CATALOG
+            value: ${var.store_catalog}
+          - name: EDP_MEMBERSHIP_CATALOG
+            value: ${var.membership_catalog}
+          - name: EDP_MEMBERSHIP_SCHEMA
+            value: ${var.membership_schema}
+          # These env vars are deliberately NOT emitted app-wide:
+          # EDP_STORE_SCHEMA_PREFIX and EDP_ADMIN_GROUP_ID have no usable
+          # app-wide value, and the server treats an absent var the same as
+          # empty (src/server/delta/config.ts, session.ts).
+          # DAB renders `value: ${var.x}` with an empty var as a VALUE-LESS entry
+          # (empty is dropped by omitempty), which the Apps API rejects with
+          # "Must specify environment variable source using either 'value' or
+          # 'valueFrom'". So they're emitted only where they're non-empty — the
+          # preview and prod targets below, where they're always non-empty
+          # (prod sets a placeholder the preflight + resolved-config gate refuse).
+          # The per-role group vars are reserved for a later split (#226) and
+          # render no env entry at all.
+          - name: DATABRICKS_WAREHOUSE_ID
+            value_from: sql-warehouse
+          # Server-only: the pilot datasets and owners (src/server/pilot-config.ts).
+          # Never empty: it defaults to "none".
+          - name: EDP_PILOT_CONFIG_JSON
+            value: ${var.pilot_config_json}
+  jobs:
+    provision_store:
+      name: ${var.app_name}-provision-store
+      description: Idempotently provisions the EDP Delta store; run explicitly during UAT setup.
+      # One task per DDL file. An area ticket adds its own
+      # resources/store-<area>.sql as a task here. Areas represented in
+      # audit.actions list their task in create_audit_view's depends_on;
+      # privacy uses its scoped privacy/audit read instead. The store schemas stay here (not a
+      # resources.schemas resource): a schema is created alongside its tables,
+      # which have no DAB resource, and in dev/preview mode a bundle-managed
+      # schema name would be rewritten (see the prod target). Only the EIR
+      # volume + its parent schema are bundle-managed (prod target below).
+      tasks:
+        - task_key: create_store_tables
+          sql_task:
+            warehouse_id: ${var.sql_warehouse_id}
+            file:
+              path: resources/store-schema.sql
+            parameters:
+              catalog_name: ${var.store_catalog}
+              schema_prefix: ${var.store_schema_prefix}
+        - task_key: create_admin_tables
+          sql_task:
+            warehouse_id: ${var.sql_warehouse_id}
+            file:
+              path: resources/store-admin.sql
+            parameters:
+              catalog_name: ${var.store_catalog}
+              schema_prefix: ${var.store_schema_prefix}
+        - task_key: create_eir_tables
+          # Its Record ID counter lives in admin.display_counters.
+          depends_on:
+            - task_key: create_admin_tables
+          sql_task:
+            warehouse_id: ${var.sql_warehouse_id}
+            file:
+              path: resources/store-eir.sql
+            parameters:
+              catalog_name: ${var.store_catalog}
+              schema_prefix: ${var.store_schema_prefix}
+        # Published EIR definitions (#201), in the eir schema. No counter.
+        - task_key: create_eir_definitions_tables
+          sql_task:
+            warehouse_id: ${var.sql_warehouse_id}
+            file:
+              path: resources/store-eir-definitions.sql
+            parameters:
+              catalog_name: ${var.store_catalog}
+              schema_prefix: ${var.store_schema_prefix}
+        - task_key: create_privacy_tables
+          sql_task:
+            warehouse_id: ${var.sql_warehouse_id}
+            file:
+              path: resources/store-privacy.sql
+            parameters:
+              catalog_name: ${var.store_catalog}
+              schema_prefix: ${var.store_schema_prefix}
+        - task_key: create_onboarding_tables
+          # Its ONB- display counter lives in admin.display_counters.
+          depends_on:
+            - task_key: create_admin_tables
+          sql_task:
+            warehouse_id: ${var.sql_warehouse_id}
+            file:
+              path: resources/store-onboarding.sql
+            parameters:
+              catalog_name: ${var.store_catalog}
+              schema_prefix: ${var.store_schema_prefix}
+        # Initiatives, teams and the change list (#123). After admin: it seeds
+        # its CL display counter into admin.display_counters.
+        - task_key: create_teams_tables
+          depends_on:
+            - task_key: create_admin_tables
+          sql_task:
+            warehouse_id: ${var.sql_warehouse_id}
+            file:
+              path: resources/store-teams.sql
+            parameters:
+              catalog_name: ${var.store_catalog}
+              schema_prefix: ${var.store_schema_prefix}
+        - task_key: create_audit_view
+          # After every area's DDL task: it unions their audit branch views.
+          depends_on:
+            - task_key: create_store_tables
+            - task_key: create_admin_tables
+            - task_key: create_eir_tables
+            - task_key: create_eir_definitions_tables
+            - task_key: create_onboarding_tables
+            - task_key: create_teams_tables
+          sql_task:
+            warehouse_id: ${var.sql_warehouse_id}
+            file:
+              path: resources/store-audit.sql
+            parameters:
+              catalog_name: ${var.store_catalog}
+              schema_prefix: ${var.store_schema_prefix}
+    membership_snapshot:
+      name: ${var.app_name}-membership-snapshot
+      description: Reads allowlisted account groups into a read-only Delta snapshot.
+      max_concurrent_runs: 1
+      email_notifications:
+        on_failure: ${var.alert_emails}
+      schedule:
+        quartz_cron_expression: ${var.membership_schedule}
+        timezone_id: UTC
+        pause_status: PAUSED
+      tasks:
+        - task_key: snapshot_memberships
+          notebook_task:
+            notebook_path: jobs/membership_snapshot/notebook.py
+            base_parameters:
+              catalog: ${var.membership_catalog}
+              schema: ${var.membership_schema}
+              allowlist_json: ${var.membership_allowlist_json}
+              max_removals: ${var.membership_max_removals}
+              require_service_principal: ${var.membership_require_service_principal}
+              expected_principal: ${var.membership_job_sp}
+          job_cluster_key: membership_snapshot_cluster
+          libraries:
+            - pypi:
+                package: databricks-sdk==0.38.0
+      job_clusters:
+        - job_cluster_key: membership_snapshot_cluster
+          new_cluster:
+            spark_version: 16.4.x-scala2.12
+            node_type_id: i3.xlarge
+            data_security_mode: SINGLE_USER
+            num_workers: 0
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: local[*, 4]
+            custom_tags:
+              ResourceClass: SingleNode
+    membership_snapshot_freshness:
+      name: ${var.app_name}-membership-snapshot-freshness
+      description: >-
+        Alerts after two missed snapshot runs. The snapshot job's on_failure
+        email cannot fire when a scheduled run never starts (or has never
+        completed one), so this companion job runs on the same cadence but offset
+        within it, reads the newest completed run in snapshot_runs, and fails on
+        purpose once that run is older than the allowed number of missed
+        cadences. An empty table is treated as stale, counted from
+        membership_monitor_since.
+      max_concurrent_runs: 1
+      email_notifications:
+        on_failure: ${var.alert_emails}
+      schedule:
+        quartz_cron_expression: ${var.membership_monitor_schedule}
+        timezone_id: UTC
+        pause_status: PAUSED
+      tasks:
+        - task_key: check_freshness
+          spark_python_task:
+            python_file: jobs/membership_snapshot/monitor.py
+            parameters:
+              - --catalog
+              - ${var.membership_catalog}
+              - --schema
+              - ${var.membership_schema}
+              - --cadence-seconds
+              - ${var.membership_cadence_seconds}
+              - --since
+              - ${var.membership_monitor_since}
+          job_cluster_key: membership_freshness_cluster
+      job_clusters:
+        - job_cluster_key: membership_freshness_cluster
+          new_cluster:
+            spark_version: 16.4.x-scala2.12
+            node_type_id: i3.xlarge
+            data_security_mode: SINGLE_USER
+            num_workers: 0
+            spark_conf:
+              spark.databricks.cluster.profile: singleNode
+              spark.master: local[*, 4]
+            custom_tags:
+              ResourceClass: SingleNode
+    provision_membership_snapshot:
+      name: ${var.app_name}-provision-membership-snapshot
+      description: Explicitly provisions membership tables; run once during environment setup.
+      tasks:
+        - task_key: create_membership_tables
+          sql_task:
+            warehouse_id: ${var.sql_warehouse_id}
+            file:
+              path: resources/membership-schema.sql
+            parameters:
+              catalog_name: ${var.membership_catalog}
+              schema_name: ${var.membership_schema}
+
+targets:
+  preview:
+    mode: development
+    variables:
+      app_name: edp-vm-preview-unset
+      # Preview keeps its own copy of each schema in a shared catalog, so it
+      # runs with a non-empty prefix. A per-PR deploy overrides this with
+      # --var store_schema_prefix=edp_vm_pr<N>_ . Non-empty here means the
+      # EDP_STORE_SCHEMA_PREFIX env entry is always valid (#138). The EIR volume
+      # catalog comes from --var catalog= like every other catalog.
+      store_schema_prefix: edp_vm_preview_
+      membership_job_sp: preview-deployer-not-used
+      eir_volume_schema: edp_vm_preview
+      eir_volume_name: eir_preview_unset
+      # Preview UAT identity. Non-empty defaults so the preview-only env entries
+      # below are never value-less (#138). edp-admins is the EDP-staff group on
+      # example-workspace; a reviewer passes --var seed_dataset_owner_ids=<own id>
+      # to own the sample dataset (a group id there matches no user, so sample
+      # data stays sample-owned until overridden). edp-admins holds every
+      # staff role (#226).
+      edp_admin_group_id: "11111111111111"
+      seed_dataset_owner_ids: "11111111111111"
+      # Test mode: a validator may decide their own EIR on a PR preview only.
+      eir_allow_self_validation: "true"
+    workspace:
+      host: https://example-workspace.cloud.databricks.com
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${var.app_name}
+    # Preview-only runtime config so a UAT reviewer can exercise the write
+    # paths: it names them as the seed dataset's owner, points EDP-staff status
+    # at a real group, and sets the store schema prefix. Values come from --var
+    # at deploy, never from source. The bundle APPENDS this target's lists to
+    # the app-wide `config` (command, NODE_ENV, EIR variables), so list only the
+    # preview-only variables here.
+    resources:
+      apps:
+        edp_vending_machine:
+          config:
+            env:
+              - name: EDP_STORE_SCHEMA_PREFIX
+                value: ${var.store_schema_prefix}
+              - name: EDP_SEED_DATASET_OWNER_IDS
+                value: ${var.seed_dataset_owner_ids}
+              - name: EDP_ADMIN_GROUP_ID
+                value: ${var.edp_admin_group_id}
+      jobs:
+        membership_snapshot:
+          schedule:
+            quartz_cron_expression: ${var.membership_schedule}
+            timezone_id: UTC
+            pause_status: PAUSED
+        membership_snapshot_freshness:
+          schedule:
+            quartz_cron_expression: ${var.membership_monitor_schedule}
+            timezone_id: UTC
+            pause_status: PAUSED
+  dev:
+    mode: development
+    default: true
+    variables:
+      membership_job_sp: dev-deployer-not-used
+    # Dev uses the CLI profile's host (databricks auth login / -p <profile>), so
+    # no host is set here — setting an empty one would clobber the profile host.
+  govdev:
+    mode: development
+    variables:
+      # Isolated defaults are deliberately invalid for a real deployment. The
+      # preflight requires explicit govdev-marked names and a numeric group id.
+      app_name: edp-vm-govdev-unset
+      data_backend: delta
+      store_schema_prefix: edp_vm_govdev_unset_
+      eir_volume_schema: edp_vm_govdev
+      eir_volume_name: eir_govdev_unset
+      edp_admin_group_id: configure-edp-admin-group-id
+      membership_job_sp: govdev-deployer-not-used
+    # The GovCloud workspace host comes from `-p <profile>`; no commercial or
+    # environment-specific host is committed here.
+    resources:
+      apps:
+        edp_vending_machine:
+          config:
+            env:
+              - name: EDP_STORE_SCHEMA_PREFIX
+                value: ${var.store_schema_prefix}
+              - name: EDP_ADMIN_GROUP_ID
+                value: ${var.edp_admin_group_id}
+  prod:
+    mode: production
+    variables:
+      # Production serves the durable Delta store, never the in-memory seed. The
+      # preflight and the wrapper's resolved-config gate refuse anything else.
+      data_backend: delta
+      # A non-empty placeholder, so the prod env entry below is never
+      # value-less. It isn't a real group: the preflight requires a real
+      # numeric SCIM id on prod, and the resolved-config gate refuses a
+      # rendered `configure-*` value. Without it nobody holds a staff role in
+      # prod: the EDP admin group holds every one in the MVP (#226).
+      edp_admin_group_id: configure-edp-admin-group-id
+      membership_require_service_principal: true
+    workspace:
+      # The production GovCloud host comes from the CLI profile you deploy with:
+      #   databricks bundle deploy -t prod -p <prod-profile>
+      # `workspace.host` is resolved during auth, BEFORE variable interpolation,
+      # so it can't be a --var; set it from the profile, or uncomment and fill
+      # the literal GovCloud host below once it is known. scripts/deploy-turnkey.sh
+      # requires an explicit profile (-p) for prod so a hostless deploy can't go
+      # to the wrong workspace silently (#138).
+      # host: https://<your-govcloud-workspace-host>
+      # Production mode needs one stable root so only one copy of the app is
+      # deployed. It's a deployment-group folder, not a person's, so a second
+      # deployer updates the same app instead of standing up a copy, and it's a
+      # deploy-time var with no shared default, so the root is never the
+      # all-users-writable /Workspace/Shared (#138, #150 review).
+      root_path: ${var.prod_root_path}
+    # Bundle-managed Unity Catalog objects for the production (GovCloud) turnkey
+    # target. These are declared ONLY on prod: `mode: production` leaves resource
+    # names intact, whereas `mode: development` (preview/dev) rewrites a UC
+    # schema/volume name to `dev_<user>_<name>`, which would no longer match the
+    # fixed EIR_VOLUME_SCHEMA/EIR_VOLUME_NAME the app server reads. An empty
+    # `presets.name_prefix` does NOT disable that (it is dropped as empty). So
+    # preview/dev keep the per-PR volume + wrapper path; prod gets the volume
+    # declared here. See the PR body for the full CLI-capability findings.
+    #
+    # No GRANTs are declared here. ALL grants are applied by the wrapper
+    # (scripts/deploy-turnkey.sh), so group->display-name resolution happens in
+    # one place for every target:
+    #   * validator group grant (opt-in, --grant-validator-volume-read; off by
+    #     default) — `GRANT ... TO <group>` needs the account-group
+    #     DISPLAY NAME, but the only value available at config time is the numeric
+    #     edp_admin_group_id (the group that holds the Safeguards validator role
+    #     in the MVP, #226; it must stay numeric for the runtime
+    #     EDP_ADMIN_GROUP_ID). Static YAML can't resolve id->name,
+    #     so a declarative grant to the numeric id fails deploy with
+    #     PRINCIPAL_DOES_NOT_EXIST. The wrapper resolves the id to its name first.
+    #   * app service-principal grants — the app SP is created by the platform at
+    #     deploy and its id is NOT resolvable at config time; the wrapper applies
+    #     them after `databricks apps get` reports the SP.
+    #
+    # RETENTION (#141): the volume holds signed EIR PDFs, which must never be
+    # deleted by a deploy tool. `lifecycle.prevent_destroy` makes `bundle
+    # destroy`, and any redeploy whose plan would delete or recreate either
+    # object (e.g. a changed name or catalog), fail before touching it. To retire
+    # them, a human removes them from the bundle and follows the retention
+    # procedure; see docs/eir-volume.md -> "Destroy and redeploy". The EIR tables
+    # (<catalog>.eir.*) are created by provision_store, not by the bundle, so
+    # `bundle destroy` never touches them.
+    resources:
+      jobs:
+        membership_snapshot:
+          schedule:
+            quartz_cron_expression: ${var.membership_schedule}
+            timezone_id: UTC
+            pause_status: UNPAUSED
+          run_as:
+            service_principal_name: ${var.membership_job_sp}
+        membership_snapshot_freshness:
+          schedule:
+            quartz_cron_expression: ${var.membership_monitor_schedule}
+            timezone_id: UTC
+            pause_status: UNPAUSED
+          run_as:
+            service_principal_name: ${var.membership_job_sp}
+      apps:
+        edp_vending_machine:
+          config:
+            env:
+              # The EDP admin group, which holds every staff role in the MVP
+              # (#226; appended to the app-wide env).
+              - name: EDP_ADMIN_GROUP_ID
+                value: ${var.edp_admin_group_id}
+      schemas:
+        eir_schema:
+          catalog_name: ${var.eir_volume_catalog}
+          name: ${var.eir_volume_schema}
+          comment: "Signed EIR documents — parent schema for the EIR volume (#138)."
+          lifecycle:
+            prevent_destroy: true
+      volumes:
+        eir_volume:
+          catalog_name: ${var.eir_volume_catalog}
+          schema_name: ${var.eir_volume_schema}
+          name: ${var.eir_volume_name}
+          comment: "Signed EIR PDFs and append-only lifecycle snapshots (#138)."
+          lifecycle:
+            prevent_destroy: true

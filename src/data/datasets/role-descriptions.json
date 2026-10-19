@@ -1,0 +1,29 @@
+{
+  "roles": {
+    "tester": {
+      "label": "Tester",
+      "summary": "Read-only on everything with the dataset's tag, including uncertified data",
+      "grants": [
+        "Read-only access to everything with the dataset's tag, including uncertified data",
+        "Read access to the dataset's folders"
+      ]
+    },
+    "developer": {
+      "label": "Developer",
+      "summary": "Read and write on everything with the dataset's tag",
+      "grants": [
+        "Read and write access to everything with the dataset's tag",
+        "Read access to the dataset's folders"
+      ]
+    },
+    "manager": {
+      "label": "Manager",
+      "summary": "Everything a developer has, plus managing members and prod permissions",
+      "grants": [
+        "Everything a developer has",
+        "Manage permissions on what the dataset publishes in prod"
+      ]
+    }
+  },
+  "consumerNote": "Data consumers don't get a role here. They read a domain's certified and deprecated data through their domain entitlement in BEARS."
+}

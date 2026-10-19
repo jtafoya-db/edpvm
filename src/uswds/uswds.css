@@ -1,0 +1,823 @@
+/* =========================================================================
+   U.S. Web Design System (USWDS) — global stylesheet entry point.
+   Consumers link THIS file. It only @imports token + font layers.
+   Authoritative source: https://github.com/uswds/uswds
+   Docs: https://designsystem.digital.gov
+   ========================================================================= */
+
+/* =========================================================================
+   USWDS — @font-face declarations
+   Public Sans (UI / body / sans), Merriweather (headings / serif),
+   Roboto Mono (code / mono), Source Sans Pro (alternate sans).
+   Font files live in ../assets/fonts (relative to this file).
+   ========================================================================= */
+
+/* ---------- Public Sans — primary sans / UI / body ---------- */
+/* ---------- Merriweather — serif / headings / alt ---------- */
+/* ---------- Roboto Mono — monospace / code ---------- */
+/* ---------- Source Sans Pro — alternate sans ---------- */
+/* =========================================================================
+   USWDS — Color tokens
+   System color palette (the source of truth) + theme semantic assignments.
+   Naming: --color-{family}-{grade} for standard, ...-{grade}v for "vivid".
+   Reference: https://designsystem.digital.gov/design-tokens/color/
+   ========================================================================= */
+
+:root {
+  /* ---- Global ---- */
+  --color-white: #ffffff;
+  --color-black: #000000;
+  --color-gray-100: #000000;
+
+  /* red */
+  --color-red-5: #f9eeee;
+  --color-red-10: #f8e1de;
+  --color-red-20: #f7bbb1;
+  --color-red-30: #f2938c;
+  --color-red-40: #e9695f;
+  --color-red-50: #d83933;
+  --color-red-60: #a23737;
+  --color-red-70: #6f3331;
+  --color-red-80: #3e2927;
+  --color-red-90: #1b1616;
+  --color-red-5v: #fff3f2;
+  --color-red-10v: #fde0db;
+  --color-red-20v: #fdb8ae;
+  --color-red-30v: #ff8d7b;
+  --color-red-40v: #fb5a47;
+  --color-red-50v: #e52207;
+  --color-red-60v: #b50909;
+  --color-red-70v: #8b0a03;
+  --color-red-80v: #5c1111;
+
+  /* red-warm */
+  --color-red-warm-5: #f6efea;
+  --color-red-warm-10: #f4e3db;
+  --color-red-warm-20: #ecc0a7;
+  --color-red-warm-30: #dca081;
+  --color-red-warm-40: #d27a56;
+  --color-red-warm-50: #c3512c;
+  --color-red-warm-60: #805039;
+  --color-red-warm-70: #524236;
+  --color-red-warm-80: #332d29;
+  --color-red-warm-90: #1f1c18;
+  --color-red-warm-5v: #fff5ee;
+  --color-red-warm-10v: #fce1d4;
+  --color-red-warm-20v: #f6bd9c;
+  --color-red-warm-30v: #f39268;
+  --color-red-warm-40v: #ef5e25;
+  --color-red-warm-50v: #d54309;
+  --color-red-warm-60v: #9c3d10;
+  --color-red-warm-70v: #63340f;
+  --color-red-warm-80v: #3e2a1e;
+
+  /* red-cool */
+  --color-red-cool-5: #f8eff1;
+  --color-red-cool-10: #f3e1e4;
+  --color-red-cool-20: #ecbec6;
+  --color-red-cool-30: #e09aa6;
+  --color-red-cool-40: #e16b80;
+  --color-red-cool-50: #cd425b;
+  --color-red-cool-60: #9e394b;
+  --color-red-cool-70: #68363f;
+  --color-red-cool-80: #40282c;
+  --color-red-cool-90: #1e1517;
+  --color-red-cool-5v: #fff2f5;
+  --color-red-cool-10v: #f8dfe2;
+  --color-red-cool-20v: #f8b9c5;
+  --color-red-cool-30v: #fd8ba0;
+  --color-red-cool-40v: #f45d79;
+  --color-red-cool-50v: #e41d3d;
+  --color-red-cool-60v: #b21d38;
+  --color-red-cool-70v: #822133;
+  --color-red-cool-80v: #4f1c24;
+
+  /* orange */
+  --color-orange-5: #f6efe9;
+  --color-orange-10: #f2e4d4;
+  --color-orange-20: #f3bf90;
+  --color-orange-30: #f09860;
+  --color-orange-40: #dd7533;
+  --color-orange-50: #a86437;
+  --color-orange-60: #775540;
+  --color-orange-70: #524236;
+  --color-orange-80: #332d27;
+  --color-orange-90: #1b1614;
+  --color-orange-5v: #fef2e4;
+  --color-orange-10v: #fce2c5;
+  --color-orange-20v: #ffbc78;
+  --color-orange-30v: #fa9441;
+  --color-orange-40v: #e66f0e;
+  --color-orange-50v: #c05600;
+  --color-orange-60v: #8c471c;
+  --color-orange-70v: #5f3617;
+  --color-orange-80v: #352313;
+
+  /* orange-warm */
+  --color-orange-warm-5: #faeee5;
+  --color-orange-warm-10: #fbe0d0;
+  --color-orange-warm-20: #f7bca2;
+  --color-orange-warm-30: #f3966d;
+  --color-orange-warm-40: #e17141;
+  --color-orange-warm-50: #bd5727;
+  --color-orange-warm-60: #914734;
+  --color-orange-warm-70: #633a32;
+  --color-orange-warm-80: #3d2925;
+  --color-orange-warm-90: #1c1615;
+  --color-orange-warm-5v: #fff3ea;
+  --color-orange-warm-10v: #ffe2d1;
+  --color-orange-warm-20v: #fbbaa7;
+  --color-orange-warm-30v: #fc906d;
+  --color-orange-warm-40v: #ff580a;
+  --color-orange-warm-50v: #cf4900;
+  --color-orange-warm-60v: #a72f10;
+  --color-orange-warm-70v: #782312;
+  --color-orange-warm-80v: #3d231d;
+
+  /* gold */
+  --color-gold-5: #f5f0e6;
+  --color-gold-10: #f1e5cd;
+  --color-gold-20: #dec69a;
+  --color-gold-30: #c7a97b;
+  --color-gold-40: #ad8b65;
+  --color-gold-50: #8e704f;
+  --color-gold-60: #6b5947;
+  --color-gold-70: #4d4438;
+  --color-gold-80: #322d26;
+  --color-gold-90: #191714;
+  --color-gold-5v: #fef0c8;
+  --color-gold-10v: #ffe396;
+  --color-gold-20v: #ffbe2e;
+  --color-gold-30v: #e5a000;
+  --color-gold-40v: #c2850c;
+  --color-gold-50v: #936f38;
+  --color-gold-60v: #7a591a;
+  --color-gold-70v: #5c410a;
+  --color-gold-80v: #3b2b15;
+
+  /* yellow */
+  --color-yellow-5: #faf3d1;
+  --color-yellow-10: #f5e6af;
+  --color-yellow-20: #e6c74c;
+  --color-yellow-30: #c9ab48;
+  --color-yellow-40: #a88f48;
+  --color-yellow-50: #8a7237;
+  --color-yellow-60: #6b5a39;
+  --color-yellow-70: #504332;
+  --color-yellow-80: #332d27;
+  --color-yellow-90: #1a1614;
+  --color-yellow-5v: #fff5c2;
+  --color-yellow-10v: #fee685;
+  --color-yellow-20v: #face00;
+  --color-yellow-30v: #ddaa01;
+  --color-yellow-40v: #b38c00;
+  --color-yellow-50v: #947100;
+  --color-yellow-60v: #776017;
+  --color-yellow-70v: #5c4809;
+  --color-yellow-80v: #422d19;
+
+  /* green */
+  --color-green-5: #eaf4dd;
+  --color-green-10: #dfeacd;
+  --color-green-20: #b8d293;
+  --color-green-30: #9bb672;
+  --color-green-40: #7d9b4e;
+  --color-green-50: #607f35;
+  --color-green-60: #4c6424;
+  --color-green-70: #3c4a29;
+  --color-green-80: #293021;
+  --color-green-90: #161814;
+  --color-green-5v: #ddf9c7;
+  --color-green-10v: #c5ee93;
+  --color-green-20v: #98d035;
+  --color-green-30v: #7fb135;
+  --color-green-40v: #719f2a;
+  --color-green-50v: #538200;
+  --color-green-60v: #466c04;
+  --color-green-70v: #2f4a0b;
+  --color-green-80v: #243413;
+
+  /* green-warm */
+  --color-green-warm-5: #f1f4d7;
+  --color-green-warm-10: #e7eab7;
+  --color-green-warm-20: #cbd17a;
+  --color-green-warm-30: #a6b557;
+  --color-green-warm-40: #8a984b;
+  --color-green-warm-50: #6f7a41;
+  --color-green-warm-60: #5a5f38;
+  --color-green-warm-70: #45472f;
+  --color-green-warm-80: #2d2f21;
+  --color-green-warm-90: #171712;
+  --color-green-warm-5v: #f5fbc1;
+  --color-green-warm-10v: #e7f434;
+  --color-green-warm-20v: #c5d30a;
+  --color-green-warm-30v: #a3b72c;
+  --color-green-warm-40v: #7e9c1d;
+  --color-green-warm-50v: #6a7d00;
+  --color-green-warm-60v: #5a6613;
+  --color-green-warm-70v: #4b4e10;
+  --color-green-warm-80v: #38380b;
+
+  /* green-cool */
+  --color-green-cool-5: #ecf3ec;
+  --color-green-cool-10: #dbebde;
+  --color-green-cool-20: #b4d0b9;
+  --color-green-cool-30: #86b98e;
+  --color-green-cool-40: #5e9f69;
+  --color-green-cool-50: #4d8055;
+  --color-green-cool-60: #446443;
+  --color-green-cool-70: #37493b;
+  --color-green-cool-80: #28312a;
+  --color-green-cool-90: #1a1f1a;
+  --color-green-cool-5v: #e3f5e1;
+  --color-green-cool-10v: #b7f5bd;
+  --color-green-cool-20v: #70e17b;
+  --color-green-cool-30v: #21c834;
+  --color-green-cool-40v: #00a91c;
+  --color-green-cool-50v: #008817;
+  --color-green-cool-60v: #216e1f;
+  --color-green-cool-70v: #154c21;
+  --color-green-cool-80v: #19311e;
+
+  /* mint */
+  --color-mint-5: #dbf6ed;
+  --color-mint-10: #c7efe2;
+  --color-mint-20: #92d9bb;
+  --color-mint-30: #5abf95;
+  --color-mint-40: #34a37e;
+  --color-mint-50: #2e8367;
+  --color-mint-60: #286846;
+  --color-mint-70: #204e34;
+  --color-mint-80: #193324;
+  --color-mint-90: #0d1a12;
+  --color-mint-5v: #c9fbeb;
+  --color-mint-10v: #83fcd4;
+  --color-mint-20v: #0ceda6;
+  --color-mint-30v: #04c585;
+  --color-mint-40v: #00a871;
+  --color-mint-50v: #008659;
+  --color-mint-60v: #146947;
+  --color-mint-70v: #0c4e29;
+  --color-mint-80v: #0d351e;
+
+  /* mint-cool */
+  --color-mint-cool-5: #e0f7f6;
+  --color-mint-cool-10: #c4eeeb;
+  --color-mint-cool-20: #9bd4cf;
+  --color-mint-cool-30: #6fbab3;
+  --color-mint-cool-40: #4f9e99;
+  --color-mint-cool-50: #40807e;
+  --color-mint-cool-60: #376462;
+  --color-mint-cool-70: #2a4b45;
+  --color-mint-cool-80: #203131;
+  --color-mint-cool-90: #111818;
+  --color-mint-cool-5v: #d5fbf3;
+  --color-mint-cool-10v: #7efbe1;
+  --color-mint-cool-20v: #29e1cb;
+  --color-mint-cool-30v: #1dc2ae;
+  --color-mint-cool-40v: #00a398;
+  --color-mint-cool-50v: #008480;
+  --color-mint-cool-60v: #0f6460;
+  --color-mint-cool-70v: #0b4b3f;
+  --color-mint-cool-80v: #123131;
+
+  /* cyan */
+  --color-cyan-5: #e7f6f8;
+  --color-cyan-10: #ccecf2;
+  --color-cyan-20: #99deea;
+  --color-cyan-30: #5dc0d1;
+  --color-cyan-40: #449dac;
+  --color-cyan-50: #168092;
+  --color-cyan-60: #2a646d;
+  --color-cyan-70: #2c4a4e;
+  --color-cyan-80: #203133;
+  --color-cyan-90: #111819;
+  --color-cyan-5v: #e5faff;
+  --color-cyan-10v: #a8f2ff;
+  --color-cyan-20v: #52daf2;
+  --color-cyan-30v: #00bde3;
+  --color-cyan-40v: #009ec1;
+  --color-cyan-50v: #0081a1;
+  --color-cyan-60v: #00687d;
+  --color-cyan-70v: #0e4f5c;
+  --color-cyan-80v: #093b44;
+
+  /* blue */
+  --color-blue-5: #eff6fb;
+  --color-blue-10: #d9e8f6;
+  --color-blue-20: #aacdec;
+  --color-blue-30: #73b3e7;
+  --color-blue-40: #4f97d1;
+  --color-blue-50: #2378c3;
+  --color-blue-60: #2c608a;
+  --color-blue-70: #274863;
+  --color-blue-80: #1f303e;
+  --color-blue-90: #11181d;
+  --color-blue-5v: #e8f5ff;
+  --color-blue-10v: #cfe8ff;
+  --color-blue-20v: #a1d3ff;
+  --color-blue-30v: #58b4ff;
+  --color-blue-40v: #2491ff;
+  --color-blue-50v: #0076d6;
+  --color-blue-60v: #005ea2;
+  --color-blue-70v: #0b4778;
+  --color-blue-80v: #112f4e;
+
+  /* blue-cool */
+  --color-blue-cool-5: #e7f2f5;
+  --color-blue-cool-10: #dae9ee;
+  --color-blue-cool-20: #adcfdc;
+  --color-blue-cool-30: #82b4c9;
+  --color-blue-cool-40: #6499af;
+  --color-blue-cool-50: #3a7d95;
+  --color-blue-cool-60: #2e6276;
+  --color-blue-cool-70: #224a58;
+  --color-blue-cool-80: #14333d;
+  --color-blue-cool-90: #0f191c;
+  --color-blue-cool-5v: #e1f3f8;
+  --color-blue-cool-10v: #c3ebfa;
+  --color-blue-cool-20v: #97d4ea;
+  --color-blue-cool-30v: #59b9de;
+  --color-blue-cool-40v: #28a0cb;
+  --color-blue-cool-50v: #0d7ea2;
+  --color-blue-cool-60v: #07648d;
+  --color-blue-cool-70v: #074b69;
+  --color-blue-cool-80v: #002d3f;
+
+  /* blue-warm */
+  --color-blue-warm-5: #ecf1f7;
+  --color-blue-warm-10: #e1e7f1;
+  --color-blue-warm-20: #bbcae4;
+  --color-blue-warm-30: #98afd2;
+  --color-blue-warm-40: #7292c7;
+  --color-blue-warm-50: #4a77b4;
+  --color-blue-warm-60: #345d96;
+  --color-blue-warm-70: #2f4668;
+  --color-blue-warm-80: #252f3e;
+  --color-blue-warm-90: #13171f;
+  --color-blue-warm-5v: #edf5ff;
+  --color-blue-warm-10v: #d4e5ff;
+  --color-blue-warm-20v: #adcdff;
+  --color-blue-warm-30v: #81aefc;
+  --color-blue-warm-40v: #5994f6;
+  --color-blue-warm-50v: #2672de;
+  --color-blue-warm-60v: #0050d8;
+  --color-blue-warm-70v: #1a4480;
+  --color-blue-warm-80v: #162e51;
+
+  /* indigo */
+  --color-indigo-5: #efeff8;
+  --color-indigo-10: #e5e4fa;
+  --color-indigo-20: #c5c5f3;
+  --color-indigo-30: #a5a8eb;
+  --color-indigo-40: #8889db;
+  --color-indigo-50: #676cc8;
+  --color-indigo-60: #4d52af;
+  --color-indigo-70: #3d4076;
+  --color-indigo-80: #2b2c40;
+  --color-indigo-90: #16171f;
+  --color-indigo-5v: #f0f0ff;
+  --color-indigo-10v: #e0e0ff;
+  --color-indigo-20v: #ccceff;
+  --color-indigo-30v: #a3a7fa;
+  --color-indigo-40v: #8289ff;
+  --color-indigo-50v: #656bd7;
+  --color-indigo-60v: #4a50c4;
+  --color-indigo-70v: #3333a3;
+  --color-indigo-80v: #212463;
+
+  /* indigo-cool */
+  --color-indigo-cool-5: #eef0f9;
+  --color-indigo-cool-10: #e1e6f9;
+  --color-indigo-cool-20: #bbc8f5;
+  --color-indigo-cool-30: #96abee;
+  --color-indigo-cool-40: #6b8ee8;
+  --color-indigo-cool-50: #496fd8;
+  --color-indigo-cool-60: #3f57a6;
+  --color-indigo-cool-70: #374274;
+  --color-indigo-cool-80: #292d42;
+  --color-indigo-cool-90: #151622;
+  --color-indigo-cool-5v: #edf0ff;
+  --color-indigo-cool-10v: #dee5ff;
+  --color-indigo-cool-20v: #b8c8ff;
+  --color-indigo-cool-30v: #94adff;
+  --color-indigo-cool-40v: #628ef4;
+  --color-indigo-cool-50v: #4866ff;
+  --color-indigo-cool-60v: #3e4ded;
+  --color-indigo-cool-70v: #222fbf;
+  --color-indigo-cool-80v: #1b2b85;
+
+  /* indigo-warm */
+  --color-indigo-warm-5: #f1eff7;
+  --color-indigo-warm-10: #e7e3fa;
+  --color-indigo-warm-20: #cbc4f2;
+  --color-indigo-warm-30: #afa5e8;
+  --color-indigo-warm-40: #9287d8;
+  --color-indigo-warm-50: #7665d1;
+  --color-indigo-warm-60: #5e519e;
+  --color-indigo-warm-70: #453c7b;
+  --color-indigo-warm-80: #2e2c40;
+  --color-indigo-warm-90: #18161d;
+  --color-indigo-warm-5v: #f5f2ff;
+  --color-indigo-warm-10v: #e4deff;
+  --color-indigo-warm-20v: #cfc4fd;
+  --color-indigo-warm-30v: #b69fff;
+  --color-indigo-warm-40v: #967efb;
+  --color-indigo-warm-50v: #745fe9;
+  --color-indigo-warm-60v: #5942d2;
+  --color-indigo-warm-70v: #3d2c9d;
+  --color-indigo-warm-80v: #261f5b;
+
+  /* violet */
+  --color-violet-5: #f4f1f9;
+  --color-violet-10: #ebe3f9;
+  --color-violet-20: #d0c3e9;
+  --color-violet-30: #b8a2e3;
+  --color-violet-40: #9d84d2;
+  --color-violet-50: #8168b3;
+  --color-violet-60: #665190;
+  --color-violet-70: #4c3d69;
+  --color-violet-80: #312b3f;
+  --color-violet-90: #18161d;
+  --color-violet-5v: #f7f2ff;
+  --color-violet-10v: #ede3ff;
+  --color-violet-20v: #d5bfff;
+  --color-violet-30v: #c39deb;
+  --color-violet-40v: #ad79e9;
+  --color-violet-50v: #9355dc;
+  --color-violet-60v: #783cb9;
+  --color-violet-70v: #54278f;
+  --color-violet-80v: #39215e;
+
+  /* violet-warm */
+  --color-violet-warm-5: #f8f0f9;
+  --color-violet-warm-10: #f6dff8;
+  --color-violet-warm-20: #e2bee4;
+  --color-violet-warm-30: #d29ad8;
+  --color-violet-warm-40: #bf77c8;
+  --color-violet-warm-50: #b04abd;
+  --color-violet-warm-60: #864381;
+  --color-violet-warm-70: #5c395a;
+  --color-violet-warm-80: #382936;
+  --color-violet-warm-90: #1b151b;
+  --color-violet-warm-5v: #fef2ff;
+  --color-violet-warm-10v: #fbdcff;
+  --color-violet-warm-20v: #f4b2ff;
+  --color-violet-warm-30v: #ee83ff;
+  --color-violet-warm-40v: #d85bef;
+  --color-violet-warm-50v: #be32d0;
+  --color-violet-warm-60v: #93348c;
+  --color-violet-warm-70v: #711e6c;
+  --color-violet-warm-80v: #481441;
+
+  /* magenta */
+  --color-magenta-5: #f9f0f2;
+  --color-magenta-10: #f6e1e8;
+  --color-magenta-20: #f0bbcc;
+  --color-magenta-30: #e895b3;
+  --color-magenta-40: #e0699f;
+  --color-magenta-50: #c84281;
+  --color-magenta-60: #8b4566;
+  --color-magenta-70: #66364b;
+  --color-magenta-80: #402731;
+  --color-magenta-90: #1b1617;
+  --color-magenta-5v: #fff2f5;
+  --color-magenta-10v: #ffddea;
+  --color-magenta-20v: #ffb4cf;
+  --color-magenta-30v: #ff87b2;
+  --color-magenta-40v: #fd4496;
+  --color-magenta-50v: #d72d79;
+  --color-magenta-60v: #ab2165;
+  --color-magenta-70v: #731f44;
+  --color-magenta-80v: #4f172e;
+
+  /* gray */
+  --color-gray-1: #fcfcfc;
+  --color-gray-2: #f9f9f9;
+  --color-gray-3: #f6f6f6;
+  --color-gray-4: #f3f3f3;
+  --color-gray-5: #f0f0f0;
+  --color-gray-10: #e6e6e6;
+  --color-gray-20: #c9c9c9;
+  --color-gray-30: #adadad;
+  --color-gray-40: #919191;
+  --color-gray-50: #757575;
+  --color-gray-60: #5c5c5c;
+  --color-gray-70: #454545;
+  --color-gray-80: #2e2e2e;
+  --color-gray-90: #1b1b1b;
+
+  /* gray-cool */
+  --color-gray-cool-1: #fbfcfd;
+  --color-gray-cool-2: #f7f9fa;
+  --color-gray-cool-3: #f5f6f7;
+  --color-gray-cool-4: #f1f3f6;
+  --color-gray-cool-5: #edeff0;
+  --color-gray-cool-10: #dfe1e2;
+  --color-gray-cool-20: #c6cace;
+  --color-gray-cool-30: #a9aeb1;
+  --color-gray-cool-40: #8d9297;
+  --color-gray-cool-50: #71767a;
+  --color-gray-cool-60: #565c65;
+  --color-gray-cool-70: #3d4551;
+  --color-gray-cool-80: #2d2e2f;
+  --color-gray-cool-90: #1c1d1f;
+
+  /* gray-warm */
+  --color-gray-warm-1: #fcfcfb;
+  --color-gray-warm-2: #f9f9f7;
+  --color-gray-warm-3: #f6f6f2;
+  --color-gray-warm-4: #f5f5f0;
+  --color-gray-warm-5: #f0f0ec;
+  --color-gray-warm-10: #e6e6e2;
+  --color-gray-warm-20: #cac9c0;
+  --color-gray-warm-30: #afaea2;
+  --color-gray-warm-40: #929285;
+  --color-gray-warm-50: #76766a;
+  --color-gray-warm-60: #5d5d52;
+  --color-gray-warm-70: #454540;
+  --color-gray-warm-80: #2e2e2a;
+  --color-gray-warm-90: #171716;
+
+  /* =====================================================================
+     THEME / SEMANTIC ASSIGNMENTS
+     The default USWDS theme. Reference these in product UI, not raw palette.
+     ===================================================================== */
+
+  /* Base (neutral) — gray-cool family */
+  --theme-base-lightest: var(--color-gray-5);
+  --theme-base-lighter: var(--color-gray-cool-10);
+  --theme-base-light: var(--color-gray-cool-30);
+  --theme-base: var(--color-gray-cool-50);
+  --theme-base-dark: var(--color-gray-cool-60);
+  --theme-base-darker: var(--color-gray-cool-70);
+  --theme-base-darkest: var(--color-gray-90);
+  --theme-ink: var(--color-gray-90);
+
+  /* Primary — blue */
+  --theme-primary-lighter: var(--color-blue-10);
+  --theme-primary-light: var(--color-blue-30);
+  --theme-primary: var(--color-blue-60v);
+  --theme-primary-vivid: var(--color-blue-warm-60v);
+  --theme-primary-dark: var(--color-blue-warm-70v);
+  --theme-primary-darker: var(--color-blue-warm-80v);
+
+  /* Secondary — red */
+  --theme-secondary-lighter: var(--color-red-cool-10);
+  --theme-secondary-light: var(--color-red-30);
+  --theme-secondary: var(--color-red-50);
+  --theme-secondary-vivid: var(--color-red-cool-50v);
+  --theme-secondary-dark: var(--color-red-60v);
+  --theme-secondary-darker: var(--color-red-70v);
+
+  /* Accent — warm (orange) */
+  --theme-accent-warm-lighter: var(--color-orange-10);
+  --theme-accent-warm-light: var(--color-orange-20v);
+  --theme-accent-warm: var(--color-orange-30v);
+  --theme-accent-warm-dark: var(--color-orange-50v);
+  --theme-accent-warm-darker: var(--color-orange-60);
+
+  /* Accent — cool (blue-cool / cyan) */
+  --theme-accent-cool-lighter: var(--color-blue-cool-5v);
+  --theme-accent-cool-light: var(--color-blue-cool-20v);
+  --theme-accent-cool: var(--color-cyan-30v);
+  --theme-accent-cool-dark: var(--color-blue-cool-40v);
+  --theme-accent-cool-darker: var(--color-blue-cool-60v);
+
+  /* State — error (red-warm) */
+  --theme-error-lighter: var(--color-red-warm-10);
+  --theme-error-light: var(--color-red-warm-30v);
+  --theme-error: var(--color-red-warm-50v);
+  --theme-error-dark: var(--color-red-60v);
+  --theme-error-darker: var(--color-red-70);
+
+  /* State — warning (gold / yellow) */
+  --theme-warning-lighter: var(--color-yellow-5);
+  --theme-warning-light: var(--color-yellow-10v);
+  --theme-warning: var(--color-gold-20v);
+  --theme-warning-dark: var(--color-gold-30v);
+  --theme-warning-darker: var(--color-gold-60v);
+
+  /* State — success (green-cool) */
+  --theme-success-lighter: var(--color-green-cool-5);
+  --theme-success-light: var(--color-green-cool-20v);
+  --theme-success: var(--color-green-cool-40v);
+  --theme-success-dark: var(--color-green-cool-50v);
+  --theme-success-darker: var(--color-green-cool-60v);
+
+  /* State — info (cyan) */
+  --theme-info-lighter: var(--color-cyan-5);
+  --theme-info-light: var(--color-cyan-20);
+  --theme-info: var(--color-cyan-30v);
+  --theme-info-dark: var(--color-cyan-40v);
+  --theme-info-darker: var(--color-blue-cool-60);
+
+  /* State — disabled (gray) */
+  --theme-disabled-lighter: var(--color-gray-20);
+  --theme-disabled-light: var(--color-gray-40);
+  --theme-disabled: var(--color-gray-50);
+  --theme-disabled-dark: var(--color-gray-70);
+  --theme-disabled-darker: var(--color-gray-90);
+
+  /* Emergency */
+  --theme-emergency: var(--color-red-warm-60v);
+  --theme-emergency-dark: var(--color-red-warm-80);
+
+  /* ---- Surfaces & text (convenience aliases) ---- */
+  --surface-default: var(--color-white);
+  --surface-subtle: var(--color-gray-cool-2);
+  --surface-muted: var(--color-gray-5);
+  --surface-dark: var(--color-blue-warm-80v);
+  --text-default: var(--theme-ink);
+  --text-muted: var(--color-gray-cool-60);
+  --text-reverse: var(--color-white);
+  --border-default: var(--color-gray-cool-10);
+  --border-strong: var(--color-gray-cool-30);
+
+  /* ---- Links ---- */
+  --link-default: var(--theme-primary);
+  --link-hover: var(--theme-primary-dark);
+  --link-active: var(--theme-primary-darker);
+  --link-visited: var(--color-violet-70v);
+  --link-reverse: var(--theme-base-lighter);
+}
+
+/* =========================================================================
+   USWDS — Typography tokens
+   Type scale, line-height, weight, font-family roles.
+   Reference: https://designsystem.digital.gov/design-tokens/typesetting/
+   ========================================================================= */
+
+:root {
+  /* ---- Type-based font families (with stacks) ---- */
+  --font-sans:
+    "Public Sans", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "Merriweather", Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-mono: "Roboto Mono", "Bitstream Vera Sans Mono", Consolas, Courier, monospace;
+  --font-alt-sans: "Source Sans Pro", "Helvetica Neue", Helvetica, Arial, sans-serif;
+
+  /* ---- Role-based families (the recommended entry point) ---- */
+  --font-ui: var(--font-sans); /* interface text: nav, buttons, labels */
+  --font-body: var(--font-sans); /* body copy */
+  --font-heading: var(--font-serif); /* headings & display */
+  --font-code: var(--font-mono); /* code, data, tabular */
+  --font-alt: var(--font-serif); /* lead / pull text */
+
+  /* ---- Type scale (px values from the USWDS system scale) ---- */
+  --font-size-micro: 10px;
+  --font-size-3xs: 13px;
+  --font-size-2xs: 14px;
+  --font-size-xs: 15px;
+  --font-size-sm: 16px; /* default body size */
+  --font-size-md: 17px;
+  --font-size-lg: 22px;
+  --font-size-xl: 32px;
+  --font-size-2xl: 40px;
+  --font-size-3xl: 48px;
+  /* extended display steps */
+  --font-size-4xl: 56px;
+  --font-size-5xl: 64px;
+  --font-size-6xl: 80px;
+  --font-size-7xl: 120px;
+  --font-size-8xl: 140px;
+
+  /* ---- Line height tokens ---- */
+  --line-height-1: 1;
+  --line-height-2: 1.15;
+  --line-height-3: 1.35;
+  --line-height-4: 1.5;
+  --line-height-5: 1.62;
+  --line-height-6: 1.75;
+
+  /* ---- Font weights ---- */
+  --font-weight-light: 300;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500; /* mono only */
+  --font-weight-bold: 700;
+  --font-weight-heavy: 800; /* Public Sans ExtraBold — big display only */
+
+  /* ---- Measure (max line length) ---- */
+  --measure-1: 44ex;
+  --measure-2: 60ex;
+  --measure-3: 64ex;
+  --measure-4: 68ex;
+  --measure-5: 74ex;
+  --measure-6: 88ex;
+
+  /* ---- Semantic heading aliases (default theme) ---- */
+  --text-display: var(--font-size-3xl); /* 48 */
+  --text-h1: var(--font-size-2xl); /* 40 */
+  --text-h2: var(--font-size-xl); /* 32 */
+  --text-h3: var(--font-size-lg); /* 22 */
+  --text-h4: var(--font-size-sm); /* 16 */
+  --text-h5: var(--font-size-xs); /* 15 */
+  --text-h6: var(--font-size-3xs); /* 13 */
+  --text-body-size: var(--font-size-sm); /* 16 */
+  --text-body-line: var(--line-height-5); /* 1.62 */
+  --text-heading-line: var(--line-height-2); /* 1.15 */
+  --text-lead-size: var(--font-size-lg); /* 22 */
+  --text-lead-line: var(--line-height-6); /* 1.75 */
+  --text-small: var(--font-size-2xs); /* 14 */
+
+  /* letter spacing for all-caps overlines / labels */
+  --letter-spacing-1: 0.025em;
+  --letter-spacing-2: 0.05em;
+}
+
+/* =========================================================================
+   USWDS — Spacing, radius, breakpoints, shadow, layout tokens
+   Spacing units: 1 unit = 8px. Reference:
+   https://designsystem.digital.gov/design-tokens/spacing-units/
+   ========================================================================= */
+
+:root {
+  /* ---- Spacing units (the core scale) ---- */
+  --space-0: 0;
+  --space-1px: 1px;
+  --space-2px: 2px;
+  --space-05: 4px; /* 0.5 unit */
+  --space-1: 8px; /* 1 unit */
+  --space-105: 12px; /* 1.5 units */
+  --space-2: 16px; /* 2 units */
+  --space-205: 20px; /* 2.5 units */
+  --space-3: 24px; /* 3 units */
+  --space-4: 32px;
+  --space-5: 40px;
+  --space-6: 48px;
+  --space-7: 56px;
+  --space-8: 64px;
+  --space-9: 72px;
+  --space-10: 80px;
+  --space-15: 120px;
+
+  /* ---- Border radius ---- */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-pill: 99rem;
+
+  /* ---- Border widths ---- */
+  --border-width-thin: 1px;
+  --border-width: 2px;
+  --border-width-thick: 4px;
+
+  /* ---- Breakpoints (grid widths) ---- */
+  --bp-mobile: 320px;
+  --bp-mobile-lg: 480px;
+  --bp-tablet: 640px;
+  --bp-tablet-lg: 880px;
+  --bp-desktop: 1024px;
+  --bp-desktop-lg: 1200px;
+  --bp-widescreen: 1400px;
+
+  /* Default grid container max-width (desktop) + site margins */
+  --grid-container-max: 1024px;
+  --site-margins: var(--space-4); /* desktop */
+  --site-margins-mobile: var(--space-2); /* mobile */
+
+  /* ---- Shadows (USWDS elevation scale) ---- */
+  --shadow-1: 0 1px 4px 0 rgba(0, 0, 0, 0.1);
+  --shadow-2: 0 4px 8px 0 rgba(0, 0, 0, 0.1);
+  --shadow-3: 0 8px 16px 0 rgba(0, 0, 0, 0.1);
+  --shadow-4: 0 12px 24px 0 rgba(0, 0, 0, 0.1);
+  --shadow-5: 0 16px 32px 0 rgba(0, 0, 0, 0.1);
+
+  /* ---- Focus outline (accessibility — always 4px gold) ---- */
+  --focus-color: var(--color-yellow-vivid-20, #face00);
+  --focus-width: 4px;
+  --focus-outline: var(--focus-width) solid #face00;
+  --focus-offset: 0; /* @kind spacing */
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--color-gray-cool-2);
+  color: var(--text-default);
+  font-family: var(--font-sans);
+}
+* {
+  box-sizing: border-box;
+}
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: 1px;
+}
+::selection {
+  background: var(--color-blue-20v);
+}
+input::placeholder {
+  color: var(--color-gray-cool-40);
+}
+h1,
+h2,
+h3,
+h4 {
+  text-wrap: balance;
+}
+p {
+  text-wrap: pretty;
+}

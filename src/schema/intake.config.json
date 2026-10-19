@@ -1,0 +1,611 @@
+{
+  "version": 1,
+  "steps": [
+    {
+      "id": "source",
+      "label": "Source profile",
+      "title": "Tell us about the data",
+      "eyebrow": "Source profile",
+      "layout": [
+        "dataName",
+        "initiativeOwner",
+        ["sourceSystem", "domain", "sensitivity"],
+        "ftiNote"
+      ]
+    },
+    {
+      "id": "architecture",
+      "label": "Architecture",
+      "title": "Design the data flow",
+      "eyebrow": "Architecture — approved patterns",
+      "layout": ["architectureIntro", "pattern", "access", "archDiagram", "architectureNote"]
+    },
+    {
+      "id": "delivery",
+      "label": "Delivery support",
+      "title": "Who builds the pipelines?",
+      "eyebrow": "Data engineering delivery model",
+      "layout": ["deliveryIntro", "engModel", "deliveryNote"]
+    },
+    {
+      "id": "business",
+      "label": "Business case",
+      "title": "What mission value does this data create?",
+      "eyebrow": "Business justification & mission ROI",
+      "layout": [
+        "levers",
+        "useCase",
+        ["outcome", "priority", "annualBenefit", "hoursSaved"],
+        "businessNote"
+      ]
+    },
+    {
+      "id": "datasets",
+      "label": "Datasets",
+      "title": "Which datasets are you bringing, and who owns them?",
+      "eyebrow": "Datasets, domains & dataset owners",
+      "layout": ["datasetsIntro", "datasets"]
+    },
+    {
+      "id": "workspace",
+      "label": "Workspace",
+      "title": "What does your team need to work in?",
+      "eyebrow": "Workspace needs & standard compute",
+      "layout": [
+        "workspaceIntro",
+        ["isolation", "teamSize"],
+        "workspaceCriteria",
+        "computePolicyOverview"
+      ]
+    },
+    {
+      "id": "sizing",
+      "label": "Sizing",
+      "title": "AI-assisted sizing",
+      "eyebrow": "Capacity & cost estimate",
+      "layout": [["sizeGb", "freq", "complexity", "users"], "sizingEstimator"]
+    },
+    {
+      "id": "review",
+      "label": "Review & submit",
+      "title": "Review the onboarding package",
+      "eyebrow": "Submitted as one intake request",
+      "layout": ["reviewSummary"]
+    }
+  ],
+  "fields": [
+    {
+      "id": "dataName",
+      "step": "source",
+      "type": "text",
+      "label": "Initiative name",
+      "required": true,
+      "default": "",
+      "placeholder": "e.g. Preparer oversight analytics"
+    },
+    {
+      "id": "initiativeOwner",
+      "step": "source",
+      "type": "initiative-owner",
+      "label": "Initiative owner",
+      "required": true,
+      "default": null,
+      "help": "The person accountable for this initiative: you, or someone you name."
+    },
+    {
+      "id": "sourceSystem",
+      "step": "source",
+      "type": "text",
+      "label": "Source system",
+      "required": false,
+      "default": "IMF / Individual Master File",
+      "placeholder": "e.g. IMF / Individual Master File"
+    },
+    {
+      "id": "domain",
+      "step": "source",
+      "type": "select",
+      "label": "Target domain",
+      "required": true,
+      "default": null,
+      "dynamicOptions": "domains"
+    },
+    {
+      "id": "sensitivity",
+      "step": "source",
+      "type": "select",
+      "label": "Data sensitivity",
+      "help": "SBU means sensitive but unclassified. FTI means federal tax information.",
+      "required": false,
+      "default": "SBU (FTI)",
+      "options": ["SBU", "SBU (FTI)", "Non-SBU"]
+    },
+    {
+      "id": "pattern",
+      "step": "architecture",
+      "type": "card-select",
+      "label": "How does the data get into EDP?",
+      "required": true,
+      "default": "eftu",
+      "optionList": "ingestPatterns"
+    },
+    {
+      "id": "access",
+      "step": "architecture",
+      "type": "card-select",
+      "label": "How will people access it?",
+      "required": true,
+      "default": "dbx",
+      "optionList": "accessPatterns"
+    },
+    {
+      "id": "engModel",
+      "step": "delivery",
+      "type": "card-select",
+      "label": "Data engineering delivery model",
+      "required": true,
+      "default": "self",
+      "optionList": "engModels"
+    },
+    {
+      "id": "levers",
+      "step": "business",
+      "type": "multi-card",
+      "label": "Mission value levers",
+      "required": true,
+      "default": ["fraud"],
+      "optionList": "roiLevers",
+      "help": "Select every IRS outcome this onboarding advances. The EDP business and ROI review scores the request against these levers."
+    },
+    {
+      "id": "useCase",
+      "step": "business",
+      "type": "textarea",
+      "label": "Business justification",
+      "required": true,
+      "default": "",
+      "rows": 3,
+      "placeholder": "e.g. Enables the Return Preparer Office to score preparer risk weekly instead of quarterly, closing a tax gap segment and retiring three contractor-run extracts."
+    },
+    {
+      "id": "outcome",
+      "step": "business",
+      "type": "select",
+      "label": "Primary mission outcome",
+      "required": false,
+      "default": "fraud",
+      "optionsFrom": "roiLevers"
+    },
+    {
+      "id": "priority",
+      "step": "business",
+      "type": "select",
+      "label": "Mission priority",
+      "required": false,
+      "default": "Mission-critical",
+      "options": ["Mission-critical", "High", "Standard"]
+    },
+    {
+      "id": "annualBenefit",
+      "step": "business",
+      "type": "number",
+      "label": "Estimated annual benefit (USD)",
+      "required": true,
+      "default": 750000,
+      "min": 0,
+      "increment": 50000,
+      "numberFormat": "currency"
+    },
+    {
+      "id": "hoursSaved",
+      "step": "business",
+      "type": "number",
+      "label": "Staff hours saved per year",
+      "required": false,
+      "default": 1200,
+      "min": 0,
+      "increment": 100,
+      "help": "Includes contractor and O&M effort avoided."
+    },
+    {
+      "id": "datasets",
+      "step": "datasets",
+      "type": "dataset-list",
+      "label": "Datasets",
+      "required": true,
+      "default": [],
+      "dynamicOptions": "domains",
+      "help": "Each dataset needs a domain (or Other), a dataset tag and at least one dataset owner. Dataset owners decide who works on the dataset once the initiative is active."
+    },
+    {
+      "id": "isolation",
+      "step": "workspace",
+      "type": "select",
+      "label": "Does this work need to be isolated from other tenants?",
+      "required": true,
+      "default": null,
+      "placeholder": "Choose an answer",
+      "options": [
+        "No — shared workspaces are fine",
+        "Yes — it must be isolated from other tenants",
+        "Not sure"
+      ]
+    },
+    {
+      "id": "teamSize",
+      "step": "workspace",
+      "type": "number",
+      "label": "How many people will work on this initiative?",
+      "required": true,
+      "default": null,
+      "min": 1,
+      "increment": 1,
+      "help": "Count everyone who will build, test or manage the datasets, not the data consumers who only read them."
+    },
+    {
+      "id": "sizeGb",
+      "step": "sizing",
+      "type": "number",
+      "label": "Data volume (GB, initial + 1 yr growth)",
+      "required": false,
+      "default": 500,
+      "min": 1,
+      "increment": 50,
+      "numberFormat": "decimal"
+    },
+    {
+      "id": "freq",
+      "step": "sizing",
+      "type": "select",
+      "label": "Load frequency",
+      "required": false,
+      "default": "Daily",
+      "options": ["Monthly", "Weekly", "Daily", "Hourly", "Streaming"]
+    },
+    {
+      "id": "complexity",
+      "step": "sizing",
+      "type": "select",
+      "label": "Transformation complexity",
+      "required": false,
+      "default": "Moderate",
+      "options": ["Light", "Moderate", "Heavy", "Very heavy / ML features"]
+    },
+    {
+      "id": "users",
+      "step": "sizing",
+      "type": "number",
+      "label": "Business users needing to query",
+      "required": false,
+      "default": 40,
+      "min": 1,
+      "increment": 5
+    }
+  ],
+  "optionLists": {
+    "engModels": [
+      {
+        "id": "self",
+        "name": "We have our own resources",
+        "desc": "Our team builds the pipelines and models using EDP patterns, guidelines and reference notebooks. No platform-team engineering capacity needed.",
+        "approved": true,
+        "platform": false,
+        "box": "Tenant-built pipelines"
+      },
+      {
+        "id": "assisted",
+        "name": "Guided build — light platform help",
+        "desc": "Our engineers build, with EDP platform team pairing on pattern review, code review and a design walkthrough.",
+        "approved": true,
+        "platform": true,
+        "box": "Guided build"
+      },
+      {
+        "id": "full",
+        "name": "We need data engineering support",
+        "desc": "EDP platform team builds the ingestion and medallion transformations for us. Requires platform engineering capacity in the CCB decision.",
+        "approved": true,
+        "platform": true,
+        "box": "Platform-built pipelines"
+      }
+    ],
+    "ingestPatterns": [
+      {
+        "id": "eftu",
+        "name": "EFTU secure file transfer",
+        "desc": "Scheduled file drops from the source system via EFTU into EDP.",
+        "approved": true,
+        "box": "EFTU"
+      },
+      {
+        "id": "informatica",
+        "name": "Informatica ETL",
+        "desc": "Informatica extracts and loads the source into EDP bronze tables.",
+        "approved": true,
+        "box": "Informatica"
+      },
+      {
+        "id": "epz",
+        "name": "EPZ bucket landing zone",
+        "desc": "Source writes objects to the EPZ landing bucket; EDP ingests from there.",
+        "approved": true,
+        "box": "EPZ landing zone"
+      },
+      {
+        "id": "other",
+        "name": "Something else (needs consultation)",
+        "desc": "Direct DB links, APIs, streaming or custom connectors require an EDP architecture consultation.",
+        "approved": false,
+        "box": "Custom path"
+      }
+    ],
+    "accessPatterns": [
+      {
+        "id": "dbx",
+        "name": "All within Databricks",
+        "desc": "Notebooks, SQL editor and dashboards inside Databricks only.",
+        "approved": true,
+        "box": "Databricks SQL & notebooks"
+      },
+      {
+        "id": "tableau",
+        "name": "Tableau",
+        "desc": "Tableau connects to Databricks SQL warehouse via Unity Catalog.",
+        "approved": true,
+        "box": "Tableau"
+      },
+      {
+        "id": "powerbi",
+        "name": "Power BI",
+        "desc": "Power BI connects to Databricks SQL warehouse via Unity Catalog.",
+        "approved": true,
+        "box": "Power BI"
+      },
+      {
+        "id": "other-access",
+        "name": "Other tool / data extract (needs consultation)",
+        "desc": "Extracts to other platforms or custom apps require an EDP architecture consultation.",
+        "approved": false,
+        "box": "Other consumer"
+      }
+    ],
+    "source": [
+      {
+        "id": "imf",
+        "name": "IMF / Individual Master File",
+        "desc": "Authoritative individual taxpayer account data.",
+        "approved": true,
+        "box": "IMF"
+      },
+      {
+        "id": "bmf",
+        "name": "BMF / Business Master File",
+        "desc": "Authoritative business taxpayer account data.",
+        "approved": true,
+        "box": "BMF"
+      },
+      {
+        "id": "irtf",
+        "name": "IRTF / Individual Return Transaction File",
+        "desc": "Posted individual return transactions.",
+        "approved": true,
+        "box": "IRTF"
+      },
+      {
+        "id": "idrs",
+        "name": "IDRS / Integrated Data Retrieval System",
+        "desc": "Account and case data from the IDRS operational system.",
+        "approved": true,
+        "box": "IDRS"
+      },
+      {
+        "id": "cdw",
+        "name": "CDW / Compliance Data Warehouse",
+        "desc": "Curated compliance analytics extracts.",
+        "approved": true,
+        "box": "CDW"
+      },
+      {
+        "id": "other-source",
+        "name": "Other / not listed (needs consultation)",
+        "desc": "A source system not in the approved catalog requires an EDP data architecture consultation.",
+        "approved": false,
+        "box": "Custom source"
+      }
+    ],
+    "roiLevers": [
+      {
+        "id": "fraud",
+        "name": "Reduce fraud and improper payments",
+        "icon": "shield",
+        "measure": "Estimate refund fraud / improper payments prevented per year."
+      },
+      {
+        "id": "taxgap",
+        "name": "Reduce the tax gap",
+        "icon": "trending_up",
+        "measure": "Estimate additional assessments or collections enabled per year."
+      },
+      {
+        "id": "service",
+        "name": "Better taxpayer services",
+        "icon": "support_agent",
+        "measure": "Estimate value of faster case resolution and fewer taxpayer touches."
+      },
+      {
+        "id": "cost",
+        "name": "Reduce cost and contractor support",
+        "icon": "savings",
+        "measure": "Estimate contractor hours and O&M dollars avoided per year."
+      },
+      {
+        "id": "itspend",
+        "name": "Reduce IT spend / retire duplicate systems",
+        "icon": "delete",
+        "measure": "Estimate license, hosting and duplicate-system costs retired per year."
+      },
+      {
+        "id": "compliance",
+        "name": "Improve data quality, security and compliance posture",
+        "icon": "verified",
+        "measure": "Estimate rework, audit findings and manual controls avoided per year."
+      }
+    ]
+  },
+  "validation": {
+    "source": [
+      { "type": "minTrimmedLength", "field": "dataName", "min": 0 },
+      { "type": "initiativeOwner", "field": "initiativeOwner" },
+      { "type": "truthy", "field": "domain" }
+    ],
+    "architecture": [
+      { "type": "truthy", "field": "pattern" },
+      { "type": "truthy", "field": "access" }
+    ],
+    "delivery": [{ "type": "truthy", "field": "engModel" }],
+    "business": [
+      { "type": "minTrimmedLength", "field": "useCase", "min": 10 },
+      { "type": "minNumber", "field": "annualBenefit", "min": 0 },
+      { "type": "minCount", "field": "levers", "min": 0 }
+    ],
+    "datasets": [{ "type": "datasets", "field": "datasets" }],
+    "workspace": [
+      {
+        "type": "truthy",
+        "field": "isolation",
+        "message": "Answer whether this work needs to be isolated from other tenants."
+      },
+      {
+        "type": "minNumber",
+        "field": "teamSize",
+        "min": 0,
+        "message": "Enter how many people will work on this initiative."
+      }
+    ],
+    "sizing": [{ "type": "isTrue", "field": "estimated", "message": "Run the sizing estimate." }],
+    "review": []
+  },
+  "sizing": {
+    "freqFactor": {
+      "Monthly": 0.4,
+      "Weekly": 0.7,
+      "Daily": 1,
+      "Hourly": 1.8,
+      "Streaming": 2.6
+    },
+    "cplxFactor": {
+      "Light": 0.6,
+      "Moderate": 1,
+      "Heavy": 1.7,
+      "Very heavy / ML features": 2.4
+    }
+  },
+  "request": {
+    "idPrefix": "REQ-",
+    "submittedAt": "Jun 5, 2026",
+    "status": "In progress",
+    "overall": "Submitted — pending EDP business and ROI review",
+    "stageIndex": 0,
+    "titleTemplate": "EDP data onboarding: {dataName}",
+    "purposeTemplate": "Onboard {dataName} from {sourceSystem} into the {domainName} domain via {patternName}, consumed through {accessName}. {useCase} Mission value: {leverLabelsComma} (primary: {outcomeName}). Sizing: {sizingTier} ({sizeGb} GB, {freq} loads, {complexity} transforms, {users} query users) · est. {annualCostUsd}/yr vs. {annualBenefitUsd} annual benefit (ROI {roiRatio}x).",
+    "fieldMap": {
+      "dataName": "dataName",
+      "sourceSystem": "sourceSystem",
+      "useCase": "useCase",
+      "freq": "freq",
+      "complexity": "complexity",
+      "sizeGb": "sizeGb",
+      "users": "users",
+      "annualBenefit": "annualBenefit"
+    },
+    "items": [
+      { "kind": "Onboarding", "label": "{dataName}", "sub": "{domainName} · {sizingTier}" },
+      {
+        "kind": "Onboarding",
+        "label": "Ingestion — {patternName}",
+        "sub": "{freq} · {complexity} transforms"
+      },
+      {
+        "kind": "Onboarding",
+        "label": "Consumption — {accessName}",
+        "sub": "{users} query users"
+      },
+      {
+        "kind": "Onboarding",
+        "label": "Platform capacity",
+        "sub": "{dbu} DBU/mo · {storageTb} TB"
+      },
+      {
+        "kind": "Onboarding",
+        "label": "Mission value — {outcomeName}",
+        "sub": "{leverLabelsDot}"
+      },
+      {
+        "kind": "Onboarding",
+        "label": "Delivery — {engName}",
+        "sub": {
+          "when": "platform",
+          "then": "EDP data engineering support requested",
+          "else": "Tenant-built with approved patterns"
+        }
+      }
+    ],
+    "subRequests": [
+      {
+        "when": "needsConsult",
+        "system": "Architecture consultation",
+        "status": "active",
+        "detail": "Pattern outside approved list — EDP architecture review required"
+      },
+      {
+        "when": "platform",
+        "system": "Data engineering capacity review",
+        "status": "pending",
+        "detail": "{engName} — EDP platform engineering effort"
+      },
+      {
+        "system": "EDP business and ROI review",
+        "status": { "when": "needsConsult", "then": "pending", "else": "active" },
+        "detail": "{outcomeName} · {annualCostUsd}/yr est. cost · ROI {roiRatio}x"
+      },
+      {
+        "system": "EDP intake CCB",
+        "status": "pending",
+        "detail": "{domainName} intake change control board"
+      },
+      {
+        "system": "BEARS entitlement creation",
+        "status": "pending",
+        "detail": "Access entitlements for {users} query users"
+      },
+      {
+        "system": "DBX users, Unity Catalog, and compute provisioning",
+        "status": "pending",
+        "detail": "Medallion layers + pipeline scaffold"
+      }
+    ]
+  },
+  "computePolicy": {
+    "title": "Standard compute policy",
+    "summary": "Every initiative starts on EDP's standard compute policy. This is an overview only — there is nothing to choose here.",
+    "items": [
+      {
+        "label": "All-purpose compute",
+        "value": "Standard access mode (user isolation) under the all-purpose cluster policy"
+      },
+      {
+        "label": "Job compute",
+        "value": "Job clusters under the job cluster policy, ending when each run finishes"
+      },
+      {
+        "label": "SQL warehouse",
+        "value": "A SQL warehouse in every environment, created at standup"
+      },
+      {
+        "label": "Other limits",
+        "value": "Runtime, autoscaling and cost ceilings aren't set by the policy yet"
+      }
+    ],
+    "changeNote": "Need something different? You can ask EDP to change your compute policy after your initiative is active."
+  }
+}

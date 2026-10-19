@@ -1,0 +1,64 @@
+/* =========================================================================
+   USWDS — Spacing, radius, breakpoints, shadow, layout tokens
+   Spacing units: 1 unit = 8px. Reference:
+   https://designsystem.digital.gov/design-tokens/spacing-units/
+   ========================================================================= */
+
+:root {
+  /* ---- Spacing units (the core scale) ---- */
+  --space-0: 0;
+  --space-1px: 1px;
+  --space-2px: 2px;
+  --space-05: 4px;   /* 0.5 unit */
+  --space-1: 8px;    /* 1 unit */
+  --space-105: 12px; /* 1.5 units */
+  --space-2: 16px;   /* 2 units */
+  --space-205: 20px; /* 2.5 units */
+  --space-3: 24px;   /* 3 units */
+  --space-4: 32px;
+  --space-5: 40px;
+  --space-6: 48px;
+  --space-7: 56px;
+  --space-8: 64px;
+  --space-9: 72px;
+  --space-10: 80px;
+  --space-15: 120px;
+
+  /* ---- Border radius ---- */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-pill: 99rem;
+
+  /* ---- Border widths ---- */
+  --border-width-thin: 1px;
+  --border-width: 2px;
+  --border-width-thick: 4px;
+
+  /* ---- Breakpoints (grid widths) ---- */
+  --bp-mobile: 320px;
+  --bp-mobile-lg: 480px;
+  --bp-tablet: 640px;
+  --bp-tablet-lg: 880px;
+  --bp-desktop: 1024px;
+  --bp-desktop-lg: 1200px;
+  --bp-widescreen: 1400px;
+
+  /* Default grid container max-width (desktop) + site margins */
+  --grid-container-max: 1024px;
+  --site-margins: var(--space-4);          /* desktop */
+  --site-margins-mobile: var(--space-2);   /* mobile */
+
+  /* ---- Shadows (USWDS elevation scale) ---- */
+  --shadow-1: 0 1px 4px 0 rgba(0, 0, 0, 0.1);
+  --shadow-2: 0 4px 8px 0 rgba(0, 0, 0, 0.1);
+  --shadow-3: 0 8px 16px 0 rgba(0, 0, 0, 0.1);
+  --shadow-4: 0 12px 24px 0 rgba(0, 0, 0, 0.1);
+  --shadow-5: 0 16px 32px 0 rgba(0, 0, 0, 0.1);
+
+  /* ---- Focus outline (accessibility — always 4px gold) ---- */
+  --focus-color: var(--color-yellow-vivid-20, #face00);
+  --focus-width: 4px;
+  --focus-outline: var(--focus-width) solid #face00;
+  --focus-offset: 0; /* @kind spacing */
+}

@@ -1,0 +1,10 @@
+{
+  "requestableRoles": ["tester", "developer"],
+  "nonRequestableNote": "The manager role can't be requested. It's granted directly by a dataset owner on the dataset's team page.",
+  "sla": {
+    "targetBusinessDays": 3,
+    "dueSoonBusinessDays": 1,
+    "provisional": true,
+    "note": "This is a default the business hasn't confirmed yet. It counts weekdays only; holidays aren't excluded."
+  }
+}

@@ -1,0 +1,11 @@
+/* =========================================================================
+   U.S. Web Design System (USWDS) — global stylesheet entry point.
+   Consumers import THIS file. It only @imports token + font layers.
+   Authoritative source: https://github.com/uswds/uswds
+   Docs: https://designsystem.digital.gov
+   ========================================================================= */
+
+@import "./tokens/fonts.css";
+@import "./tokens/colors.css";
+@import "./tokens/typography.css";
+@import "./tokens/spacing.css";
