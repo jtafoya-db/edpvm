@@ -123,19 +123,19 @@ describe("checkResolvedConfig", () => {
     expect(checkResolvedConfig(bad).some((p) => /<MISSING>/.test(p))).toBe(true);
   });
 
-  it("passes a complete Delta-backed govdev config", () => {
+  it("passes a Delta-backed govdev config whose resource names do not repeat the target", () => {
     expect(
       checkResolvedConfig(
         config(
           {
             ...PROD_ENV,
             VITE_DATA_BACKEND: "delta",
-            EDP_STORE_SCHEMA_PREFIX: "edp_vm_govdev_",
-            EIR_VOLUME_NAME: "eir_govdev",
+            EDP_STORE_SCHEMA_PREFIX: "edp_vm_test_",
+            EIR_VOLUME_NAME: "eir_pdfs",
           },
           undefined,
           "govdev",
-          "edp-vm-govdev",
+          "edp-vm-test",
         ),
       ),
     ).toEqual([]);
@@ -144,6 +144,7 @@ describe("checkResolvedConfig", () => {
   it.each([
     ["VITE_DATA_BACKEND", "memory"],
     ["EDP_STORE_SCHEMA_PREFIX", ""],
+    ["EIR_VOLUME_NAME", ""],
     ["EDP_ADMIN_GROUP_ID", "configure-edp-admin-group-id"],
   ])("rejects unsafe govdev %s=%s", (name, value) => {
     const problems = checkResolvedConfig(

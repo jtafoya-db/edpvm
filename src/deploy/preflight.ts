@@ -198,16 +198,6 @@ export function resolvePreflight(
       }
     }
 
-    for (const name of ["app_name", "store_schema_prefix", "eir_volume_name"]) {
-      const value = supplied(vars, name);
-      if (value && !value.toLowerCase().includes("govdev")) {
-        error(
-          name,
-          `govdev ${name} must contain "govdev" so it cannot collide with production (received "${value}").`,
-        );
-      }
-    }
-
     const backend = supplied(vars, "data_backend");
     if (backend && backend !== "delta") {
       error(
