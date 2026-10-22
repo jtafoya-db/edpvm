@@ -70,6 +70,15 @@ it for Databricks Apps (which run a process and route HTTP to it):
 npm run build:databricks   # NITRO_PRESET=node-server vite build
 ```
 
+If a managed network blocks a minified JavaScript asset during content
+inspection, build the same Databricks artifact without minification:
+
+```bash
+VITE_EDP_UNMINIFIED_BUILD=1 npm run build:databricks
+```
+
+The switch affects only minification; the normal build remains minified.
+
 This emits a Nitro node-server bundle at `.output/server/index.mjs` that
 listens on `PORT` / `NITRO_PORT`.
 
@@ -171,6 +180,9 @@ scripts/deploy-turnkey.sh -t <target> [-p <profile>] [--production] --var catalo
      (EDP admin group, as validators, only with --grant-validator-volume-read)
   8. print the app URL
 ```
+
+`--grants-only` runs steps 1, 2, 7 and 8 only; see
+[Re-apply grants only (recovery)](#re-apply-grants-only-recovery).
 
 One wrapper command runs several bundle operations (`validate`, `plan`,
 `deploy`, two `run`s) and the post-deploy SQL. A bare `bundle deploy` creates
@@ -348,6 +360,44 @@ because `workspace.host` is resolved during auth, before variable interpolation.
 creates the EIR volume without applying any Unity Catalog grant, so the app
 can't read or write the store until a full run applies them. Don't use it for a
 normal deploy, and never for a normal prod deploy.
+
+### Re-apply grants only (recovery)
+
+`--grants-only` re-applies the wrapper's Unity Catalog grants and changes
+nothing else. Use it when the app is deployed and provisioned but its grants
+are missing: a run stopped between provisioning and grants, someone revoked a
+grant, or the app was recreated and has a new service principal. Pass the same
+`-t`, `-p` and `--var` arguments as the deploy you're repairing, plus
+`--grant-validator-volume-read` if that deploy used it:
+
+```bash
+scripts/deploy-turnkey.sh -t preview -p example-workspace --grants-only \
+  --var app_name=edp-vm-pr<N> --var catalog=example_catalog \
+  --var store_schema_prefix=edp_vm_pr<N>_ --var sql_warehouse_id=1111111111111111 \
+  --var eir_volume_name=eir_pr<N> --var edp_admin_group_id=11111111111111 \
+  --var seed_dataset_owner_ids=<your SCIM user id>
+```
+
+It runs the same preflight and resolved-config gate as a full deploy. It
+doesn't build, run `bundle plan`, `bundle deploy` or `bundle run`, provision
+the store or membership tables, or create the EIR schema or volume. It looks up
+the deployed app's service principal. Then it checks that every catalog,
+schema, volume and table it would grant on exists, and applies the same grants
+a full run applies. A full run and `--grants-only` read one grant list in the
+script, so the two can't drift apart. Running it again is safe, because `GRANT`
+is idempotent.
+
+It fails, and applies no grant, when:
+
+- the app or its service principal doesn't exist;
+- any object it grants on doesn't exist, or you can't see it. It lists every
+  missing object. Run a full deploy to provision them;
+- a non-prod target resolves `app_name` to the production name
+  `edp-vending-machine`. A full deploy has the same refusal in
+  `scripts/deploy.sh`.
+
+`-t prod` still needs `--production`. `--grants-only` can't be combined with
+`--skip-grants`.
 
 ### Production deploy inputs
 

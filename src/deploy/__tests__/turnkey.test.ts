@@ -27,7 +27,7 @@ const ROOT = process.cwd();
 const FILE_PATH = "/Workspace/Users/me/.bundle/edp-vending-machine/edp-vm-pr1/files";
 
 /** A `bundle validate -o json` shape with what deploy.sh and bundle-config read. */
-function resolved(target: "preview" | "prod") {
+function resolved(target: "preview" | "prod", appName?: string) {
   const prod = target === "prod";
   const catalog = prod ? "edp_prod" : "example_catalog";
   const env = [
@@ -53,7 +53,7 @@ function resolved(target: "preview" | "prod") {
     resources: {
       apps: {
         edp_vending_machine: {
-          name: prod ? "edp-vending-machine" : "edp-vm-pr1",
+          name: appName ?? (prod ? "edp-vending-machine" : "edp-vm-pr1"),
           config: { env },
           resources: [{ name: "sql-warehouse", sql_warehouse: { id: "1111111111111111" } }],
         },
@@ -113,6 +113,12 @@ interface TurnkeyOptions {
   plan?: unknown;
   membershipGrantFails?: boolean;
   membershipProvisionFails?: boolean;
+  /** Full names of schemas, volumes or tables the fake workspace lacks. */
+  missing?: string[];
+  /** The deployed app: present (default), absent, or present with no service principal. */
+  app?: "present" | "absent" | "no-sp";
+  /** The app name `bundle validate` resolves, if not the target's usual one. */
+  resolvedAppName?: string;
 }
 
 function turnkey(opts: TurnkeyOptions = {}) {
@@ -124,9 +130,13 @@ function turnkey(opts: TurnkeyOptions = {}) {
   const bin = join(tools, "bin");
   mkdirSync(bin);
   const log = join(tools, "calls.log");
-  writeFileSync(join(tools, "validate.json"), JSON.stringify(resolved(opts.target ?? "preview")));
+  writeFileSync(
+    join(tools, "validate.json"),
+    JSON.stringify(resolved(opts.target ?? "preview", opts.resolvedAppName)),
+  );
   writeFileSync(join(tools, "plan.json"), JSON.stringify(opts.plan ?? { plan: {} }));
   const catalogs = (opts.catalogs ?? ["example_catalog", "edp_prod"]).join(" ");
+  const missing = (opts.missing ?? []).join(" ");
   const membershipGrantFailure = opts.membershipGrantFails
     ? `if [[ "$*" == *"GRANT SELECT ON TABLE"*"membership"* ]]; then echo '{"statement_id":"s1","status":{"state":"FAILED","error":{"message":"membership table missing"}}}'; exit 0; fi;`
     : "";
@@ -141,6 +151,9 @@ case "$1 $2" in
   "catalogs get")
     for c in ${catalogs}; do [ "$c" = "$3" ] && { echo '{}'; exit 0; }; done
     echo "Error: Catalog '$3' does not exist." >&2; exit 1 ;;
+  "schemas get" | "volumes read" | "tables get")
+    for m in ${missing}; do [ "$m" = "$3" ] && { echo "Error: '$3' does not exist." >&2; exit 1; }; done
+    echo '{}' ;;
   "bundle validate") cat "${tools}/validate.json" ;;
   "bundle plan") cat "${tools}/plan.json" ;;
   "bundle run")
@@ -150,7 +163,12 @@ case "$1 $2" in
   "api get")
     if [[ "$3" == "/api/2.0/preview/scim/v2/Groups/11111111111111" ]]; then echo '{"displayName":"edp-admins"}'; fi ;;
   "api post") ${membershipGrantFailure} echo '{"statement_id":"s1","status":{"state":"SUCCEEDED"}}' ;;
-  "apps get") echo '{"service_principal_client_id":"sp-1","url":"https://edp-vm-pr1.example"}' ;;
+  "apps get")
+    case "${opts.app ?? "present"}" in
+      absent) echo "Error: App with name $3 does not exist or is deleted." >&2; exit 1 ;;
+      no-sp) echo '{"url":"https://edp-vm-pr1.example"}' ;;
+      *) echo '{"service_principal_client_id":"sp-1","url":"https://edp-vm-pr1.example"}' ;;
+    esac ;;
 esac`,
   );
   fake(
@@ -308,6 +326,71 @@ describe("scripts/deploy-turnkey.sh — one deploy path", SPAWNS, () => {
     expect(run.status).not.toBe(0);
     expect(run.stderr).toMatch(/--production/);
     expect(calls).toEqual([]);
+  });
+
+  describe("--grants-only (recovery)", () => {
+    const grants = (calls: string[]) => sql(calls).filter((s) => s.startsWith("GRANT"));
+
+    it("applies exactly the full run's grants and skips build, deploy, run and provisioning", () => {
+      const full = turnkey({ args: [...PREVIEW_ARGS, "--grant-validator-volume-read"] });
+      expect(full.run.status, full.run.stderr).toBe(0);
+      const { run, calls } = turnkey({
+        args: [...PREVIEW_ARGS, "--grant-validator-volume-read", "--grants-only"],
+      });
+      expect(run.status, run.stderr).toBe(0);
+      expect(grants(calls)).toEqual(grants(full.calls));
+      // Only grants: no CREATE, no build, no bundle deploy/run/plan.
+      expect(sql(calls).every((s) => s.startsWith("GRANT"))).toBe(true);
+      expect(indexOf(calls, "npm")).toBe(-1);
+      for (const skipped of ["bundle plan", "bundle deploy", "bundle run"]) {
+        expect(indexOf(calls, `databricks ${skipped}`), calls.join("\n")).toBe(-1);
+      }
+      // Still resolves and gates the same bundle config first.
+      expect(indexOf(calls, "databricks catalogs get example_catalog")).toBe(0);
+      expect(indexOf(calls, "databricks bundle validate")).toBeGreaterThan(0);
+    });
+
+    it("fails loudly, applying no grant, when an object it would grant on is missing", () => {
+      const { run, calls } = turnkey({
+        args: [...PREVIEW_ARGS, "--grants-only"],
+        missing: [
+          "example_catalog.edp_vm_preview.eir_pr1",
+          "example_catalog.membership.snapshot_runs",
+        ],
+      });
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toContain("VOLUME example_catalog.edp_vm_preview.eir_pr1");
+      expect(run.stderr).toContain("TABLE example_catalog.membership.snapshot_runs");
+      expect(grants(calls)).toEqual([]);
+    });
+
+    it("refuses --skip-grants with it, before touching the workspace", () => {
+      const { run, calls } = turnkey({ args: [...PREVIEW_ARGS, "--grants-only", "--skip-grants"] });
+      expect(run.status).toBe(2);
+      expect(run.stderr).toMatch(/--grants-only and --skip-grants/);
+      expect(calls).toEqual([]);
+    });
+
+    it("refuses a preview that resolves to the production app name, granting nothing", () => {
+      const { run, calls } = turnkey({
+        args: [...PREVIEW_ARGS, "--grants-only"],
+        resolvedAppName: "edp-vending-machine",
+      });
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toMatch(/production app name/);
+      expect(indexOf(calls, "databricks apps get")).toBe(-1);
+      expect(grants(calls)).toEqual([]);
+    });
+
+    it.each([
+      ["absent", /app 'edp-vm-pr1'/],
+      ["no-sp", /app service principal for 'edp-vm-pr1'/],
+    ] as const)("fails loudly, applying no grant, when the app is %s", (app, message) => {
+      const { run, calls } = turnkey({ args: [...PREVIEW_ARGS, "--grants-only"], app });
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toMatch(message);
+      expect(grants(calls)).toEqual([]);
+    });
   });
 
   it("passes --production on to scripts/deploy.sh for prod", () => {

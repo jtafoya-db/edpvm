@@ -12,7 +12,10 @@ for required in LICENSE PUBLICATION.md PUBLICATION-MANIFEST.md .gitleaks.toml; d
 done
 
 forbidden_names='(^|/)(\.env($|\.)|\.databrickscfg$|.*\.(pem|key|p12|pfx|jks|keystore|kdbx|tfstate)$|id_(rsa|dsa|ecdsa|ed25519)$)'
-mapfile -t forbidden < <(find "$repo" -path "$repo/.git" -prune -o -type f -printf '%P\n' | grep -E -i "$forbidden_names" || true)
+forbidden=()
+while IFS= read -r path; do
+  forbidden+=("${path#"$repo"/}")
+done < <(find "$repo" -path "$repo/.git" -prune -o -type f -print | grep -E -i "$forbidden_names" || true)
 if (( ${#forbidden[@]} > 0 )); then
   printf 'FAIL: forbidden credential-like files:\n' >&2
   printf '  %s\n' "${forbidden[@]}" >&2
@@ -34,12 +37,8 @@ fi
 "$gitleaks_bin" dir "$repo" --config "$repo/.gitleaks.toml" --no-banner --redact --exit-code 1
 
 if [[ -d "$repo/.git" ]]; then
-  test "$(git -C "$repo" rev-list --count HEAD)" = 1 || {
-    echo "FAIL: public repository must contain exactly one commit" >&2
-    exit 1
-  }
-  test "$(git -C "$repo" rev-list --parents -n 1 HEAD | awk '{print NF - 1}')" = 0 || {
-    echo "FAIL: public commit must be a root commit" >&2
+  test -z "$(git -C "$repo" rev-list --min-parents=2 HEAD)" || {
+    echo "FAIL: public history must remain linear (merge commit found)" >&2
     exit 1
   }
 fi

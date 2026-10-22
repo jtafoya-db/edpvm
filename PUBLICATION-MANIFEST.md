@@ -1,8 +1,8 @@
 # Publication manifest
 
-- Source ref: `codex/public-govdev-source`
-- Source commit: `0b122cc728aa6f4b9b4b2eface3b16df4ba91cef`
-- Source commit date: `2026-10-19T14:42:33Z`
-- Exported at: `2026-10-19T14:43:17Z`
+- Source refs: `codex/release-readiness-fix`, `codex/grants-only-recovery`
+- Source commits: `5aebac68abf4d228c27ef082a674362b923c2e30`, `35a20f091057322cfa232c3c5580604fd404cc04`
+- Source commit dates: `2026-10-21T16:18:33Z`, `2026-10-22T01:52:06Z`
+- Exported at: `2026-10-22T01:52:14Z`
 - Public repository: `https://github.com/jtafoya-db/edpvm`
-- Export method: committed files via `git archive`, then versioned publication policy
+- Export method: exact source-commit delta adapted through the versioned publication policy and applied on top of public `main`

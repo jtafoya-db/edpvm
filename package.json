@@ -59,7 +59,7 @@
     "tailwindcss": "^4.2.1",
     "tw-animate-css": "^1.3.4",
     "vaul": "^1.1.2",
-    "vite": "8.1.5",
+    "vite": "8.3.4",
     "vite-tsconfig-paths": "^6.0.2",
     "yaml": "^2.9.1",
     "zod": "^3.24.2"
@@ -95,8 +95,9 @@
     "node": ">=24"
   },
   "overrides": {
-    "rolldown": "1.2.1",
+    "launch-editor": "2.14.2",
     "shell-quote": "1.12.0",
+    "rolldown": "1.2.12",
     "source-map-js": "1.2.2"
   },
   "private": true,

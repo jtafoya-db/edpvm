@@ -7,6 +7,14 @@
 # is idempotent: re-running re-deploys, re-provisions (CREATE ... IF NOT
 # EXISTS), re-applies grants (GRANT is idempotent) and restarts the app.
 #
+# RECOVERY: --grants-only re-applies only the grants (e.g. after someone revoked
+# them, or a run died between provisioning and grants). It runs the same
+# preflight and resolved-config gate, then skips the build, bundle deploy/run,
+# provisioning and the EIR create; it checks that every object it would grant on
+# and the app's service principal exist, granting nothing (and failing) if any
+# is missing, then applies the exact grants a full run does (one shared list,
+# apply_grants). Pass the same -t/-p/--var set as the deploy it repairs.
+#
 #   scripts/deploy-turnkey.sh -t preview -p example-workspace \
 #     --var app_name=edp-vm-pr<N> \
 #     --var catalog=example_catalog \
@@ -63,6 +71,7 @@ TARGET=""
 PROFILE=""
 PRODUCTION=no
 APPLY_GRANTS=1
+GRANTS_ONLY=0
 GRANT_VALIDATOR_VOLUME=0
 PASSTHROUGH=() # args forwarded verbatim to databricks and deploy.sh (-t, -p, --var ...)
 VAR_ARGS=()    # just the --var pairs, for the preflight
@@ -70,7 +79,7 @@ VAR_ARGS=()    # just the --var pairs, for the preflight
 usage() {
   cat >&2 <<'USAGE'
 usage: scripts/deploy-turnkey.sh -t <target> [-p <profile>] [--production] \
-         [--skip-grants] [--grant-validator-volume-read] \
+         [--grants-only | --skip-grants] [--grant-validator-volume-read] \
          --var catalog=<name> --var sql_warehouse_id=<id> [--var ...]
 
   -t, --target   bundle target (preview | dev | govdev | prod). Required.
@@ -80,6 +89,11 @@ usage: scripts/deploy-turnkey.sh -t <target> [-p <profile>] [--production] \
                  on to scripts/deploy.sh as the deliberate acknowledgement.
   --var app_name Required on every target but prod (scripts/deploy.sh
                  enforces it); a PR preview is edp-vm-pr<N>.
+  --grants-only  RECOVERY: re-apply the UC grants a full run applies, and
+                 nothing else (no build, bundle deploy/run, provisioning or
+                 EIR create). Fails, granting nothing, unless the app, its
+                 service principal and every object it grants on exist.
+                 Idempotent. Pass the deploy's own -t/-p/--var set.
   --skip-grants  RECOVERY/DEBUG ONLY, not for a normal deploy (and never a
                  normal prod deploy): deploy + provision + create the EIR
                  volume without applying any UC grant. The app can't read or
@@ -125,6 +139,10 @@ while [[ $# -gt 0 ]]; do
       APPLY_GRANTS=0
       shift
       ;;
+    --grants-only)
+      GRANTS_ONLY=1
+      shift
+      ;;
     --grant-validator-volume-read)
       GRANT_VALIDATOR_VOLUME=1
       shift
@@ -147,6 +165,10 @@ done
   echo "deploy-turnkey: -t <target> is required" >&2
   usage
 }
+if [[ "$GRANTS_ONLY" -eq 1 && "$APPLY_GRANTS" -eq 0 ]]; then
+  echo "deploy-turnkey: --grants-only and --skip-grants contradict each other; pass one." >&2
+  usage
+fi
 [[ "${EDP_DEPLOY_PRODUCTION:-}" == yes ]] && PRODUCTION=yes
 if [[ "$TARGET" == "prod" && -z "$PROFILE" ]]; then
   echo "deploy-turnkey: prod requires -p <profile> (the production host comes from the profile; it cannot be a --var)." >&2
@@ -243,10 +265,10 @@ assert_narrow_principal() {
   esac
 }
 
-echo "==> [1/7] preflight: required inputs, and the catalog exists"
+echo "==> [1/8] preflight: required inputs, and the catalog exists"
 node scripts/deploy-preflight.ts "${VAR_ARGS[@]}" -t "$TARGET" "${PROFILE_ARG[@]}"
 
-echo "==> [2/7] bundle validate + resolved-config gate"
+echo "==> [2/8] bundle validate + resolved-config gate"
 CONFIG_JSON="$(databricks bundle validate "${PASSTHROUGH[@]}" -o json)"
 # Gate the RESOLVED configuration (not just CLI vars): the rendered store and
 # EIR catalogs must match, and no app env entry may be value-less — this catches
@@ -283,42 +305,118 @@ fi
 echo "    resolved config is valid (store/EIR catalog = ${STORE_CATALOG}; prefix = '${STORE_PREFIX}'; no value-less env)."
 echo "    store schemas from the DDL: ${STORE_SCHEMAS}"
 
-echo "==> [3/7] plan gate, build + deploy (scripts/deploy.sh)"
-# scripts/deploy.sh runs the PLAN GATE first: `bundle plan -o json` piped to
-# `bundle-config.ts --check-plan`, which fails if any UC schema or volume would
-# be deleted or recreated (#141: signed EIR records and PDFs must survive any
-# deploy). prevent_destroy on the prod EIR schema/volume blocks destroy/recreate
-# of a declared resource; the gate also catches one whose block was removed
-# from databricks.yml (the plan says "delete" and no lifecycle is left to stop
-# it). Only after it passes does deploy.sh build with the target's
-# data_backend, stage the build into databricks-app/ (the app's source; the app
-# compute installs nothing), `bundle deploy --auto-approve` and `bundle run`,
-# which starts the app on the new build. The gate lives there, next to the
-# --auto-approve, so no caller can skip it.
-# The marker deploy.sh requires: it refuses to run unless this wrapper calls it.
-EDP_DEPLOY_VIA_TURNKEY=1 scripts/deploy.sh "${DEPLOY_ARGS[@]}"
+if [[ "$GRANTS_ONLY" -eq 1 ]]; then
+  echo "==> [3-6/8] --grants-only: skipping build, bundle deploy/run, provisioning and EIR create"
+  # scripts/deploy.sh enforces this on a full run; --grants-only never calls it,
+  # and would otherwise grant the production app's SP on this target's schemas.
+  if [[ "$TARGET" != prod && "$APP_NAME" == edp-vending-machine ]]; then
+    echo "deploy-turnkey: the ${TARGET} target resolves app_name to edp-vending-machine, the production app name; refusing to grant to it." >&2
+    exit 1
+  fi
+else
+  echo "==> [3/8] plan gate, build + deploy (scripts/deploy.sh)"
+  # scripts/deploy.sh runs the PLAN GATE first: `bundle plan -o json` piped to
+  # `bundle-config.ts --check-plan`, which fails if any UC schema or volume would
+  # be deleted or recreated (#141: signed EIR records and PDFs must survive any
+  # deploy). prevent_destroy on the prod EIR schema/volume blocks destroy/recreate
+  # of a declared resource; the gate also catches one whose block was removed
+  # from databricks.yml (the plan says "delete" and no lifecycle is left to stop
+  # it). Only after it passes does deploy.sh build with the target's
+  # data_backend, stage the build into databricks-app/ (the app's source; the app
+  # compute installs nothing), `bundle deploy --auto-approve` and `bundle run`,
+  # which starts the app on the new build. The gate lives there, next to the
+  # --auto-approve, so no caller can skip it.
+  # The marker deploy.sh requires: it refuses to run unless this wrapper calls it.
+  EDP_DEPLOY_VIA_TURNKEY=1 scripts/deploy.sh "${DEPLOY_ARGS[@]}"
 
-echo "==> [4/8] bundle run provision_store (store schemas + tables, idempotent)"
-databricks bundle run provision_store "${PASSTHROUGH[@]}"
+  echo "==> [4/8] bundle run provision_store (store schemas + tables, idempotent)"
+  databricks bundle run provision_store "${PASSTHROUGH[@]}"
 
-echo "==> [5/8] bundle run provision_membership_snapshot (membership tables, idempotent)"
-databricks bundle run provision_membership_snapshot "${PASSTHROUGH[@]}"
+  echo "==> [5/8] bundle run provision_membership_snapshot (membership tables, idempotent)"
+  databricks bundle run provision_membership_snapshot "${PASSTHROUGH[@]}"
 
-echo "==> [6/8] EIR schema + volume (CREATE IF NOT EXISTS, idempotent)"
-# For prod these are also bundle-managed (with lifecycle.prevent_destroy, so
-# `bundle destroy` refuses to drop them); the IF NOT EXISTS here is a no-op there and the real create for preview/dev,
-# where mode:development would rewrite a bundle-managed UC name.
-run_sql "CREATE SCHEMA IF NOT EXISTS \`${EIR_CATALOG}\`.\`${EIR_SCHEMA}\`"
-run_sql "CREATE VOLUME IF NOT EXISTS \`${EIR_CATALOG}\`.\`${EIR_SCHEMA}\`.\`${EIR_VOLUME}\`"
+  echo "==> [6/8] EIR schema + volume (CREATE IF NOT EXISTS, idempotent)"
+  # For prod these are also bundle-managed (with lifecycle.prevent_destroy, so
+  # `bundle destroy` refuses to drop them); the IF NOT EXISTS here is a no-op there and the real create for preview/dev,
+  # where mode:development would rewrite a bundle-managed UC name.
+  run_sql "CREATE SCHEMA IF NOT EXISTS \`${EIR_CATALOG}\`.\`${EIR_SCHEMA}\`"
+  run_sql "CREATE VOLUME IF NOT EXISTS \`${EIR_CATALOG}\`.\`${EIR_SCHEMA}\`.\`${EIR_VOLUME}\`"
+fi
+
+# --- the ONE list of UC grants this wrapper applies, used by a full run and by
+# --grants-only so the two can't drift. Each grant goes through uc_grant, which
+# acts on GRANT_PASS: "apply" runs the GRANT; "verify" (--grants-only, before
+# any grant) instead records any object that doesn't exist in MISSING_OBJECTS.
+# Reads VALIDATOR_NAME (empty = no validator grant) and SP_CLIENT_ID.
+apply_grants() {
+  # Validator group: no direct grant by default — validators read PDFs through
+  # the app, which checks membership server-side. --grant-validator-volume-read
+  # adds USE CATALOG + USE SCHEMA + READ VOLUME on the EIR volume only, to the
+  # account-group DISPLAY NAME resolved from the configured SCIM id. Never
+  # SELECT on the EIR tables.
+  if [[ -n "$VALIDATOR_NAME" ]]; then
+    uc_grant CATALOG "$EIR_CATALOG" "USE CATALOG" "$VALIDATOR_NAME"
+    uc_grant SCHEMA "${EIR_CATALOG}.${EIR_SCHEMA}" "USE SCHEMA" "$VALIDATOR_NAME"
+    uc_grant VOLUME "${EIR_CATALOG}.${EIR_SCHEMA}.${EIR_VOLUME}" "READ VOLUME" "$VALIDATOR_NAME"
+  fi
+  uc_grant CATALOG "$STORE_CATALOG" "USE CATALOG" "$SP_CLIENT_ID"
+  uc_grant CATALOG "$EIR_CATALOG" "USE CATALOG" "$SP_CLIENT_ID"
+  uc_grant SCHEMA "${EIR_CATALOG}.${EIR_SCHEMA}" "USE SCHEMA" "$SP_CLIENT_ID"
+  uc_grant VOLUME "${EIR_CATALOG}.${EIR_SCHEMA}.${EIR_VOLUME}" "READ VOLUME, WRITE VOLUME" "$SP_CLIENT_ID"
+  # Only the schemas this app's own DDL creates (STORE_SCHEMAS, derived above;
+  # each is a validated plain identifier, so word-splitting is safe). One app SP
+  # today; see GRANT BOUNDARY above for the ADR-0008 limitation.
+  local schema
+  for schema in $STORE_SCHEMAS; do
+    uc_grant SCHEMA "${STORE_CATALOG}.${STORE_PREFIX}${schema}" "USE SCHEMA, SELECT, MODIFY" "$SP_CLIENT_ID"
+  done
+  # Membership is provisioned separately above. Keep these SELECT-only grants
+  # last so a membership-specific failure cannot prevent the app's EIR/store
+  # grants from being applied on a fresh target.
+  uc_grant CATALOG "$MEMBERSHIP_CATALOG" "USE CATALOG" "$SP_CLIENT_ID"
+  uc_grant SCHEMA "${MEMBERSHIP_CATALOG}.${MEMBERSHIP_SCHEMA}" "USE SCHEMA" "$SP_CLIENT_ID"
+  uc_grant TABLE "${MEMBERSHIP_CATALOG}.${MEMBERSHIP_SCHEMA}.group_members" "SELECT" "$SP_CLIENT_ID"
+  uc_grant TABLE "${MEMBERSHIP_CATALOG}.${MEMBERSHIP_SCHEMA}.snapshot_runs" "SELECT" "$SP_CLIENT_ID"
+}
+
+# uc_grant <CATALOG|SCHEMA|VOLUME|TABLE> <dotted name> <privileges> <principal>
+uc_grant() {
+  local securable="$1" name="$2" privileges="$3" principal="$4"
+  if [[ "$GRANT_PASS" == verify ]]; then
+    require_object "$securable" "$name"
+    return 0
+  fi
+  run_sql "GRANT ${privileges} ON ${securable} $(quote_name "$name") TO \`${principal}\`"
+}
+
+# a.b.c -> `a`.`b`.`c` (UC names here never contain a dot).
+quote_name() {
+  local IFS=. parts
+  read -r -a parts <<<"$1"
+  printf '`%s`.' "${parts[@]}" | sed 's/\.$//'
+}
+
+# Record a UC object the workspace doesn't have (once per object).
+CHECKED_OBJECTS=$'\n'
+MISSING_OBJECTS=()
+require_object() {
+  local securable="$1" name="$2" key="$1 $2" lookup
+  [[ "$CHECKED_OBJECTS" == *$'\n'"$key"$'\n'* ]] && return 0
+  CHECKED_OBJECTS+="$key"$'\n'
+  case "$securable" in
+    CATALOG) lookup=(catalogs get) ;;
+    SCHEMA) lookup=(schemas get) ;;
+    VOLUME) lookup=(volumes read) ;;
+    TABLE) lookup=(tables get) ;;
+  esac
+  databricks "${lookup[@]}" "$name" "${PROFILE_ARG[@]}" -o json >/dev/null ||
+    MISSING_OBJECTS+=("$key")
+}
 
 if [[ "$APPLY_GRANTS" -eq 1 ]]; then
   echo "==> [7/8] UC grants (validator group + app service principal)"
 
-  # Validator group: no direct grant by default — validators read PDFs through
-  # the app, which checks membership server-side. --grant-validator-volume-read
-  # adds USE CATALOG + USE SCHEMA + READ VOLUME on the EIR volume only, to the
-  # account-group DISPLAY NAME resolved from the configured SCIM id (fails loud
-  # if unresolvable). Never SELECT on the EIR tables.
+  VALIDATOR_NAME=""
   if [[ "$GRANT_VALIDATOR_VOLUME" -eq 1 ]]; then
     if [[ -z "$VALIDATOR_GROUP" ]]; then
       echo "deploy-turnkey: --grant-validator-volume-read needs edp_admin_group_id (the group that holds the Safeguards validator role)." >&2
@@ -326,39 +424,36 @@ if [[ "$APPLY_GRANTS" -eq 1 ]]; then
     fi
     VALIDATOR_NAME="$(resolve_group_name "$VALIDATOR_GROUP")" || exit 1
     assert_narrow_principal "$VALIDATOR_NAME" || exit 1
-    run_sql "GRANT USE CATALOG ON CATALOG \`${EIR_CATALOG}\` TO \`${VALIDATOR_NAME}\`"
-    run_sql "GRANT USE SCHEMA ON SCHEMA \`${EIR_CATALOG}\`.\`${EIR_SCHEMA}\` TO \`${VALIDATOR_NAME}\`"
-    run_sql "GRANT READ VOLUME ON VOLUME \`${EIR_CATALOG}\`.\`${EIR_SCHEMA}\`.\`${EIR_VOLUME}\` TO \`${VALIDATOR_NAME}\`"
   else
     echo "    note: no direct validator grant on the EIR volume (pass --grant-validator-volume-read to add one)." >&2
   fi
 
   # App service principal: resolve from the deployed app (its id is not known at
-  # bundle-config time). A missing SP is a hard failure, not a warning.
-  SP_CLIENT_ID="$(databricks apps get "$APP_NAME" "${PROFILE_ARG[@]}" -o json | python3 -I -c '
+  # bundle-config time). A missing app or SP is a hard failure, not a warning.
+  if ! APP_JSON="$(databricks apps get "$APP_NAME" "${PROFILE_ARG[@]}" -o json)"; then
+    echo "deploy-turnkey: could not find the app '${APP_NAME}'; cannot apply its service principal's grants." >&2
+    exit 1
+  fi
+  SP_CLIENT_ID="$(printf '%s' "$APP_JSON" | python3 -I -c '
 import json, sys
 print(json.load(sys.stdin).get("service_principal_client_id", ""))')"
   if [[ -z "$SP_CLIENT_ID" ]]; then
     echo "deploy-turnkey: could not resolve the app service principal for '${APP_NAME}'; cannot apply its grants." >&2
     exit 1
   fi
-  run_sql "GRANT USE CATALOG ON CATALOG \`${STORE_CATALOG}\` TO \`${SP_CLIENT_ID}\`"
-  run_sql "GRANT USE CATALOG ON CATALOG \`${EIR_CATALOG}\` TO \`${SP_CLIENT_ID}\`"
-  run_sql "GRANT USE SCHEMA ON SCHEMA \`${EIR_CATALOG}\`.\`${EIR_SCHEMA}\` TO \`${SP_CLIENT_ID}\`"
-  run_sql "GRANT READ VOLUME, WRITE VOLUME ON VOLUME \`${EIR_CATALOG}\`.\`${EIR_SCHEMA}\`.\`${EIR_VOLUME}\` TO \`${SP_CLIENT_ID}\`"
-  # Only the schemas this app's own DDL creates (STORE_SCHEMAS, derived above;
-  # each is a validated plain identifier, so word-splitting is safe). One app SP
-  # today; see GRANT BOUNDARY above for the ADR-0008 limitation.
-  for schema in $STORE_SCHEMAS; do
-    run_sql "GRANT USE SCHEMA, SELECT, MODIFY ON SCHEMA \`${STORE_CATALOG}\`.\`${STORE_PREFIX}${schema}\` TO \`${SP_CLIENT_ID}\`"
-  done
-  # Membership is provisioned separately above. Keep these SELECT-only grants
-  # last so a membership-specific failure cannot prevent the app's EIR/store
-  # grants from being applied on a fresh target.
-  run_sql "GRANT USE CATALOG ON CATALOG \`${MEMBERSHIP_CATALOG}\` TO \`${SP_CLIENT_ID}\`"
-  run_sql "GRANT USE SCHEMA ON SCHEMA \`${MEMBERSHIP_CATALOG}\`.\`${MEMBERSHIP_SCHEMA}\` TO \`${SP_CLIENT_ID}\`"
-  run_sql "GRANT SELECT ON TABLE \`${MEMBERSHIP_CATALOG}\`.\`${MEMBERSHIP_SCHEMA}\`.\`group_members\` TO \`${SP_CLIENT_ID}\`"
-  run_sql "GRANT SELECT ON TABLE \`${MEMBERSHIP_CATALOG}\`.\`${MEMBERSHIP_SCHEMA}\`.\`snapshot_runs\` TO \`${SP_CLIENT_ID}\`"
+
+  # --grants-only provisioned nothing, so check every object first and grant
+  # nothing unless all of them exist.
+  if [[ "$GRANTS_ONLY" -eq 1 ]]; then
+    GRANT_PASS=verify apply_grants
+    if [[ "${#MISSING_OBJECTS[@]}" -gt 0 ]]; then
+      echo "deploy-turnkey: --grants-only applied no grant; these objects don't exist (or aren't visible to you):" >&2
+      printf '  - %s\n' "${MISSING_OBJECTS[@]}" >&2
+      echo "  Run a full deploy (without --grants-only) to provision them." >&2
+      exit 1
+    fi
+  fi
+  GRANT_PASS=apply apply_grants
 else
   echo "==> [7/8] skipping UC grants (--skip-grants)"
 fi
