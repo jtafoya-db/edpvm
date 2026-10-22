@@ -6,6 +6,9 @@
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
+export const minifyConfigFor = (flag = process.env["VITE_EDP_UNMINIFIED_BUILD"]) =>
+  flag === "1" ? ({ minify: false } as const) : {};
+
 export default defineConfig({
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
@@ -14,6 +17,10 @@ export default defineConfig({
   },
   vite: {
     build: {
+      // Some managed networks block minified JavaScript through content
+      // inspection. Keep optimized builds as the default, but allow an
+      // operator to produce an equivalent readable artifact explicitly.
+      ...minifyConfigFor(),
       // The ported prototype modules register their screens and primitives on
       // `window` as import side effects. Rolldown's production tree-shaker was
       // incorrectly reducing those chunks to empty React imports, leaving
