@@ -145,10 +145,11 @@ export function checkResolvedConfig(config: unknown): string[] {
     const requiredNames: [string, string][] = [
       ["app name", fields.appName],
       ["EDP_STORE_SCHEMA_PREFIX", fields.storeSchemaPrefix],
+      ["EIR_VOLUME_SCHEMA", fields.eirSchema],
       ["EIR_VOLUME_NAME", fields.eirVolume],
     ];
     for (const [name, value] of requiredNames) {
-      if (!value) problems.push(`govdev ${name} must not be empty`);
+      if (!value.trim()) problems.push(`govdev ${name} must not be empty`);
     }
     if (!/^\d+$/.test(fields.adminGroupId)) {
       problems.push(

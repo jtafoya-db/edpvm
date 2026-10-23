@@ -198,6 +198,10 @@ export function resolvePreflight(
       }
     }
 
+    if (supplied(vars, "app_name") === "edp-vending-machine") {
+      error("app_name", "govdev must not use the production app name edp-vending-machine.");
+    }
+
     const backend = supplied(vars, "data_backend");
     if (backend && backend !== "delta") {
       error(

@@ -144,7 +144,9 @@ describe("checkResolvedConfig", () => {
   it.each([
     ["VITE_DATA_BACKEND", "memory"],
     ["EDP_STORE_SCHEMA_PREFIX", ""],
+    ["EIR_VOLUME_SCHEMA", ""],
     ["EIR_VOLUME_NAME", ""],
+    ["EIR_VOLUME_NAME", "   "],
     ["EDP_ADMIN_GROUP_ID", "configure-edp-admin-group-id"],
   ])("rejects unsafe govdev %s=%s", (name, value) => {
     const problems = checkResolvedConfig(

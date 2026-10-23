@@ -50,8 +50,13 @@ describe("resolvePreflight — govdev isolation", () => {
     },
   );
 
-  it("does not require resource names to repeat the target name", () => {
-    expect(resolvePreflight(GOVDEV_MINIMAL, { target: "govdev" })).toEqual([]);
+  it("rejects the production app name", () => {
+    expect(
+      resolvePreflight(
+        { ...GOVDEV_MINIMAL, app_name: "edp-vending-machine" },
+        { target: "govdev" },
+      ),
+    ).toContainEqual(expect.objectContaining({ variable: "app_name", severity: "error" }));
   });
 
   it("rejects an explicit memory backend", () => {

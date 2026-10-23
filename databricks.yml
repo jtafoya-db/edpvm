@@ -563,8 +563,9 @@ targets:
   govdev:
     mode: development
     variables:
-      # Isolated defaults are deliberately invalid for a real deployment. The
-      # preflight requires explicit govdev-marked names and a numeric group id.
+      # Defaults are sentinels, not environment markers: the govdev target and
+      # workspace carry environment identity. Names must resolve nonempty and
+      # app_name must not be edp-vending-machine; the group id must be numeric.
       app_name: edp-vm-govdev-unset
       data_backend: delta
       store_schema_prefix: edp_vm_govdev_unset_
