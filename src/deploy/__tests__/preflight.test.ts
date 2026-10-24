@@ -29,9 +29,9 @@ const PROD_MINIMAL = {
 };
 const GOVDEV_MINIMAL = {
   ...MINIMAL,
-  app_name: "edp-vm-govdev",
-  store_schema_prefix: "edp_vm_govdev_",
-  eir_volume_name: "eir_govdev",
+  app_name: "edp-vm-test",
+  store_schema_prefix: "edp_vm_test_",
+  eir_volume_name: "eir_pdfs",
   edp_admin_group_id: "123456789",
 };
 
@@ -50,14 +50,13 @@ describe("resolvePreflight — govdev isolation", () => {
     },
   );
 
-  it.each([
-    ["app_name", "edp-vending-machine"],
-    ["store_schema_prefix", ""],
-    ["eir_volume_name", "eir"],
-  ])("rejects unsafe production-like %s=%s", (name, value) => {
+  it("rejects the production app name", () => {
     expect(
-      resolvePreflight({ ...GOVDEV_MINIMAL, [name]: value }, { target: "govdev" }),
-    ).toContainEqual(expect.objectContaining({ variable: name, severity: "error" }));
+      resolvePreflight(
+        { ...GOVDEV_MINIMAL, app_name: "edp-vending-machine" },
+        { target: "govdev" },
+      ),
+    ).toContainEqual(expect.objectContaining({ variable: "app_name", severity: "error" }));
   });
 
   it("rejects an explicit memory backend", () => {
@@ -413,10 +412,7 @@ describe("missingCatalogProblems — the catalog must exist on the workspace", (
 
   it("is clean when the catalog exists", () => {
     expect(
-      missingCatalogProblems(
-        { catalog: "example_catalog" },
-        workspace("example_catalog"),
-      ),
+      missingCatalogProblems({ catalog: "example_catalog" }, workspace("example_catalog")),
     ).toEqual([]);
   });
 

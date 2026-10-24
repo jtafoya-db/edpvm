@@ -219,9 +219,11 @@ build uses this checkout's `node_modules`.
 ### GovCloud development deploy (Delta)
 
 The `govdev` target is development-only, uses the CLI profile's workspace host,
-and forces the Delta backend. Its app, store schemas, and EIR volume must use
-isolated names containing `govdev`; preflight rejects production-like names or
-a missing numeric EDP admin-group SCIM id before any workspace mutation.
+and forces the Delta backend. The target and its separate workspace/catalog
+carry the environment identity; app and EIR resource names are free-form, but
+must resolve to explicit, nonempty values. Preflight still rejects the production
+app name `edp-vending-machine` and a missing numeric EDP admin-group SCIM id
+before any workspace mutation.
 
 ```bash
 npm ci
@@ -229,11 +231,11 @@ npm ci
 scripts/deploy-turnkey.sh \
   -t govdev \
   -p <govcloud-dev-profile> \
-  --var app_name=edp-vm-govdev \
+  --var app_name=edp-vm-test \
   --var catalog=<existing-catalog> \
-  --var store_schema_prefix=edp_vm_govdev_ \
+  --var store_schema_prefix=edp_vm_test_ \
   --var sql_warehouse_id=<16-hex-id> \
-  --var eir_volume_name=eir_govdev \
+  --var eir_volume_name=eir_pdfs \
   --var edp_admin_group_id=<numeric-scim-group-id>
 ```
 
@@ -241,7 +243,8 @@ Create the catalog, warehouse, and account group first. Find the stable numeric
 group id in the account SCIM group record (or with the Databricks CLI/API); do
 not pass the display name. The profile supplies authentication and the GovCloud
 workspace host, while the bundle emits `EDP_ADMIN_GROUP_ID` and the isolated
-`EDP_STORE_SCHEMA_PREFIX` into the app runtime.
+`EDP_STORE_SCHEMA_PREFIX` into the app runtime. The resolved EIR volume schema
+and name must also be nonempty.
 
 ### The build-and-ship step — `scripts/deploy.sh`
 
