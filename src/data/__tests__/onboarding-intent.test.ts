@@ -11,6 +11,7 @@ import { createDeltaStore, DeltaApiError, type CommandBody } from "../adapters/d
 import { createMemoryStore } from "../adapters/memory";
 import type { OnboardingIntake, OnboardingRequest } from "../onboarding";
 import type { UserProfile } from "../types";
+import { COMPLETE_INTAKE_ANSWERS } from "../onboarding/intake.fixtures";
 import { makeSnapshot } from "./fixture";
 
 const INTAKE: OnboardingIntake = {
@@ -21,13 +22,15 @@ const INTAKE: OnboardingIntake = {
   datasets: [
     {
       name: "Case signals",
+      sourceSystem: "IMF / Individual Master File",
       domain: "individual-filing",
+      ingestionMethod: "eftu",
       datasetTag: "case_signals",
-      owners: [{ name: "Olive Owner", email: "olive.owner@example.test" }],
+      owners: [{ name: "Olive Owner", email: "olive.owner@example.gov" }],
     },
   ],
   workspaceNeeds: { isolation: "shared", teamSize: 6 },
-  answers: {},
+  answers: { ...COMPLETE_INTAKE_ANSWERS },
   initiativeOwner: { kind: "self" },
 };
 

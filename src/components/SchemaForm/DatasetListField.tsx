@@ -15,16 +15,26 @@ import {
   datasetTagError,
   type IntakeDatasetInput,
   type IntakeOwnerContact,
+  type PatternOption,
 } from "../../schema";
 import type { DynamicOption, IconComponent } from "./SchemaForm";
 import { FieldError, datasetInputId } from "./field-helpers";
 import { OwnerPicker, type OwnerKind, type SignedInPerson } from "./InitiativeOwnerField";
+import { FieldHelp } from "./FieldHelp";
 
 const lbl: React.CSSProperties = {
   display: "block",
   fontSize: "var(--font-size-2xs)",
   fontWeight: 700,
   marginBottom: 7,
+};
+
+const labelRow: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  marginBottom: 7,
+  minWidth: 0,
 };
 
 const req = (
@@ -77,7 +87,6 @@ const dangerBtn: React.CSSProperties = {
 
 const grid3: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
   gap: 16,
 };
 
@@ -141,6 +150,7 @@ export function DatasetListField({
   help,
   value,
   domains,
+  ingestPatterns = [],
   onChange,
   Icon,
   showAll = false,
@@ -151,6 +161,7 @@ export function DatasetListField({
   help?: string | undefined;
   value: unknown;
   domains: DynamicOption[];
+  ingestPatterns?: PatternOption[];
   onChange: (next: IntakeDatasetInput[]) => void;
   Icon: IconComponent;
   /** Show every field's error, not only touched ones (after a failed attempt to continue). */
@@ -161,7 +172,10 @@ export function DatasetListField({
   signedIn?: SignedInPerson | undefined;
 }) {
   const datasets = Array.isArray(value) ? (value as IntakeDatasetInput[]) : [];
-  const domainOptions = [...domains, { value: OTHER_DOMAIN, label: "Other" }];
+  const domainOptions = [
+    ...domains,
+    { value: OTHER_DOMAIN, label: "No domain fits — propose another with EDP staff" },
+  ];
   const [touched, setTouched] = React.useState<ReadonlySet<string>>(new Set());
   const touch = (key: string) => setTouched((cur) => new Set(cur).add(key));
   const shown = (key: string, invalid: boolean) => invalid && (showAll || touched.has(key));
@@ -205,26 +219,19 @@ export function DatasetListField({
     <fieldset style={{ border: "none", padding: 0, margin: 0, minWidth: 0 }}>
       <legend style={{ ...lbl, padding: 0 }}>
         {label} {req}
-      </legend>
-      {help ? (
-        <div
-          style={{
-            fontSize: "var(--font-size-3xs)",
-            color: "var(--text-muted)",
-            margin: "-2px 0 14px",
-            lineHeight: 1.5,
-          }}
-        >
+        <FieldHelp id="intake-datasets" label={label}>
           {help}
-        </div>
-      ) : null}
+        </FieldHelp>
+      </legend>
 
       <div style={{ display: "grid", gap: 16 }}>
         {datasets.map((dataset, i) => {
           const n = i + 1;
           const k = (field: string) => `${i}:${field}`;
           const nameBad = shown(k("name"), blank(dataset.name));
+          const sourceSystemBad = shown(k("sourceSystem"), blank(dataset.sourceSystem));
           const domainBad = shown(k("domain"), blank(dataset.domain));
+          const ingestionBad = shown(k("ingestionMethod"), blank(dataset.ingestionMethod));
           const tagProblem = tagIssue(datasets, i);
           const tagBad = shown(k("tag"), tagProblem !== null);
           const tagId = idFor(k("tag"));
@@ -237,6 +244,9 @@ export function DatasetListField({
                 borderRadius: "var(--radius-md)",
                 padding: "18px 20px",
                 background: "var(--color-gray-cool-1)",
+                boxSizing: "border-box",
+                minWidth: 0,
+                width: "100%",
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
@@ -254,11 +264,17 @@ export function DatasetListField({
                 ) : null}
               </div>
 
-              <div style={grid3}>
+              <div className="intake-dataset-grid" style={grid3}>
                 <div>
-                  <label style={lbl} htmlFor={idFor(k("name"))}>
-                    Dataset name {req}
-                  </label>
+                  <div style={labelRow}>
+                    <label style={{ ...lbl, margin: 0, minWidth: 0 }} htmlFor={idFor(k("name"))}>
+                      Dataset name {req}
+                    </label>
+                    <FieldHelp id={datasetInputId(k("name"))} label="Dataset name">
+                      The plain-language name people will see when they discover or request this
+                      dataset in EDP.
+                    </FieldHelp>
+                  </div>
                   <input
                     id={idFor(k("name"))}
                     aria-label={`Dataset ${n} name`}
@@ -275,9 +291,16 @@ export function DatasetListField({
                   ) : null}
                 </div>
                 <div>
-                  <label style={lbl} htmlFor={idFor(k("domain"))}>
-                    Domain {req}
-                  </label>
+                  <div style={labelRow}>
+                    <label style={{ ...lbl, margin: 0, minWidth: 0 }} htmlFor={idFor(k("domain"))}>
+                      Domain {req}
+                    </label>
+                    <FieldHelp id={datasetInputId(k("domain"))} label="Domain">
+                      The business category for this dataset. It controls where the dataset appears
+                      for future discovery and domain access. Choose No domain fits when EDP staff
+                      should help categorize it.
+                    </FieldHelp>
+                  </div>
                   <select
                     id={idFor(k("domain"))}
                     aria-label={`Dataset ${n} domain`}
@@ -303,9 +326,15 @@ export function DatasetListField({
                   ) : null}
                 </div>
                 <div>
-                  <label style={lbl} htmlFor={tagId}>
-                    Dataset tag {req}
-                  </label>
+                  <div style={labelRow}>
+                    <label style={{ ...lbl, margin: 0, minWidth: 0 }} htmlFor={tagId}>
+                      Dataset tag {req}
+                    </label>
+                    <FieldHelp id={datasetInputId(k("tag"))} label="Dataset tag">
+                      A short, stable identifier EDP uses to group this dataset's tables and apply
+                      dataset roles. Use lowercase letters, numbers and underscores.
+                    </FieldHelp>
+                  </div>
                   <input
                     id={tagId}
                     aria-label={`Dataset ${n} tag`}
@@ -331,8 +360,109 @@ export function DatasetListField({
                 </div>
               </div>
 
+              <div style={{ ...grid3, marginBottom: 16 }}>
+                <div>
+                  <div style={labelRow}>
+                    <label
+                      style={{ ...lbl, margin: 0, minWidth: 0 }}
+                      htmlFor={idFor(k("sourceSystem"))}
+                    >
+                      Source system {req}
+                    </label>
+                    <FieldHelp id={datasetInputId(k("sourceSystem"))} label="Source system">
+                      Name the system, agency, file collection, or location this dataset comes from.
+                    </FieldHelp>
+                  </div>
+                  <input
+                    id={idFor(k("sourceSystem"))}
+                    aria-label={`Dataset ${n} source system`}
+                    {...errorProps(k("sourceSystem"), sourceSystemBad)}
+                    value={dataset.sourceSystem ?? ""}
+                    onChange={(e) => update(i, { sourceSystem: e.target.value })}
+                    onBlur={() => touch(k("sourceSystem"))}
+                    placeholder="e.g. IMF / Individual Master File"
+                    style={inp(sourceSystemBad)}
+                  />
+                  {sourceSystemBad ? (
+                    <FieldError id={`${idFor(k("sourceSystem"))}-error`} Icon={Icon}>
+                      Enter a source system.
+                    </FieldError>
+                  ) : null}
+                </div>
+                <div>
+                  <div style={labelRow}>
+                    <label
+                      style={{ ...lbl, margin: 0, minWidth: 0 }}
+                      htmlFor={idFor(k("ingestionMethod"))}
+                    >
+                      Ingestion method {req}
+                    </label>
+                    <FieldHelp id={datasetInputId(k("ingestionMethod"))} label="Ingestion method">
+                      Choose how this specific dataset will reach EDP. Select consultation when the
+                      approved methods do not fit or you are unsure.
+                    </FieldHelp>
+                  </div>
+                  <select
+                    id={idFor(k("ingestionMethod"))}
+                    aria-label={`Dataset ${n} ingestion method`}
+                    {...errorProps(k("ingestionMethod"), ingestionBad)}
+                    value={dataset.ingestionMethod ?? ""}
+                    onChange={(e) => update(i, { ingestionMethod: e.target.value })}
+                    onBlur={() => touch(k("ingestionMethod"))}
+                    style={inp(ingestionBad)}
+                  >
+                    <option value="" disabled>
+                      Choose an ingestion method
+                    </option>
+                    {ingestPatterns.map((pattern) => (
+                      <option key={pattern.id} value={pattern.id}>
+                        {pattern.name}
+                      </option>
+                    ))}
+                  </select>
+                  {ingestionBad ? (
+                    <FieldError id={`${idFor(k("ingestionMethod"))}-error`} Icon={Icon}>
+                      Choose an ingestion method.
+                    </FieldError>
+                  ) : null}
+                </div>
+              </div>
+              <div style={{ marginBottom: 16 }}>
+                <div style={labelRow}>
+                  <label
+                    style={{ ...lbl, margin: 0, minWidth: 0 }}
+                    htmlFor={idFor(k("ingestionDetails"))}
+                  >
+                    Proposed ingestion approach
+                  </label>
+                  <FieldHelp
+                    id={datasetInputId(k("ingestionDetails"))}
+                    label="Proposed ingestion approach"
+                  >
+                    Describe what connects, how data moves, and how often so EDP can evaluate the
+                    request before a consultation.
+                  </FieldHelp>
+                </div>
+                <textarea
+                  id={idFor(k("ingestionDetails"))}
+                  aria-label={`Dataset ${n} proposed ingestion approach`}
+                  value={dataset.ingestionDetails ?? ""}
+                  onChange={(e) => update(i, { ingestionDetails: e.target.value })}
+                  rows={3}
+                  placeholder="e.g. Query a partner API each morning or stream events."
+                  style={{ ...inp(false), resize: "vertical" }}
+                />
+              </div>
+
               <div style={{ marginTop: 18 }}>
-                <div style={lbl}>Dataset owners {req}</div>
+                <div style={lbl}>
+                  Dataset owners {req}
+                  <FieldHelp id={`${datasetInputId(k("owners"))}`} label="Dataset owners">
+                    The people accountable for approving dataset roles and certifying the dataset.
+                    This is operational accountability, not legal ownership. Each owner receives the
+                    Maintainer dataset role.
+                  </FieldHelp>
+                </div>
                 <div
                   style={{
                     fontSize: "var(--font-size-3xs)",
@@ -341,8 +471,8 @@ export function DatasetListField({
                     lineHeight: 1.5,
                   }}
                 >
-                  Choose Myself or Someone else for each owner, as for the initiative owner. EDP
-                  links each owner to their account at standup.
+                  Choose Myself or Someone else for each owner, as for the initiative point of
+                  contact. EDP links each owner to their account when the initiative is set up.
                 </div>
                 <div style={{ display: "grid", gap: 10 }}>
                   {dataset.owners.map((owner, j) => {
@@ -356,6 +486,9 @@ export function DatasetListField({
                           borderRadius: "var(--radius-md)",
                           padding: "12px 14px",
                           background: "var(--surface-default)",
+                          boxSizing: "border-box",
+                          minWidth: 0,
+                          width: "100%",
                         }}
                       >
                         <OwnerPicker

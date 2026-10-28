@@ -27,8 +27,8 @@ import { ChangeListScreen, DatasetTeamScreen } from "./index";
 
 afterEach(cleanup);
 
-const TESS = { name: "Tess Tester", email: "tess.tester@example.test" };
-const DEV = { name: "Dana Dev", email: "dana.dev@example.test" };
+const TESS = { name: "Tess Tester", email: "tess.tester@example.gov" };
+const DEV = { name: "Dana Dev", email: "dana.dev@example.gov" };
 
 function makeStore(user: () => UserProfile) {
   return createMemoryStore(makeSnapshot(), {
@@ -75,7 +75,7 @@ describe("the team page header", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("individual-filing")).toBeInTheDocument();
     expect(screen.getByText("refund_anomalies")).toBeInTheDocument();
-    expect(screen.getByLabelText("Your role")).toHaveTextContent("Manager · Owner");
+    expect(screen.getByLabelText("Your role")).toHaveTextContent("Maintainer · Owner");
     expect(screen.getByRole("button", { name: "Add team member" })).toBeInTheDocument();
 
     const pending = await screen.findByRole("link", { name: "Pending changes (2)" });
@@ -94,18 +94,49 @@ describe("the team page header", () => {
     expect(screen.queryByRole("button", { name: "Add team member" })).toBeNull();
     expect(screen.queryByRole("link", { name: /Pending changes/ })).toBeNull();
   });
+
+  it("does not count snapshot-seen entries as pending", async () => {
+    const store = await storeWithTeam();
+    const listEntries = store.changeList.listEntries.bind(store.changeList);
+    store.changeList.listEntries = async () =>
+      (await listEntries()).map((entry) => ({
+        ...entry,
+        verified: { runId: "snapshot-run-88", at: "2026-10-01T11:59:00.000Z" },
+      }));
+    team(store);
+
+    expect(await screen.findByRole("link", { name: "Pending changes (0)" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/Pending changes counts entries still waiting on EDP staff/),
+    ).toBeInTheDocument();
+  });
+
+  it("does not count an earlier add superseded by a later removal as pending", async () => {
+    const store = makeStore(() => OWNER);
+    await store.datasetRoles.addMember({ datasetId: DATASET_ID, ...TESS, role: "tester" });
+    await store.datasetTeam.removeMember({
+      datasetId: DATASET_ID,
+      email: TESS.email,
+      role: "tester",
+    });
+    team(store);
+
+    expect(await screen.findByRole("link", { name: "Pending changes (1)" })).toBeInTheDocument();
+  });
 });
 
 describe("the KPI cards", () => {
-  it("count people, testers, developers, managers with owners, and pending changes", async () => {
+  it("count people, testers, developers, Maintainers with owners, and pending changes", async () => {
     team(await storeWithTeam());
     await peopleTable();
 
-    // Olive (owner, manager), Tess (tester), Dana (developer).
+    // Olive (owner, Maintainer), Tess (tester), Dana (developer).
     expect(kpi(/^3 Members/)).toBeInTheDocument();
     expect(kpi(/^1 Testers/)).toBeInTheDocument();
-    expect(kpi(/^1 Developers/)).toBeInTheDocument();
-    expect(kpi(/^1 Managers/)).toBeInTheDocument();
+    // Card labels are the configured plural labels (#260).
+    expect(kpi(/^1 Devs \(test\)/)).toBeInTheDocument();
+    expect(kpi(/^1 Maintainers/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Managers?/ })).toBeNull();
     expect(await screen.findByRole("button", { name: /^2 Pending changes/ })).toBeInTheDocument();
   });
 
@@ -124,9 +155,12 @@ describe("the KPI cards", () => {
       "Showing testers: 1 of 3 people",
     );
 
-    fireEvent.click(kpi(/Managers/));
+    fireEvent.click(kpi(/Maintainers/));
     expect(bodyRows(table)).toHaveLength(1);
     expect(bodyRows(table)[0]).toHaveTextContent("Olive Owner");
+    expect(screen.getByRole("status", { name: "Table filter" })).toHaveTextContent(
+      "Showing maintainers: 1 of 3 people",
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Clear filter" }));
     expect(bodyRows(table)).toHaveLength(3);
@@ -174,7 +208,8 @@ describe("the team table", () => {
     ).toBeInTheDocument();
 
     const olive = rowOf(table, "Olive Owner");
-    expect(olive).toHaveTextContent("Manager");
+    expect(olive).toHaveTextContent("Maintainer");
+    expect(olive).not.toHaveTextContent(/Manager/);
     expect(olive).toHaveTextContent("Owner");
     expect(olive).toHaveTextContent("Active");
     // The table edits nothing itself.
@@ -204,6 +239,53 @@ describe("the team table", () => {
     expect(within(dana).queryByRole("button")).toBeNull();
     // Dana is no longer a member: the counts leave her out.
     expect(kpi(/^2 Members/)).toBeInTheDocument();
+  });
+
+  it("labels snapshot-seen additions consistently with the change list", async () => {
+    const store = await storeWithTeam();
+    const listEntries = store.changeList.listEntries.bind(store.changeList);
+    store.changeList.listEntries = async () =>
+      (await listEntries()).map((entry) => ({
+        ...entry,
+        verified: { runId: "snapshot-run-88", at: "2026-10-01T11:59:00.000Z" },
+      }));
+    team(store);
+    const table = await peopleTable();
+
+    expect(
+      within(rowOf(table, TESS.email)).getByRole("link", {
+        name: "Seen in snapshot, CL-0001",
+      }),
+    ).toBeInTheDocument();
+    expect(within(rowOf(table, TESS.email)).queryByText(/Pending add/)).toBeNull();
+  });
+
+  it("does not say a snapshot-seen removal is still waiting on EDP staff", async () => {
+    const store = await storeWithTeam();
+    await store.datasetTeam.removeMember({
+      datasetId: DATASET_ID,
+      email: DEV.email,
+      role: "developer",
+    });
+    const listEntries = store.changeList.listEntries.bind(store.changeList);
+    store.changeList.listEntries = async () =>
+      (await listEntries()).map((entry) =>
+        entry.kind === "remove-member"
+          ? {
+              ...entry,
+              verified: { runId: "snapshot-run-88", at: "2026-10-01T11:59:00.000Z" },
+            }
+          : entry,
+      );
+    team(store);
+    const table = await peopleTable();
+    const dana = rowOf(table, DEV.email);
+
+    expect(
+      within(dana).getByRole("link", { name: "Seen in snapshot, CL-0003" }),
+    ).toBeInTheDocument();
+    expect(dana).toHaveTextContent("Removal seen in snapshot");
+    expect(dana).not.toHaveTextContent("Removal waiting on EDP staff");
   });
 });
 
@@ -330,9 +412,7 @@ describe("the view for someone who isn't an owner or EDP staff", () => {
 
   function expectNoCountsOrActions(table: HTMLElement) {
     expect(screen.queryByRole("group", { name: "Filter the team" })).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: /Members|Testers|Developers|Managers/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Members|Testers|Devs|Maintainers/ })).toBeNull();
     expect(screen.queryByRole("status", { name: "Table filter" })).toBeNull();
     expect(within(table).queryByRole("columnheader", { name: "Actions" })).toBeNull();
     expect(within(table).queryByRole("button")).toBeNull();
@@ -387,7 +467,7 @@ describe("the change list, filtered to one dataset", () => {
     await store.datasetTeam.addOwner({
       datasetId: "ds-payroll-events",
       name: "Pat Payroll",
-      email: "pat@example.test",
+      email: "pat@example.gov",
     });
     const go = vi.fn();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -401,7 +481,7 @@ describe("the change list, filtered to one dataset", () => {
 
     const table = await screen.findByRole("table", { name: "Change-list entries" });
     expect(bodyRows(table)).toHaveLength(2);
-    expect(table).not.toHaveTextContent("pat@example.test");
+    expect(table).not.toHaveTextContent("pat@example.gov");
     expect(screen.getByText("Refund anomaly scores").closest("p")).toHaveTextContent(
       "Showing entries for Refund anomaly scores. Show every entry",
     );
@@ -415,7 +495,7 @@ describe("the change list, filtered to one dataset", () => {
 // member panel. It's the one add-owner (AddPersonForm): same command,
 // validation, refusals and change-list entries as the Owner-only form.
 describe("adding an owner from the Add team member panel", () => {
-  const DREW = { name: "Drew Partner", email: "drew.partner@example.test" };
+  const DREW = { name: "Drew Partner", email: "drew.partner@example.gov" };
 
   async function openPanel(user: ReturnType<typeof userEvent.setup>) {
     await user.click(await screen.findByRole("button", { name: "Add team member" }));
@@ -440,10 +520,10 @@ describe("adding an owner from the Add team member panel", () => {
     expect(cards.map((c) => c.getAttribute("aria-label"))).toEqual([
       "Tester",
       "Dev (test)",
-      "Manager",
+      "Maintainer",
       "Owner",
     ]);
-    expect(cards[3]).toHaveTextContent("Holds the Manager role");
+    expect(cards[3]).toHaveTextContent("Holds the Maintainer role");
     // One tab stop; End reaches Owner from the keyboard.
     cards[0]!.focus();
     await user.keyboard("{End}");
@@ -472,11 +552,11 @@ describe("adding an owner from the Add team member panel", () => {
 
     const review = within(panel).getByRole("region", { name: "Confirm the new owner" });
     expect(review).toHaveTextContent(
-      "You're making Drew Partner (drew.partner@example.test) an owner of Refund anomaly scores.",
+      "You're making Drew Partner (drew.partner@example.gov) an owner of Refund anomaly scores.",
     );
-    expect(review).toHaveTextContent("Every owner holds the Manager role");
+    expect(review).toHaveTextContent("Every owner holds the Maintainer role");
     expect(review).toHaveTextContent(
-      "A person holds one role on a dataset, so someone who already holds another role here must have it removed first.",
+      "If they already hold another role here, EDP staff will apply the listed role replacement.",
     );
     expect(within(review).getByRole("list", { name: "Grants" })).toHaveTextContent(
       "Test grant: manage",
@@ -497,7 +577,7 @@ describe("adding an owner from the Add team member panel", () => {
     expect(screen.getByRole("table", { name: "Owners" })).toHaveTextContent(DREW.email);
     await waitFor(() =>
       expect(rowOf(screen.getByRole("table", { name: "Members" }), DREW.email)).toHaveTextContent(
-        "ManagerOwner",
+        "MaintainerOwner",
       ),
     );
 
@@ -525,26 +605,33 @@ describe("adding an owner from the Add team member panel", () => {
     expect(strip(viaPanel)).toEqual(strip(await other.changeList.listEntries()));
   });
 
-  it("warns before confirming that an existing member is refused, and the store refuses it as today", async () => {
+  it("names the role that making an existing member an owner will replace", async () => {
     const user = userEvent.setup();
     const store = await storeWithTeam();
     team(store);
     const panel = await reviewOwner(user, TESS);
 
     expect(within(panel).getByRole("region", { name: "Confirm the new owner" })).toHaveTextContent(
-      "Tess Tester already holds Tester on Refund anomaly scores, so this will be refused. Remove their Tester role first, then make them an owner.",
+      "Making Tess Tester an owner will replace their Tester role with Maintainer in one step.",
     );
     await user.click(within(panel).getByRole("button", { name: /Confirm new owner/ }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/That owner was refused.*Tester/);
-    expect(await store.changeList.listEntries()).toHaveLength(2);
-    // A refusal puts the details back, Owner still chosen.
-    await user.click(screen.getByRole("button", { name: "Add team member" }));
-    const again = screen.getByRole("dialog");
-    expect(within(again).getByLabelText(/^Email/)).toHaveValue(TESS.email);
-    expect(within(again).getByRole("radio", { name: "Owner" })).toHaveAttribute(
-      "aria-checked",
-      "true",
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(await screen.findByText(/Made Tess Tester an owner\./)).toBeInTheDocument();
+    expect(rowOf(screen.getByRole("table", { name: "Members" }), TESS.email)).toHaveTextContent(
+      "MaintainerOwner",
+    );
+    expect((await store.changeList.listEntries()).map((entry) => entry.kind)).toEqual([
+      "add-member",
+      "add-member",
+      "remove-member",
+      "add-member",
+    ]);
+    expect(await store.datasetTeam.listTeamEvents(DATASET_ID)).toEqual([
+      expect.objectContaining({ kind: "owner-added", replacedRole: "tester" }),
+    ]);
+    expect(screen.getByRole("table", { name: "Team history" })).toHaveTextContent(
+      "Made Tess Tester (tess.tester@example.gov) an owner and replaced their Tester role with Maintainer",
     );
   });
 });
@@ -553,7 +640,7 @@ describe("adding an owner from the Add team member panel", () => {
 // Owners and EDP staff add owners through the Add team member panel; the
 // Owners list (with Remove) stays.
 describe("adding owners only through the Add team member panel", () => {
-  const DREW = { name: "Drew Partner", email: "drew.partner@example.test" };
+  const DREW = { name: "Drew Partner", email: "drew.partner@example.gov" };
 
   it("shows an owner the Owners list with Remove, and no separate add-owner form", async () => {
     team(makeStore(() => OWNER));
@@ -586,7 +673,7 @@ describe("adding owners only through the Add team member panel", () => {
     await user.type(within(panel).getByRole("textbox", { name: /Owner's email/ }), DREW.email);
     await user.click(within(panel).getByRole("button", { name: /Review new owner/ }));
     expect(within(panel).getByRole("region", { name: "Confirm the new owner" })).toHaveTextContent(
-      "Every owner holds the Manager role",
+      "Every owner holds the Maintainer role",
     );
     await user.click(within(panel).getByRole("button", { name: /Confirm new owner/ }));
 

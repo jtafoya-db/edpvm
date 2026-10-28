@@ -14,6 +14,8 @@
  * `scripts/bundle-config.ts` (Node strips the types).
  */
 
+import { isGovdevSentinel, PRODUCTION_APP_NAME } from "./govdevSentinels.ts";
+
 export interface AppDeployFields {
   appName: string;
   storeCatalog: string;
@@ -135,6 +137,8 @@ export function checkResolvedConfig(config: unknown): string[] {
       problems.push(`prod env still has placeholder values: ${placeholders.join(", ")}`);
     }
   }
+  // govdev: the Delta store, explicit nonempty names and a real group id,
+  // whichever source resolved them.
   if (target === "govdev") {
     const env = envMap(app);
     if (env.get("VITE_DATA_BACKEND") !== "delta") {
@@ -150,6 +154,18 @@ export function checkResolvedConfig(config: unknown): string[] {
     ];
     for (const [name, value] of requiredNames) {
       if (!value.trim()) problems.push(`govdev ${name} must not be empty`);
+    }
+    // The committed defaults are sentinels: resolving one means no override.
+    for (const [name, value] of [
+      ...requiredNames,
+      ["EDP_ADMIN_GROUP_ID", fields.adminGroupId] as [string, string],
+    ]) {
+      if (isGovdevSentinel(value)) {
+        problems.push(`govdev ${name} is the committed sentinel "${value.trim()}"; override it`);
+      }
+    }
+    if (fields.appName.trim() === PRODUCTION_APP_NAME) {
+      problems.push(`govdev must not use the production app name ${PRODUCTION_APP_NAME}`);
     }
     if (!/^\d+$/.test(fields.adminGroupId)) {
       problems.push(

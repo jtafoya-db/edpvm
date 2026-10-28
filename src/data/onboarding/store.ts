@@ -30,6 +30,7 @@ import {
   resubmissionStage,
 } from "./lifecycle";
 import {
+  findDatasetOptionIdProblem,
   findResubmittedIdProblem,
   findSubmittedIdProblem,
   normalizeIntake,
@@ -40,12 +41,28 @@ import {
   wholeIntakeProblem,
 } from "./resubmission";
 import {
+  INITIATIVE_OWNER_ID,
+  NO_MATCH,
   initiativeOwnerFor,
   normalizeInitiativeOwner,
+  normalizeOwnerEmail,
+  normalizePrincipalId,
+  onboardingRequestProblem,
+  ownerMatchStageOpen,
+  ownerMatchesFor,
   ownerVerificationOf,
+  resubmittedMatch,
+  selfMatch,
+  stateOnlyOwners,
+  staffMatch,
+  staffMatchProblem,
   withSessionOwners,
+  type OwnerMatchProblem,
+  type OwnerMatchRecord,
+  type OwnerMatchSubject,
   type OwnerSession,
 } from "./owners";
+import { memoryOnboardUserEntries, type OnboardUserEntries } from "../change-list/onboard-user";
 import type {
   OnboardingActor,
   OnboardingDecision,
@@ -58,6 +75,7 @@ import type {
   OnboardingReviewStage,
   OnboardingReviewerRole,
   OnboardingWriteIntent,
+  OwnerMatchInput,
 } from "./types";
 import type { UserProfile } from "../types";
 import {
@@ -72,7 +90,7 @@ export interface OnboardingStore {
   get(id: string): Promise<OnboardingRequest | undefined>;
   /** The signed-in user's own requests, newest first. */
   listMine(): Promise<OnboardingRequest[]>;
-  /** Only the requests at the role's stage, oldest first. Refused unless the signed-in user is in the role's group. */
+  /** Only the requests at the role's stage, oldest first. Refused unless the signed-in user is a direct member of the EDP admin group. */
   listInbox(role: OnboardingReviewerRole): Promise<OnboardingRequest[]>;
   /** Approve, send back or reject at the current review stage, as the signed-in reviewer. Send-backs need questions and rejections a reason. */
   decide(
@@ -92,6 +110,26 @@ export interface OnboardingStore {
     input?: { note?: string | undefined },
     intent?: OnboardingWriteIntent,
   ): Promise<OnboardingRequest>;
+  /**
+   * EDP staff record the Databricks principal an owner is, as they entered
+   * it: not verified, and no ADR-0006 email binding (#103, 103-B). Only at a
+   * review stage; refused for anyone but EDP staff.
+   */
+  matchOwner(
+    id: string,
+    match: OwnerMatchInput,
+    intent?: OnboardingWriteIntent,
+  ): Promise<OnboardingRequest>;
+  /**
+   * EDP staff mark an owner not a Databricks user yet, listing one
+   * onboard-user change-list entry for their email (or reusing the pending
+   * one). Only at a review stage; refused for anyone but EDP staff.
+   */
+  requestOwnerOnboarding(
+    id: string,
+    owner: { ownerId: string },
+    intent?: OnboardingWriteIntent,
+  ): Promise<OnboardingRequest>;
 }
 
 /** The acting person as the onboarding store sees them, from the server-resolved profile. */
@@ -108,6 +146,11 @@ export interface MemoryOnboardingStoreConfig {
   currentUser: () => Promise<UserProfile>;
   now?: () => Date;
   slaConfig?: EffectiveSlaConfig;
+  /**
+   * The change list onboard-user entries go on (#103, 103-B). The memory
+   * adapter passes the one EDP staff see; left out, the store keeps its own.
+   */
+  onboardUserEntries?: OnboardUserEntries;
 }
 
 const SYSTEM_ACTOR = { principalId: "system", name: "System" } as const;
@@ -131,6 +174,7 @@ function assertIntake(intake: OnboardingIntake): void {
   const tagProblem = findDatasetTagProblem(intake.datasets);
   if (tagProblem) throw new OnboardingRefusal(tagProblem.code, tagProblem.message);
   const schema = loadSchema();
+  refuseOn(findDatasetOptionIdProblem(intake, schema));
   const state: IntakeState = {
     dataName: intake.initiativeName,
     useCase: intake.businessCase,
@@ -145,7 +189,9 @@ function assertIntake(intake: OnboardingIntake): void {
     ...validateStep(schema, "source", state).filter(
       ({ field }) => field === "dataName" || field === "initiativeOwner",
     ),
-    ...validateStep(schema, "business", state),
+    ...validateStep(schema, "business", state).filter(
+      ({ field }) => field !== "outcome" && field !== "hoursSaved",
+    ),
     ...validateStep(schema, "datasets", state),
     ...validateStep(schema, "workspace", state),
   ].map(({ message }) => message);
@@ -195,6 +241,60 @@ export function createMemoryOnboardingStore(config: MemoryOnboardingStoreConfig)
     return withSessionOwners({ ...rest, ...(owner ? { initiativeOwner: owner } : {}) }, session);
   };
   const records: OnboardingRequestRecord[] = [];
+  let ownEntry = 1;
+  const onboardUsers =
+    config.onboardUserEntries ??
+    memoryOnboardUserEntries([], () => `CL-${String(ownEntry++).padStart(4, "0")}`);
+  /** Each request's owner matches, by owner ID (`initiative` for the initiative owner). */
+  const matches = new Map<string, Map<string, OwnerMatchRecord>>();
+  /** The matches a request's owners start with: Myself from the session, nobody else. */
+  const initialMatches = (
+    intake: OnboardingIntake,
+    owner: OnboardingRequestRecord["initiativeOwner"],
+    session: OwnerSession,
+  ): Map<string, OwnerMatchRecord> =>
+    new Map([
+      ...(owner?.kind === "self" ? [[INITIATIVE_OWNER_ID, selfMatch(session)] as const] : []),
+      ...intake.datasets.flatMap((dataset) =>
+        dataset.owners.flatMap((contact) =>
+          contact.id && contact.self === true ? [[contact.id, selfMatch(session)] as const] : [],
+        ),
+      ),
+    ]);
+  /** Every owner of a record, as the match rules read them. */
+  const subjectsOf = (record: OnboardingRequestRecord): OwnerMatchSubject[] => {
+    const stored = matches.get(record.id) ?? new Map<string, OwnerMatchRecord>();
+    return [
+      ...(record.initiativeOwner
+        ? [
+            {
+              ownerId: INITIATIVE_OWNER_ID,
+              role: "initiative" as const,
+              datasetId: null,
+              name: record.initiativeOwner.name,
+              email: record.initiativeOwner.email,
+              match: stored.get(INITIATIVE_OWNER_ID) ?? NO_MATCH,
+            },
+          ]
+        : []),
+      ...record.intake.datasets.flatMap((dataset) =>
+        dataset.owners.flatMap((contact) =>
+          contact.id
+            ? [
+                {
+                  ownerId: contact.id,
+                  role: "dataset" as const,
+                  datasetId: dataset.id ?? null,
+                  name: contact.name,
+                  email: contact.email,
+                  match: stored.get(contact.id) ?? NO_MATCH,
+                },
+              ]
+            : [],
+        ),
+      ),
+    ];
+  };
   /** A display code no request here has (ADR-0007 decision 2, amended 2026-10-10). */
   const newRequestId = (): string => {
     const id = newDisplayCode("ONB");
@@ -203,6 +303,12 @@ export function createMemoryOnboardingStore(config: MemoryOnboardingStoreConfig)
 
   const view = (record: OnboardingRequestRecord): OnboardingRequest => ({
     ...clone(record),
+    ownerMatches: ownerMatchesFor(
+      subjectsOf(record),
+      onboardUsers
+        .pending()
+        .map((entry) => ({ entryId: entry.id, email: entry.target.person.email })),
+    ),
     sla: onboardingSla(record.stage, record.stageEnteredAt, now(), slaConfig),
   });
 
@@ -275,6 +381,7 @@ export function createMemoryOnboardingStore(config: MemoryOnboardingStoreConfig)
         openSendBack: null,
         initiativeOwner: initiativeOwnerFor(stored.initiativeOwner, session),
         ownerVerification: ownerVerificationOf(stored),
+        ownerMatches: [],
         decisions: [
           {
             kind: "submit",
@@ -288,6 +395,7 @@ export function createMemoryOnboardingStore(config: MemoryOnboardingStoreConfig)
         ],
       };
       move(record, "forward", nextOnboardingStage("submitted", { type: "forward" }), SYSTEM_ACTOR);
+      matches.set(record.id, initialMatches(record.intake, record.initiativeOwner, session));
       records.push(record);
       return view(record);
     },
@@ -315,9 +423,7 @@ export function createMemoryOnboardingStore(config: MemoryOnboardingStoreConfig)
     listInbox: async (role) => {
       const reviewer = await signedIn();
       if (!reviewer.reviewerRoles.includes(role)) {
-        throw new Error(
-          `${reviewer.name} is not a member of the configured ${REVIEWER_LABEL[role]} group.`,
-        );
+        throw new Error(`${reviewer.name} is not a direct member of the EDP admin group.`);
       }
       const stage = STAGE_FOR_REVIEWER[role];
       return records.filter((record) => record.stage === stage).map(view);
@@ -381,9 +487,38 @@ export function createMemoryOnboardingStore(config: MemoryOnboardingStoreConfig)
       refuseOn(
         wholeIntakeProblem(mergedIntake, undefined, new Set(sent ? [] : ["initiativeOwner"])),
       );
-      const owner = sent
+      // A staff match stays while the provider leaves that owner's email as it was (103-B).
+      const before = new Map(subjectsOf(record).map((subject) => [subject.ownerId, subject]));
+      const typedOwner = sent
         ? initiativeOwnerFor(mergedIntake.initiativeOwner, session)
         : record.initiativeOwner;
+      const ownerMatch = typedOwner
+        ? resubmittedMatch(
+            before.get(INITIATIVE_OWNER_ID),
+            { email: typedOwner.email, self: typedOwner.kind === "self" },
+            session,
+          )
+        : NO_MATCH;
+      const owner =
+        typedOwner && ownerMatch.source === "staff"
+          ? { ...typedOwner, principalId: ownerMatch.principalId }
+          : typedOwner;
+      const nextMatches = new Map<string, OwnerMatchRecord>(
+        owner ? [[INITIATIVE_OWNER_ID, ownerMatch]] : [],
+      );
+      for (const dataset of mergedIntake.datasets) {
+        for (const contact of dataset.owners) {
+          if (!contact.id) continue;
+          nextMatches.set(
+            contact.id,
+            resubmittedMatch(
+              before.get(contact.id),
+              { email: contact.email, self: contact.self === true },
+              session,
+            ),
+          );
+        }
+      }
       const note = resubmitNote(answer, record.intake, mergedIntake);
       // Back to the stage that sent it back, from the stored send-back (#221).
       const sentBackFrom = [...record.decisions].reverse().find(({ kind }) => kind === "send-back");
@@ -397,6 +532,7 @@ export function createMemoryOnboardingStore(config: MemoryOnboardingStoreConfig)
       });
       record.intake = mergedIntake;
       record.initiativeOwner = owner;
+      matches.set(record.id, nextMatches);
       record.ownerVerification = ownerVerificationOf(mergedIntake);
       record.title = mergedIntake.initiativeName;
       move(record, "resubmit", to, provider, note, { answer, changes });
@@ -412,7 +548,63 @@ export function createMemoryOnboardingStore(config: MemoryOnboardingStoreConfig)
       record.openSendBack = null;
       return view(record);
     },
+
+    matchOwner: async (id, match, intent) => {
+      const { record, staff, subject } = await forOwnerMatch(id, match.ownerId, intent);
+      const principalId = normalizePrincipalId(match.principalId);
+      refuseOwnerMatch(staffMatchProblem(subject, principalId));
+      const stored = staffMatch(principalId, staff, now().toISOString());
+      matches.get(record.id)!.set(match.ownerId, stored);
+      if (match.ownerId === INITIATIVE_OWNER_ID && record.initiativeOwner) {
+        record.initiativeOwner = { ...record.initiativeOwner, principalId };
+      }
+      record.version += 1;
+      return view(record);
+    },
+
+    requestOwnerOnboarding: async (id, { ownerId }, intent) => {
+      const { record, staff, subject } = await forOwnerMatch(id, ownerId, intent);
+      refuseOwnerMatch(onboardingRequestProblem(subject));
+      onboardUsers.list({
+        person: { name: subject!.name, email: normalizeOwnerEmail(subject!.email) },
+        initiative: { onboardingRequestId: record.id, name: record.title },
+        requestedBy: staff.principalId,
+        requestedAt: now().toISOString(),
+      });
+      record.version += 1;
+      return view(record);
+    },
   };
+
+  function refuseOwnerMatch(problem: OwnerMatchProblem | null): void {
+    if (problem) throw new OnboardingRefusal(problem.code, problem.message);
+  }
+
+  /**
+   * The request and owner a staff match names, as EDP staff only (103-B): the
+   * signed-in user must be in the EDP admin group, the request at a review
+   * stage, and the intent's version (when it has one) the request's own.
+   */
+  async function forOwnerMatch(
+    id: string,
+    ownerId: string,
+    intent: OnboardingWriteIntent | undefined,
+  ) {
+    const user = await config.currentUser();
+    if (!user.isAdmin) throw new OnboardingRefusal("forbidden", "Only EDP staff can do this.");
+    const record = records.find((candidate) => candidate.id === id);
+    if (!record || !ownerMatchStageOpen(record.stage)) {
+      throw new OnboardingRefusal("not-found", "Onboarding request not found.");
+    }
+    if (intent?.version !== undefined && intent.version !== record.version) {
+      throw new OnboardingRefusal(
+        "version-conflict",
+        `${record.id} has changed since you read it. Reload it and try again.`,
+      );
+    }
+    const subject = subjectsOf(record).find((candidate) => candidate.ownerId === ownerId);
+    return { record, staff: { principalId: user.principalId, name: user.name }, subject };
+  }
 
   // A write under an intent key the store has already seen replays that write's
   // result rather than writing again, as the server's idempotency key does. A
@@ -431,11 +623,23 @@ export function createMemoryOnboardingStore(config: MemoryOnboardingStoreConfig)
     return result;
   };
 
+  // The provider's reads and writes carry match state only; EDP staff's (the
+  // inbox, decisions, matching) keep who matched whom (#103, 103-B).
+  const forProvider = async (read: Promise<OnboardingRequest>) => stateOnlyOwners(await read);
   return {
     ...store,
-    submit: (intake, intent) => once(intent, () => store.submit(intake)),
+    get: async (id) => {
+      const found = await store.get(id);
+      return found && stateOnlyOwners(found);
+    },
+    listMine: async () => (await store.listMine()).map(stateOnlyOwners),
+    submit: (intake, intent) => forProvider(once(intent, () => store.submit(intake))),
     decide: (id, decision, intent) => once(intent, () => store.decide(id, decision)),
-    resubmit: (id, resubmission, intent) => once(intent, () => store.resubmit(id, resubmission)),
-    withdraw: (id, input, intent) => once(intent, () => store.withdraw(id, input)),
+    resubmit: (id, resubmission, intent) =>
+      forProvider(once(intent, () => store.resubmit(id, resubmission))),
+    withdraw: (id, input, intent) => forProvider(once(intent, () => store.withdraw(id, input))),
+    matchOwner: (id, match, intent) => once(intent, () => store.matchOwner(id, match, intent)),
+    requestOwnerOnboarding: (id, owner, intent) =>
+      once(intent, () => store.requestOwnerOnboarding(id, owner, intent)),
   };
 }

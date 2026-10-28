@@ -11,7 +11,7 @@ export interface MembershipAreaConfig {
   schema: string;
 }
 
-function readerFor(
+export function membershipReaderFor(
   config: MembershipAreaConfig,
   user: SessionUser,
   names: StoreNames,
@@ -43,9 +43,15 @@ export function registerMembershipArea(registry: Registry, config: MembershipAre
     area: "membership",
     name: "memberships",
     app: "tenant",
-    query: z.object({ includeRemoved: z.literal("true").optional() }).strict(),
+    query: z
+      .object({
+        includeRemoved: z
+          .literal("true", { error: 'Invalid literal value, expected "true"' })
+          .optional(),
+      })
+      .strict(),
     run: ({ query, user, names, read }) =>
-      readerFor(config, user, names, read).listMemberships({
+      membershipReaderFor(config, user, names, read).listMemberships({
         includeRemoved: query.includeRemoved === "true",
       }),
   });
@@ -72,7 +78,7 @@ export function registerMembershipArea(registry: Registry, config: MembershipAre
         { message: "History cursor fields must be provided together" },
       ),
     run: ({ query, user, names, read }) =>
-      readerFor(config, user, names, read).listHistory({
+      membershipReaderFor(config, user, names, read).listHistory({
         ...(query.limit === undefined ? {} : { limit: query.limit }),
         ...(query.cursorVersion === undefined
           ? {}
@@ -90,6 +96,6 @@ export function registerMembershipArea(registry: Registry, config: MembershipAre
     name: "latest-run",
     app: "tenant",
     query: z.object({}).strict(),
-    run: ({ user, names, read }) => readerFor(config, user, names, read).latestRun(),
+    run: ({ user, names, read }) => membershipReaderFor(config, user, names, read).latestRun(),
   });
 }

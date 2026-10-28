@@ -195,6 +195,8 @@ describe.each([
       outcome: "pass",
       outcomes: [],
       automaticValidityEligible: true,
+      // Its place among the draft's recorded pre-checks (#204).
+      sequence: 1,
       actorPrincipalId: "system",
       actorDisplay: "EDP Vending Machine",
       actorApp: "system",
@@ -254,8 +256,9 @@ describe.each([
     );
   });
 
+  // #148 (2026-10-24): only a pass qualifies by default; a warning goes to a validator.
   it.each([
-    ["warning", { mbiExpirationDate: "2024-01-15" }, true],
+    ["warning", { mbiExpirationDate: "2024-01-15" }, false],
     ["manual-review", { ndaSigned: "no" }, false],
   ] as const)(
     "%s result permits PDF generation and records automatic-validity eligibility",

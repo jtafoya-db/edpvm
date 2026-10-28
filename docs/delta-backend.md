@@ -471,7 +471,7 @@ bundle var `pilot_config_json`, which becomes the server env
         {
           "principalId": "1234567890123456",
           "displayName": "Dana Whitfield",
-          "email": "dana.whitfield@example.test"
+          "email": "dana.whitfield@example.gov"
         }
       ]
     }
@@ -490,7 +490,7 @@ bundle var `pilot_config_json`, which becomes the server env
   dataset tag with `_` as `-` (`ds-refund-anomaly-scores` above).
 - `owners`: at least one per dataset. `principalId` is the owner's Databricks
   account (SCIM) ID, and `displayName` is required; `email` is optional. Every
-  owner also gets the manager role (ADR-0005).
+  owner also gets the Maintainer (stored as `manager`) role (ADR-0005).
 - **Loaded once.** After the first load, owners and members are managed in
   the app. Changing the configuration later doesn't change what's in Delta;
   an initiative with a new `id` is loaded as a new one.
@@ -500,18 +500,53 @@ an empty value. Pass the configuration as one string at deploy, for example
 `--var pilot_config_json="$(jq -c . pilot.json)"`. It holds account IDs and
 names, not secrets.
 
+## The dataset access matrix
+
+The approved MVP role policy from [#145](https://github.com/jtafoya-db/edpvm/issues/145#issuecomment-6385978601)
+is checked in at `src/data/datasets/access-matrix.json`. It is executable
+server configuration, unlike the presentation copy in
+`role-descriptions.json`. The default records its approval decision and date;
+it does not need a draft opt-in.
+
+Deployers may replace the matrix as a whole with
+`--var access_matrix_json="$(jq -c . access-matrix.json)"`. There is no merge
+with the default. An override must independently contain all three stored
+roles, consumer and sensitive-workspace rules, approval provenance, and every
+selector. `none` loads the repo default. A deliberately draft override also
+requires `--var access_matrix_allow_draft=true`; `NODE_ENV` never permits it.
+
+Before deploying an approved override, compute the exact normalized digest the
+staff status read should report. The helper validates with the same loader and
+reads either a file or standard input:
+
+```bash
+node scripts/access-matrix-digest.ts access-matrix.json
+# or
+jq -c . access-matrix.json | node scripts/access-matrix-digest.ts
+```
+
+The loader rejects malformed policy, unknown or mismatched targets, unsafe UC
+privileges, owner ACLs, tester/consumer writes, consumer bronze access, and job
+`CAN_MANAGE` anywhere except the labelled Maintainer (stored as `manager`) rule. A bad
+matrix does not stop the app: only a request that loads it fails. EDP staff can
+call `GET /api/reads/configuration/access-matrix-status` to see its source,
+approval status and normalized SHA-256 digest. The response never includes
+matrix values. Errors expose only a generic code; paths and rejected values go
+to the server log.
+
 ## Configuration
 
-| Where      | Variable                                                                  | Meaning                                                                              |
-| ---------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| bundle     | `data_backend`                                                            | `memory` (default) or `delta`; becomes `VITE_DATA_BACKEND` at build                  |
-| bundle     | `store_catalog`, `store_schema_prefix`                                    | Where the store lives; the prefix is `''` in production                              |
-| bundle     | `sql_warehouse_id`                                                        | The provisioning job's warehouse, and the app's `sql-warehouse` resource (`CAN_USE`) |
-| server env | `EDP_STORE_CATALOG`, `EDP_STORE_SCHEMA_PREFIX`, `DATABRICKS_WAREHOUSE_ID` | Set from the above                                                                   |
-| server env | `DATABRICKS_HOST`, `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET`     | Injected by Databricks Apps                                                          |
-| server env | `EDP_APP_SURFACES`                                                        | `tenant,staff` (default). After an ADR-0008 split each app sets its own              |
-| server env | `EDP_PILOT_CONFIG_JSON`                                                   | The pilot datasets and owners ([above](#the-pilot-configuration))                    |
-| server env | `DATABRICKS_TOKEN`                                                        | Local development only; ignored when `NODE_ENV=production`                           |
+| Where      | Variable                                                                  | Meaning                                                                                      |
+| ---------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| bundle     | `data_backend`                                                            | `memory` (default) or `delta`; becomes `VITE_DATA_BACKEND` at build                          |
+| bundle     | `store_catalog`, `store_schema_prefix`                                    | Where the store lives; the prefix is `''` in production                                      |
+| bundle     | `sql_warehouse_id`                                                        | The provisioning job's warehouse, and the app's `sql-warehouse` resource (`CAN_USE`)         |
+| server env | `EDP_STORE_CATALOG`, `EDP_STORE_SCHEMA_PREFIX`, `DATABRICKS_WAREHOUSE_ID` | Set from the above                                                                           |
+| server env | `DATABRICKS_HOST`, `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET`     | Injected by Databricks Apps                                                                  |
+| server env | `EDP_APP_SURFACES`                                                        | `tenant,staff` (default). After an ADR-0008 split each app sets its own                      |
+| server env | `EDP_PILOT_CONFIG_JSON`                                                   | The pilot datasets and owners ([above](#the-pilot-configuration))                            |
+| server env | `EDP_ACCESS_MATRIX_JSON`, `EDP_ACCESS_MATRIX_ALLOW_DRAFT`                 | Whole access-matrix override and explicit draft opt-in ([above](#the-dataset-access-matrix)) |
+| server env | `DATABRICKS_TOKEN`                                                        | Local development only; ignored when `NODE_ENV=production`                                   |
 
 The app's service principal needs `USE CATALOG` on the store catalog and
 `USE SCHEMA`, `SELECT` and `MODIFY` on the store schemas. The provisioning job

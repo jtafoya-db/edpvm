@@ -102,7 +102,7 @@ export function personId(person: PersonContact): string {
   return person.email || `scim:${person.principalId ?? person.name}`;
 }
 
-/** `addedBy` on the manager role every intake owner holds from the seed (standup). */
+/** `addedBy` on the Maintainer (stored as `manager`) role every intake owner holds from the seed (standup). */
 export const INTAKE = "intake";
 
 /** Trim and lower-case an email so the same address always compares equal. */

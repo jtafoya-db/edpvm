@@ -56,6 +56,8 @@ function choiceStyle(selected: boolean): React.CSSProperties {
     borderRadius: "var(--radius-md)",
     background: selected ? "var(--color-blue-5v)" : "var(--surface-default)",
     cursor: "pointer",
+    minWidth: 0,
+    width: "100%",
   };
 }
 
@@ -83,7 +85,7 @@ export function OwnerStatus({
       }}
     >
       <Icon name={verified ? "verified" : "help"} size={16} color={fg} />
-      <span>{children}</span>
+      <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{children}</span>
     </div>
   );
 }
@@ -193,7 +195,7 @@ export function OwnerPicker({
             aria-invalid={Boolean(kindIssue) || undefined}
             style={{ marginTop: 3 }}
           />
-          <span>
+          <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
             <strong style={{ fontSize: "var(--font-size-2xs)" }}>Myself</strong>
             <span style={{ ...hint, display: "block" }}>
               {signedIn ? `${signedIn.name} (${signedIn.email})` : "You, as you're signed in"}
@@ -210,7 +212,7 @@ export function OwnerPicker({
             aria-invalid={Boolean(kindIssue) || undefined}
             style={{ marginTop: 3 }}
           />
-          <span>
+          <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
             <strong style={{ fontSize: "var(--font-size-2xs)" }}>Someone else</strong>
             <span style={{ ...hint, display: "block" }}>Enter their name and email</span>
           </span>
@@ -273,7 +275,7 @@ export function OwnerPicker({
               value={email}
               onChange={(e) => type({ email: e.target.value })}
               onBlur={() => touch("email")}
-              placeholder="name@example.test"
+              placeholder="name@example.gov"
               style={inp(Boolean(emailIssue))}
             />
             {emailIssue ? (

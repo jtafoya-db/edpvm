@@ -18,7 +18,7 @@
  *   7. the change list: tenants can't mark applied; staff can, once, recorded
  *      by hand in change_list_applications; the stage is derived
  *   8. owners: the last owner can't be removed; removing an owner lists their
- *      manager-group removal
+ *      Maintainer-group removal
  *   9. audit.actions has this area's branches
  *
  * Then it DROPs every schema it made and confirms none is left. It exits
@@ -300,7 +300,10 @@ async function main() {
     await loadConfiguredDatasets(SEED, { runner, names });
     expect((await count("initiatives", "initiatives")) === 1, "initiatives ≠ 1");
     expect((await count("teams", "dataset_owners")) === 2, "owners ≠ 2");
-    expect((await count("teams", "dataset_members", "role = 'manager'")) === 2, "managers ≠ 2");
+    expect(
+      (await count("teams", "dataset_members", "role = 'manager'")) === 2,
+      "Maintainers (rows stored as `manager`) ≠ 2",
+    );
     expect((await count("change_list", "change_list_entries")) === 0, "entries listed at load");
     const notSystem = await count(
       "teams",
@@ -315,7 +318,7 @@ async function main() {
       JSON.stringify(owners) === JSON.stringify([OWNER_1.principalId, OWNER_2.principalId]),
       `owner order ${JSON.stringify(owners)}`,
     );
-    return "1 initiative, 1 dataset, 2 owners and managers; every action by system; configured order kept";
+    return "1 initiative, 1 dataset, 2 owners and Maintainers; every action by system; configured order kept";
   });
 
   await check("3. two owners adding the same person at once: one member, one entry", async () => {
@@ -449,7 +452,7 @@ async function main() {
   });
 
   await check(
-    "8. owners: last-owner refused; a removal lists the manager-group removal",
+    "8. owners: last-owner refused; a removal lists the Maintainer-group removal",
     async () => {
       const store = session(STAFF);
       const result = await store.datasetTeam.removeOwner({

@@ -19,12 +19,28 @@ function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+const ISOLATION_LABELS: Record<string, string> = {
+  "No — shared workspaces are fine":
+    "No — notebooks, code, and dashboard names may be visible in a shared workspace",
+  "Yes — it must be isolated from other tenants":
+    "Yes — code, notebook or dashboard names or contents must be hidden",
+  "Not sure": "Not sure — ask EDP staff to assess",
+};
+
+const COMPLEXITY_LABELS: Record<string, string> = {
+  Light: "Light — copy, filter, or rename",
+  Moderate: "Moderate — joins and recurring business rules",
+  Heavy: "Heavy — many joins, large aggregations, or frequent recomputation",
+  "Very heavy / ML features": "Machine learning — feature engineering or model workloads",
+};
+
 /** Number fields arrive as the text typed into them and leave as numbers. */
 export function toOnboardingIntake(
   input: IntakeState,
   schema: IntakeSchema = loadSchema(),
 ): OnboardingIntake {
   const values = readNumbers(schema, input);
+  const submittedFieldIds = new Set(schema.fields.map((field) => field.id));
   const datasets = Array.isArray(values["datasets"])
     ? (values["datasets"] as IntakeDatasetInput[])
     : [];
@@ -37,7 +53,10 @@ export function toOnboardingIntake(
     datasets: datasets.map((dataset) => ({
       ...(dataset.id ? { id: dataset.id } : {}),
       name: text(dataset.name),
+      ...withText("sourceSystem", dataset.sourceSystem, values["sourceSystem"]),
       domain: text(dataset.domain),
+      ...withText("ingestionMethod", dataset.ingestionMethod, values["pattern"]),
+      ...withText("ingestionDetails", dataset.ingestionDetails, values["ingestConsultDetails"]),
       datasetTag: text(dataset.datasetTag),
       owners: dataset.owners.map((owner) => ({
         ...(owner.id ? { id: owner.id } : {}),
@@ -57,11 +76,25 @@ export function toOnboardingIntake(
     answers: structuredClone(
       Object.fromEntries(
         Object.entries(values)
-          .filter(([id, value]) => value !== undefined && !OWN_COLUMN_ANSWERS.has(id))
+          .filter(
+            ([id, value]) =>
+              value !== undefined &&
+              (submittedFieldIds.has(id) ||
+                id === "estimated" ||
+                id === "sourceSystem" ||
+                id === "domain") &&
+              !OWN_COLUMN_ANSWERS.has(id) &&
+              id !== "priority",
+          )
           .map(([id, value]) => [id, id === "datasets" ? withoutIds(value) : value]),
       ),
     ),
   };
+}
+
+function withText(key: string, primary: unknown, legacy?: unknown): Record<string, string> {
+  const value = text(primary) || text(legacy);
+  return value ? { [key]: value } : {};
 }
 
 function withInitiativeOwner(choice: IntakeInitiativeOwner | undefined) {
@@ -102,8 +135,33 @@ export function intakeAnswers(intake: OnboardingIntake): IntakeState {
   set("useCase", intake.businessCase);
   set("annualBenefit", intake.annualBenefit);
   set("levers", intake.levers);
-  set("datasets", intake.datasets);
-  set("isolation", intake.workspaceNeeds?.isolation);
+  const storedComplexity = text(answers["complexity"]);
+  if (storedComplexity) {
+    set("complexity", COMPLEXITY_LABELS[storedComplexity] ?? storedComplexity);
+  }
+  const legacyPattern = text(answers["pattern"]);
+  const legacyIngestionDetails = text(answers["ingestConsultDetails"]);
+  const legacySourceSystem = text(answers["sourceSystem"]);
+  const legacyDomain = text(answers["domain"]);
+  set(
+    "datasets",
+    intake.datasets.map((dataset) => ({
+      ...dataset,
+      sourceSystem: text(dataset.sourceSystem) || legacySourceSystem,
+      domain: text(dataset.domain) || legacyDomain,
+      ingestionMethod: text(dataset.ingestionMethod) || legacyPattern,
+      ingestionDetails: text(dataset.ingestionDetails) || legacyIngestionDetails,
+    })),
+  );
+  const storedIsolation = text(intake.workspaceNeeds?.isolation);
+  const answeredIsolation = text(answers["isolation"]);
+  const mappedIsolation = ISOLATION_LABELS[storedIsolation] ?? storedIsolation;
+  set(
+    "isolation",
+    answeredIsolation && mappedIsolation.startsWith(`${answeredIsolation} — `)
+      ? answeredIsolation
+      : mappedIsolation || answeredIsolation,
+  );
   set("teamSize", intake.workspaceNeeds?.teamSize);
   set("initiativeOwner", intake.initiativeOwner);
   return answers;

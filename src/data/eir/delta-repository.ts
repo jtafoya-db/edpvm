@@ -4,7 +4,8 @@
  *
  * - Reads: `eir/mine` (the session's own EIR), `eir/record` and `eir/inbox`
  *   (safeguards validators).
- * - Writes are commands (`eir/start`, `eir/submit`, `eir/save-draft`, `eir/decide`) with
+ * - Writes are commands (`eir/start`, `eir/submit`, `eir/save-draft`,
+ *   `eir/prepare-pdf`, `eir/decide`) with
  *   the version the screen read. One idempotency key per intent: a retry of
  *   the same change after a dropped connection resends the same key, so the
  *   server replays it rather than writing it twice.
@@ -18,7 +19,13 @@ import { EIR_FORM, EIR_FORM_UNAVAILABLE } from "./config";
 import { answerIdsOn, eirFormFor } from "./form";
 import { isEirReadRefusal } from "./errors";
 import { blockingGuidance } from "./evaluation";
-import type { EirFileSubmission, EirRepository, EirResponseInput } from "./repository";
+import type {
+  EirFileSubmission,
+  EirPdfPreparation,
+  EirPreparedPdf,
+  EirRepository,
+  EirResponseInput,
+} from "./repository";
 import type { EirDecision, EirFormValues, EirInboxItem, EirRecord } from "./types";
 import type { EirEvaluation } from "./types";
 import { definitionLabel } from "./definition/identity";
@@ -54,6 +61,9 @@ export async function uploadEirPdf(file: File, request: typeof fetch = fetch): P
   return { volumePath: payload.volumePath };
 }
 
+const fromBase64 = (text: string): Uint8Array =>
+  Uint8Array.from(atob(text), (character) => character.charCodeAt(0));
+
 export function createDeltaEirRepository(options: DeltaEirRepositoryOptions): EirRepository {
   const { transport } = options;
   const upload = options.upload ?? ((file: File) => uploadEirPdf(file));
@@ -63,16 +73,17 @@ export function createDeltaEirRepository(options: DeltaEirRepositoryOptions): Ei
   // a retry is the same intent (same payload, same key), never a new one.
   const attempts = new WeakMap<File, EirUpload & { version?: number }>();
 
-  async function command(
+  async function command<T = EirRecord>(
     name: string,
     payload: unknown,
     expectedVersion: number,
-  ): Promise<EirRecord> {
+    givenKey?: string,
+  ): Promise<T> {
     const intent = JSON.stringify([name, payload, expectedVersion]);
-    const idempotencyKey = keys.get(intent) ?? newKey();
-    keys.set(intent, idempotencyKey);
+    const idempotencyKey = givenKey ?? keys.get(intent) ?? newKey();
+    if (!givenKey) keys.set(intent, idempotencyKey);
     try {
-      const response = await transport.command<{ result: EirRecord }>("eir", name, {
+      const response = await transport.command<{ result: T }>("eir", name, {
         idempotencyKey,
         expectedVersion,
         payload,
@@ -143,8 +154,25 @@ export function createDeltaEirRepository(options: DeltaEirRepositoryOptions): Ei
     },
     async generatePdf() {
       const response = await transport.read<{ bytes: string }>("eir", "generated-pdf");
-      const binary = atob(response.bytes);
-      return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      return fromBase64(response.bytes);
+    },
+    // One command (#235): no `mine` read first, the screen sends the draft version it read.
+    async preparePdf(input: EirPdfPreparation): Promise<EirPreparedPdf> {
+      const prepared = await command<{
+        record: EirRecord;
+        evaluation: EirEvaluation;
+        pdf?: string;
+      }>(
+        "prepare-pdf",
+        { formVersion: input.formVersion ?? EIR_FORM.version, values: input.values },
+        input.expectedDraftVersion,
+        input.idempotencyKey,
+      );
+      return {
+        record: prepared.record,
+        evaluation: prepared.evaluation,
+        ...(prepared.pdf ? { pdf: fromBase64(prepared.pdf) } : {}),
+      };
     },
     async submitWithFile(input: EirFileSubmission) {
       const prior = attempts.get(input.file);

@@ -9,8 +9,8 @@
  *
  * The stable key is the SCIM `id` (NOT the token, which is never decoded, and
  * NOT the email). `isAdmin` is derived from whether the user's SCIM `groups`
- * contain the configured EDP-admin group's STABLE id — never a seed flag, never
- * a browser-supplied value.
+ * contain the configured EDP-admin group's STABLE id as a direct membership —
+ * never a nested group, seed flag, or browser-supplied value.
  *
  * In the MVP one group, the EDP admin group, holds every staff role (#226,
  * ADR-0008's 2026-10-18 amendment): EDP staff, Safeguards validator, EDP
@@ -22,6 +22,8 @@
  */
 
 import type { OnboardingReviewerRole } from "../data/onboarding/types";
+import { isDigitIdentifier, isPersonName, type PersonIdentifiers } from "../data/person-name";
+import type { NameSource } from "../data/types";
 
 /**
  * The identity headers a Databricks App forwards to the app server. Present
@@ -48,8 +50,8 @@ export interface ScimMe {
   /** SCIM name parts, when the workspace has them (the EIR form pre-fills them). */
   name?: { givenName?: string; familyName?: string };
   emails?: Array<{ value: string; primary?: boolean }>;
-  /** Group memberships; `value` is the stable SCIM group id. */
-  groups?: Array<{ value: string; display?: string }>;
+  /** Group memberships; `value` is the stable id and `type` is direct or indirect. */
+  groups?: Array<{ value: string; display?: string; type?: string }>;
 }
 
 /** Calls the workspace SCIM Current-User endpoint with the OBO token. Injected so tests can mock it. */
@@ -85,6 +87,8 @@ export interface ResolvedIdentity {
   /** SCIM `name.givenName` / `name.familyName`, when /Me has them. */
   givenName?: string;
   familyName?: string;
+  /** Where `displayName` came from, so operators can tell a missing SCIM name from a bug. */
+  nameSource?: NameSource;
   isAdmin: boolean;
   isSafeguardsValidator?: boolean;
   /** Onboarding reviewer roles held (#86): both for an EDP admin group member (#226). */
@@ -113,10 +117,10 @@ export function readForwardedHeaders(headers: Headers): ForwardedIdentityHeaders
   };
 }
 
-/** The user is an admin iff a configured admin group id appears in their SCIM groups (by stable id). */
+/** The user is an admin iff SCIM reports direct membership in the configured group. */
 export function deriveIsAdmin(groups: ScimMe["groups"], adminGroupId: string | undefined): boolean {
   if (!adminGroupId) return false;
-  return (groups ?? []).some((group) => group.value === adminGroupId);
+  return (groups ?? []).some((group) => group.value === adminGroupId && group.type === "direct");
 }
 
 /** The staff roles on a resolved identity. */
@@ -163,6 +167,56 @@ function primaryEmail(me: ScimMe): string | undefined {
   return emails.find((entry) => entry.primary)?.value ?? emails[0]?.value;
 }
 
+/** Shown when no candidate is usable as a name. */
+const NO_NAME_DISPLAY = "Signed-in user";
+
+/** The trimmed value, or undefined when it's absent or blank. */
+function nonBlank(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+/** The trimmed value, when it's a person's name and not an identifier (`person-name.ts`). */
+function personName(
+  value: string | null | undefined,
+  identifiers: PersonIdentifiers,
+): string | undefined {
+  return isPersonName(value, identifiers) ? value.trim() : undefined;
+}
+
+/** A non-blank value that isn't a digit-shaped id (`person-name.ts`), such as `<userId>@<workspaceId>`. */
+function usable(value: string | null | undefined): string | undefined {
+  const trimmed = nonBlank(value);
+  return trimmed && !isDigitIdentifier(trimmed) ? trimmed : undefined;
+}
+
+/**
+ * The display name and where it came from: SCIM `displayName`, then SCIM's
+ * name parts, then `X-Forwarded-User`, then the email, then the username.
+ * The first three must be a person's name, not an identifier, so a GovCloud
+ * user whose IdP sent no name sees their email, not `<userId>@<workspaceId>`.
+ */
+function resolveDisplayName(
+  me: ScimMe,
+  headers: ForwardedIdentityHeaders,
+  identifiers: PersonIdentifiers,
+  parts: { givenName: string | undefined; familyName: string | undefined },
+  email: string,
+  username: string,
+): { displayName: string; nameSource: NameSource } {
+  const scimDisplay = personName(me.displayName, identifiers);
+  if (scimDisplay) return { displayName: scimDisplay, nameSource: "scim-display" };
+  const joined = [parts.givenName, parts.familyName].filter(Boolean).join(" ");
+  if (joined) return { displayName: joined, nameSource: "scim-parts" };
+  const header = personName(headers.user, identifiers);
+  if (header) return { displayName: header, nameSource: "header" };
+  const mail = usable(email);
+  if (mail) return { displayName: mail, nameSource: "email" };
+  const user = usable(username);
+  if (user) return { displayName: user, nameSource: "username" };
+  return { displayName: NO_NAME_DISPLAY, nameSource: "none" };
+}
+
 /**
  * Resolve the authenticated principal from forwarded headers.
  *
@@ -190,7 +244,9 @@ export async function resolveIdentity(input: {
         401,
       );
     }
-    const groups = (config.devFallbackGroupIds ?? []).map((value) => ({ value }));
+    const groups = (config.devFallbackGroupIds ?? []).map(
+      (value) => ({ value, type: "direct" }) as const,
+    );
     return {
       ...config.devFallback,
       ...deriveStaffRoles(groups, config.adminGroupId),
@@ -203,15 +259,29 @@ export async function resolveIdentity(input: {
 
   const email = primaryEmail(me) ?? headers.email ?? "";
   const username = me.userName ?? headers.preferredUsername ?? email;
-  const displayName = me.displayName ?? headers.user ?? username;
+  // Trimmed copies, only to tell a name from an identifier; email and username
+  // above are returned exactly as SCIM and the headers send them.
+  const nameEmail = nonBlank(primaryEmail(me)) ?? nonBlank(headers.email) ?? "";
+  const nameUsername = nonBlank(me.userName) ?? nonBlank(headers.preferredUsername) ?? nameEmail;
+  const identifiers = { email: nameEmail, usernames: [me.userName, headers.preferredUsername] };
+  // A name part that is only an identifier is dropped, not forwarded.
+  const givenName = personName(me.name?.givenName, identifiers);
+  const familyName = personName(me.name?.familyName, identifiers);
 
   return {
     principalId: me.id,
     username,
     email,
-    displayName,
-    ...(me.name?.givenName?.trim() ? { givenName: me.name.givenName.trim() } : {}),
-    ...(me.name?.familyName?.trim() ? { familyName: me.name.familyName.trim() } : {}),
+    ...resolveDisplayName(
+      me,
+      headers,
+      identifiers,
+      { givenName, familyName },
+      nameEmail,
+      nameUsername,
+    ),
+    ...(givenName ? { givenName } : {}),
+    ...(familyName ? { familyName } : {}),
     ...deriveStaffRoles(me.groups, config.adminGroupId),
   };
 }

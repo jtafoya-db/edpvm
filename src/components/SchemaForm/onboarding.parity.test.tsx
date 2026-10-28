@@ -58,7 +58,9 @@ function clickButton(name: RegExp) {
   fireEvent.click(screen.getByRole("button", { name }));
 }
 function setField(label: RegExp, value: string) {
-  fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  const field = screen.getAllByLabelText(label).find((element) => element.tagName !== "BUTTON");
+  if (!field) throw new Error(`No form control found for ${String(label)}`);
+  fireEvent.change(field, { target: { value } });
 }
 
 // The complete request the ORIGINAL hand-written wizard produced for this exact
@@ -73,25 +75,25 @@ const GOLDEN_REQUEST = {
   status: "In progress",
   overall: "Submitted — pending EDP business and ROI review",
   purpose:
-    "Onboard Collections case signals from IDRS into the Enforcement & Collections domain via " +
-    "Something else (needs consultation), consumed through Tableau. Prioritize balance-due cases " +
+    "Onboard Collections case signals from IMF / Individual Master File into the Enforcement & Collections domain via " +
+    "I don’t know or need something else — consultation required, consumed through Tableau. Prioritize balance-due cases " +
     "across treatment streams. Mission value: Reduce the tax gap, Reduce cost and contractor " +
     "support (primary: Reduce the tax gap). Sizing: Extra large — reserved capacity (40000 GB, " +
-    "Streaming loads, Very heavy / ML features transforms, 200 query users) · est. $6.5M/yr vs. " +
+    "Streaming loads, Machine learning — feature engineering or model workloads transforms, 200 query users) · est. $6.5M/yr vs. " +
     "$1.3M annual benefit (ROI 0.2x).",
   items: [
     {
       kind: "Onboarding",
       label: "Collections case signals",
-      sub: "Enforcement & Collections · Extra large — reserved capacity",
+      sub: "Target: the Enforcement & Collections domain · Extra large — reserved capacity",
     },
     {
       kind: "Onboarding",
-      label: "Ingestion — Something else (needs consultation)",
-      sub: "Streaming · Very heavy / ML features transforms",
+      label: "Ingestion — I’m not sure or need another path — consult EDP staff",
+      sub: "Streaming · Machine learning — feature engineering or model workloads transforms",
     },
     { kind: "Onboarding", label: "Consumption — Tableau", sub: "200 query users" },
-    { kind: "Onboarding", label: "Platform capacity", sub: "151480 DBU/mo · 62.5 TB" },
+    { kind: "Onboarding", label: "Platform capacity", sub: "64120 DBU/mo · 62.5 TB" },
     {
       kind: "Onboarding",
       label: "Mission value — Reduce the tax gap",
@@ -117,12 +119,12 @@ const GOLDEN_REQUEST = {
     {
       system: "EDP business and ROI review",
       status: "pending",
-      detail: "Reduce the tax gap · $6.5M/yr est. cost · ROI 0.2x",
+      detail: "Reduce the tax gap · $2.8M/yr est. cost · ROI 0.4x",
     },
     {
       system: "EDP intake CCB",
       status: "pending",
-      detail: "Enforcement & Collections intake change control board",
+      detail: "Intake change control board for the Enforcement & Collections domain",
     },
     {
       system: "BEARS entitlement creation",
@@ -160,15 +162,13 @@ describe("OnboardingScreen — end-to-end request parity (golden fixture)", () =
         wrapper: onboardingStore(submitOnboarding).Wrapper,
       });
 
-      // step 0 — source profile (non-default source system + target domain)
+      // step 0 — initiative
       setField(/initiative name/i, "Collections case signals");
-      setField(/source system/i, "IDRS");
-      setField(/target domain/i, "enforcement-collections");
       fireEvent.click(screen.getByRole("radio", { name: /myself/i }));
+      setField(/data sensitivity/i, "SBU (FTI)");
       fireEvent.click(next());
 
-      // step 1 — architecture: NON-DEFAULT off-pattern ingest + changed access
-      clickButton(/Something else \(needs consultation\)/i);
+      // step 1 — initiative-level access
       clickButton(/^Tableau/i);
       fireEvent.click(next());
 
@@ -177,7 +177,6 @@ describe("OnboardingScreen — end-to-end request parity (golden fixture)", () =
       fireEvent.click(next());
 
       // step 3 — business: retarget levers + outcome, custom benefit
-      clickButton(/Reduce fraud and improper payments/i); // deselect the default
       clickButton(/Reduce the tax gap/i);
       clickButton(/Reduce cost and contractor support/i);
       setField(/business justification/i, "Prioritize balance-due cases across treatment streams.");
@@ -187,27 +186,40 @@ describe("OnboardingScreen — end-to-end request parity (golden fixture)", () =
 
       // step 4 — datasets & owners (#86)
       setField(/^Dataset 1 name$/, "Collections case signals (curated)");
+      setField(/^Dataset 1 source system$/, "IMF / Individual Master File");
       setField(/^Dataset 1 domain$/, "enforcement-collections");
+      setField(/^Dataset 1 ingestion method$/, "other");
+      setField(/^Dataset 1 proposed ingestion approach$/, "Query a partner API each morning.");
       setField(/^Dataset 1 tag$/, "collections_case_signals");
       const owner = within(screen.getByRole("group", { name: "Dataset 1 owner 1" }));
       fireEvent.click(owner.getByRole("radio", { name: /someone else/i }));
       fireEvent.change(owner.getByLabelText("Owner's name"), { target: { value: "C. Reyes" } });
       fireEvent.change(owner.getByLabelText("Owner's email"), {
-        target: { value: "c.reyes@example.test" },
+        target: { value: "c.reyes@example.gov" },
       });
       fireEvent.click(next());
 
       // step 5 — workspace needs (#86)
-      setField(/isolated from other tenants/i, "Yes — it must be isolated from other tenants");
+      setField(
+        /code or work products/i,
+        "Yes — code, notebook or dashboard names or contents must be hidden",
+      );
+      setField(
+        /workspace separation reason/i,
+        "Investigative methods must remain within the named team.",
+      );
       setField(/how many people/i, "9");
       fireEvent.click(next());
 
       // step 6 — sizing: non-default volume/frequency/complexity/users, then run
       setField(/data volume/i, "40000");
       setField(/load frequency/i, "Streaming");
-      setField(/transformation complexity/i, "Very heavy / ML features");
+      setField(
+        /transformation complexity/i,
+        "Machine learning — feature engineering or model workloads",
+      );
       setField(/business users needing to query/i, "200");
-      clickButton(/run ai sizing/i);
+      clickButton(/run preliminary estimate/i);
       act(() => vi.advanceTimersByTime(900));
       fireEvent.click(next());
 
@@ -230,10 +242,13 @@ describe("OnboardingScreen — end-to-end request parity (golden fixture)", () =
           name: "Collections case signals (curated)",
           domain: "enforcement-collections",
           datasetTag: "collections_case_signals",
-          owners: [{ name: "C. Reyes", email: "c.reyes@example.test" }],
+          owners: [{ name: "C. Reyes", email: "c.reyes@example.gov" }],
         },
       ],
-      workspaceNeeds: { isolation: "Yes — it must be isolated from other tenants", teamSize: 9 },
+      workspaceNeeds: {
+        isolation: "Yes — code, notebook or dashboard names or contents must be hidden",
+        teamSize: 9,
+      },
     });
 
     // ...and nothing else: no old-model request is written (#176). The assembled
@@ -243,6 +258,7 @@ describe("OnboardingScreen — end-to-end request parity (golden fixture)", () =
     expect(submitRequest).not.toHaveBeenCalled();
     expect(screen.getByText(GOLDEN_REQUEST.title)).toBeTruthy();
     expect(screen.getByText(GOLDEN_REQUEST.purpose)).toBeTruthy();
+    expect(screen.getByText(GOLDEN_REQUEST.items[0]!.sub)).toBeTruthy();
     // We land on the inline confirmation showing the onboarding request and its stage,
     // never the (gated) old-model status screen.
     expect(flash).toHaveBeenCalledWith("Onboarding request submitted for business & ROI review");

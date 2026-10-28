@@ -388,7 +388,7 @@ The PDFs stay in the Unity Catalog volume. The tables hold only the path and int
 
 ### 10. No per-member access levels: a role grants a fixed set
 
-_The human's decision (2026-10-04, #119)._ A dataset role (tester, developer or manager) grants a fixed set of access, the set described on its role card. There is no `dataset_access_levels` table, and no action for setting levels. A member's access is fully described by their one role (decision 11).
+_The human's decision (2026-10-04, #119)._ A dataset role (tester, developer or Maintainer) grants a fixed set of access, the set described on its role card. There is no `dataset_access_levels` table, and no action for setting levels. A member's access is fully described by their one role (decision 11).
 
 **Why:**
 
@@ -404,11 +404,11 @@ _The human's decision (2026-10-04, #119)._ A dataset role (tester, developer or 
 
 ### 11. One role per person per dataset
 
-`teams.dataset_members` has at most one row per dataset and person (#114). Changing a role updates that row. Owners always hold the manager role.
+`teams.dataset_members` has at most one row per dataset and person (#114). Changing a role updates that row. Owners always hold the Maintainer role, stored as `manager`.
 
 **Why:**
 
-- The roles nest: developer includes tester, and manager includes developer. A second role on the same dataset adds nothing.
+- The roles nest: developer includes tester, and Maintainer includes developer. A second role on the same dataset adds nothing.
 - One row per person is what #114's team page shows.
 
 **Rejected: one row per dataset, person and role** (what #110 allows today). The team page would have to merge rows, and "change role" would be a remove plus an add.
@@ -483,3 +483,7 @@ _The human's decision._ Change Data Feed (CDF) is turned on for action tables an
 - **Change Data Feed**: see decision 13.
 - **GovCloud runtime features.** The human states that GovCloud supports `CHECK` constraints, table isolation settings and the other Delta features used here. Transactions, conflict detection, uniqueness under concurrent writers and Change Data Feed were tested there on 2026-10-04 (decision 6). The first build ticket repeats the races through the real server route, and production needs a Preview-channel warehouse or a re-test on Current.
 - **Old pipeline tables.** `requests.pipeline` and `requests.pipeline_decisions` are dropped in #96, with the rest of the old model. **Why:** they back the seven-stage pipeline screen that #96 retires, and `monitoring.open_work` replaces what that screen showed.
+
+## Terminology amendment (#260)
+
+_The human's decision (2026-10-18, #141)._ The dataset role this ADR first called `manager` is called **Maintainer** wherever people read it: everything a developer has, plus running the dataset's jobs and managing permissions on what the dataset publishes in prod. Only dataset owners, with EDP staff, decide who is on a dataset's team; a Maintainer who isn't an owner can't add or remove people. The stored value is still `manager` (`DatasetRoleName`, `teams.dataset_members.role`, action payloads, group-name suffixes), so no data or group was renamed. The `teams.dataset_members.role` `CHECK` constraint still allows `tester`, `developer` and `manager`. This ADR's prose now says Maintainer; where it quotes a stored value, it still says `manager`.

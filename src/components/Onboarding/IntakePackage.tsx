@@ -11,8 +11,10 @@ import {
   initiativeOwnerText,
   intakeChangeField,
   ownerChangeField,
+  INITIATIVE_OWNER_ID,
   type InitiativeOwner,
   type OnboardingIntakeChange,
+  type OnboardingOwnerMatch,
   type OwnerVerification,
   type OnboardingRequest,
   useCatalog,
@@ -34,6 +36,7 @@ import {
 } from "@/schema";
 import { ArchDiagram } from "../SchemaForm/atoms";
 import { useChrome } from "./chrome";
+import { OwnerMatchMark } from "./OwnerMatching";
 import { Mono } from "./shared";
 import { TONE, banner, detailLabel, linkBtn } from "./styles";
 
@@ -180,37 +183,8 @@ function ResubmissionMark({ children }: { children: React.ReactNode }) {
   );
 }
 
-/**
- * Whether the app knows who an owner is (#103), said plainly: verified only
- * when it's the provider's own signed-in account; anyone typed in by name and
- * email is not verified, because nothing has confirmed who they are yet.
- */
-function VerificationMark({ verification }: { verification: OwnerVerification }) {
-  const { Icon } = useChrome();
-  const verified = verification === "verified";
-  const tone = verified ? TONE.success : TONE.warning;
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        marginLeft: 8,
-        padding: "1px 8px",
-        borderRadius: "var(--radius-pill)",
-        background: tone.bg,
-        border: `1px solid ${tone.border}`,
-        color: tone.fg,
-        fontSize: "var(--font-size-3xs)",
-        fontWeight: 700,
-        whiteSpace: "nowrap",
-      }}
-    >
-      <Icon name={verified ? "verified" : "help"} size={14} color={tone.fg} />
-      {verified ? "Verified: signed-in account" : "Not verified"}
-    </span>
-  );
-}
+/** An owner's match (#103), by owner ID (`initiative` for the initiative owner); none on a draft. */
+type MatchOf = (ownerId: string | undefined) => OnboardingOwnerMatch | undefined;
 
 /** One question and its answer. */
 function AnswerRow({
@@ -243,12 +217,14 @@ function DatasetsAnswer({
   changes,
   domainName,
   ownerVerification,
+  matchOf,
 }: {
   field: FieldDef;
   datasets: IntakeDatasetInput[];
   changes: readonly OnboardingIntakeChange[];
   domainName: (id: string) => string;
   ownerVerification: Readonly<Record<string, OwnerVerification>> | undefined;
+  matchOf: MatchOf;
 }) {
   const changeOf = (name: string) => changes.find((change) => change.field === name);
   // Removed records aren't in the request any more: list them where they were.
@@ -313,10 +289,26 @@ function DatasetsAnswer({
               change={changeOf(datasetChangeField(i, "name"))}
             />
             <AnswerRow
+              label="Source system"
+              answer={dataset.sourceSystem || NOT_ANSWERED}
+              change={changeOf(datasetChangeField(i, "source system"))}
+            />
+            <AnswerRow
               label="Domain"
               answer={dataset.domain ? domainName(dataset.domain) : NOT_ANSWERED}
               change={domainChange(datasetChangeField(i, "domain"))}
             />
+            <AnswerRow
+              label="Ingestion method"
+              answer={
+                ingestionPatternLabel(dataset.ingestionMethod) ||
+                dataset.ingestionMethod ||
+                NOT_ANSWERED
+              }
+            />
+            {dataset.ingestionDetails ? (
+              <AnswerRow label="Proposed ingestion approach" answer={dataset.ingestionDetails} />
+            ) : null}
             <AnswerRow
               label="Dataset tag"
               answer={dataset.datasetTag ? <Mono>{dataset.datasetTag}</Mono> : NOT_ANSWERED}
@@ -337,8 +329,11 @@ function DatasetsAnswer({
                     answer={
                       <>
                         {`${owner.name} (${owner.email})`}
-                        {owner.id && ownerVerification?.[owner.id] ? (
-                          <VerificationMark verification={ownerVerification[owner.id]!} />
+                        {owner.id && (matchOf(owner.id) || ownerVerification?.[owner.id]) ? (
+                          <OwnerMatchMark
+                            match={matchOf(owner.id)}
+                            verification={ownerVerification?.[owner.id]}
+                          />
                         ) : null}
                         {added ? (
                           <ResubmissionMark>Added in the resubmission</ResubmissionMark>
@@ -370,6 +365,11 @@ function DatasetsAnswer({
   );
 }
 
+function ingestionPatternLabel(id: string | undefined): string {
+  if (!id) return "";
+  return SCHEMA.optionLists.ingestPatterns.find((pattern) => pattern.id === id)?.name ?? id;
+}
+
 /** What a step's widgets tell a reviewer, worked out from the answers as the wizard does. */
 type PackageWidget = React.ComponentType<{
   schema: IntakeSchema;
@@ -395,33 +395,69 @@ function Flag({
 
 const ArchitectureDiagram: PackageWidget = ({ schema, answers, domainName }) => {
   const { Icon } = useChrome();
-  if (isBlank(answers["pattern"]) || isBlank(answers["access"])) return null;
-  const { patternDef, accessDef } = resolveSelections(schema, answers);
-  const domain = String(answers["domain"] ?? "");
+  if (isBlank(answers["access"])) return null;
+  const { accessDef } = resolveSelections(schema, answers);
+  const datasets = Array.isArray(answers["datasets"])
+    ? (answers["datasets"] as IntakeDatasetInput[])
+    : [];
+  const complete =
+    datasets.length > 0 &&
+    datasets.every((dataset) => dataset.sourceSystem?.trim() && dataset.ingestionMethod?.trim());
+  if (!complete)
+    return (
+      <p style={body}>
+        The architecture diagram appears once each dataset has a source system and ingestion method.
+      </p>
+    );
   return (
     <div style={{ marginTop: 12 }}>
       <div style={detailLabel}>Architecture diagram</div>
-      <ArchDiagram
-        source={String(answers["sourceSystem"] ?? "").trim() || "Source system"}
-        ingest={patternDef}
-        domainName={domain ? domainName(domain) : NOT_ANSWERED}
-        access={accessDef}
-        Icon={Icon}
-      />
+      {datasets.map((dataset) => {
+        const ingest = schema.optionLists.ingestPatterns.find(
+          (pattern) => pattern.id === dataset.ingestionMethod,
+        );
+        if (!ingest) return null;
+        return (
+          <div key={dataset.id ?? dataset.datasetTag} style={{ marginTop: 12 }}>
+            <ArchDiagram
+              source={dataset.sourceSystem!}
+              ingest={ingest}
+              domainName={dataset.domain ? domainName(dataset.domain) : NOT_ANSWERED}
+              access={accessDef}
+              Icon={Icon}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 };
 
 /** The wizard's architecture note: whether the design needs an EDP architecture consultation. */
 const ArchitectureConsultation: PackageWidget = ({ schema, answers }) => {
-  if (isBlank(answers["pattern"]) || isBlank(answers["access"])) return null;
-  const { patternDef, accessDef, needsConsult } = resolveSelections(schema, answers);
+  if (isBlank(answers["access"])) return null;
+  const { accessDef } = resolveSelections(schema, answers);
+  const datasets = Array.isArray(answers["datasets"])
+    ? (answers["datasets"] as IntakeDatasetInput[])
+    : [];
+  if (
+    !datasets.length ||
+    datasets.some((dataset) => !dataset.sourceSystem?.trim() || !dataset.ingestionMethod?.trim())
+  )
+    return null;
+  const ingestion = datasets.flatMap((dataset) => {
+    const pattern = schema.optionLists.ingestPatterns.find(
+      (candidate) => candidate.id === dataset.ingestionMethod,
+    );
+    return pattern && !pattern.approved ? [pattern] : [];
+  });
+  const outside = [...ingestion, ...(!accessDef.approved ? [accessDef] : [])];
+  const needsConsult = outside.length > 0;
   if (!needsConsult) {
     return (
       <Flag tone="success">Approved patterns only, so no architecture consultation is needed.</Flag>
     );
   }
-  const outside = [patternDef, accessDef].filter((option) => !option.approved);
   return (
     <Flag tone="warning">
       <strong style={{ color: "var(--text-default)" }}>
@@ -495,6 +531,7 @@ function StepAnswers({
   domainName,
   initiativeOwner,
   ownerVerification,
+  matchOf,
 }: {
   schema: IntakeSchema;
   step: StepDef;
@@ -503,6 +540,7 @@ function StepAnswers({
   domainName: (id: string) => string;
   initiativeOwner: InitiativeOwner | null | undefined;
   ownerVerification: Readonly<Record<string, OwnerVerification>> | undefined;
+  matchOf: MatchOf;
 }) {
   const changeOf = (name: string) => changes.find((change) => change.field === name);
   const fields = stepFields(schema, step);
@@ -532,7 +570,10 @@ function StepAnswers({
                     initiativeOwner ? (
                       <>
                         {`${initiativeOwner.name} (${initiativeOwner.email})`}
-                        <VerificationMark verification={initiativeOwner.verification} />
+                        <OwnerMatchMark
+                          match={matchOf(INITIATIVE_OWNER_ID)}
+                          verification={initiativeOwner.verification}
+                        />
                       </>
                     ) : (
                       // Not stored yet (a draft package): the answer as given, unverified or not.
@@ -580,6 +621,7 @@ function StepAnswers({
           changes={changes}
           domainName={domainName}
           ownerVerification={ownerVerification}
+          matchOf={matchOf}
         />
       ))}
       {widgets.map((id) => {
@@ -601,7 +643,7 @@ export function IntakePackage({
   schema = SCHEMA,
 }: {
   request: Pick<OnboardingRequest, "id" | "intake"> &
-    Partial<Pick<OnboardingRequest, "initiativeOwner" | "ownerVerification">>;
+    Partial<Pick<OnboardingRequest, "initiativeOwner" | "ownerVerification" | "ownerMatches">>;
   changes?: readonly OnboardingIntakeChange[] | undefined;
   schema?: IntakeSchema;
 }) {
@@ -616,6 +658,8 @@ export function IntakePackage({
   // null: as first shown (changed steps open); otherwise every step open or closed.
   const [allOpen, setAllOpen] = React.useState<boolean | null>(null);
   const headingId = `${request.id}-package`;
+  const matchOf: MatchOf = (ownerId) =>
+    ownerId ? request.ownerMatches?.find((owner) => owner.ownerId === ownerId) : undefined;
 
   return (
     <section aria-labelledby={headingId} style={{ display: "grid", gap: 10 }}>
@@ -674,6 +718,7 @@ export function IntakePackage({
                 domainName={domainName}
                 initiativeOwner={request.initiativeOwner}
                 ownerVerification={request.ownerVerification}
+                matchOf={matchOf}
               />
             ),
           };

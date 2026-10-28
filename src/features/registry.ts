@@ -49,7 +49,7 @@ export const FEATURES = {
     label: "Dataset team",
     status: "live",
     notes:
-      "Dataset owners add, edit and remove testers, developers and managers, and manage owners; each role grants a fixed set of access, and each change goes on the change list. Saved to Delta (see dataset-access-persistence).",
+      "Dataset owners add, edit and remove testers, developers and Maintainers, and manage owners; each role grants a fixed set of access, and each change goes on the change list. Saved to Delta (see dataset-access-persistence).",
   },
   "change-list": {
     id: "change-list",
@@ -77,7 +77,7 @@ export const FEATURES = {
     label: "Saved access requests",
     status: "stub",
     notes:
-      "Requests you make, and every approval, rejection and withdrawal, are kept in this browser tab's in-memory store, with every data backend, Delta included, so they're visible only in the tab where they happened. Saving them to Delta isn't built yet, and reloading the page discards them. The two sample requests (marked \"sample\") are recreated, open, every time the app loads.",
+      "Requests you make, and every approval, rejection and withdrawal, are kept in this browser tab's in-memory store, with every data backend, Delta included, so they're visible only in the tab where they happened. Saving them to Delta isn't built yet, and reloading the page discards them. In local development, and on a PR preview deployed to ask for them, two sample requests (marked \"sample\") are recreated, open, every time the app loads. Production has none.",
   },
   "dataset-access-persistence": {
     id: "dataset-access-persistence",
@@ -91,7 +91,7 @@ export const FEATURES = {
     label: "Onboarding review inboxes",
     status: "live",
     notes:
-      "Business & ROI review and CCB inboxes for members of the configured groups, with SLA states. Requests live in the in-memory store until Delta persistence lands, so they reset on reload.",
+      "Business & ROI review and CCB inboxes for direct members of the EDP admin group, with SLA states. Requests are saved to Delta when the app uses the Delta backend; the local-development memory backend resets on reload.",
   },
   "onboarding-request-status": {
     id: "onboarding-request-status",
@@ -100,12 +100,26 @@ export const FEATURES = {
     notes:
       "A data provider's onboarding requests with current stage and SLA state; answer a send-back and resubmit, or withdraw.",
   },
+  "intake-owners": {
+    id: "intake-owners",
+    label: "Initiative and dataset owners at intake",
+    status: "live",
+    notes:
+      "In the onboarding wizard the data provider names the initiative point of contact and each dataset's owners, each as Myself or Someone else. Myself is verified from the account they're signed in with. Someone else is a name and an email: the email is checked for format only, and the person shows as not verified. Naming someone as the initiative point of contact doesn't make them a dataset owner or give them dataset-team rights. EDP staff then match these people to Databricks users by hand (owner-matching); confirming someone from a user directory isn't built (owner-directory-verification, #249).",
+  },
+  "owner-matching": {
+    id: "owner-matching",
+    label: "Owner matching to Databricks users",
+    status: "live",
+    notes:
+      "On an onboarding request at review, EDP staff (direct members of the EDP admin group) enter the Databricks account ID they found for each owner who isn't the provider's own account, or request user onboarding, which lists one by-hand onboard-user entry on the change list. A staff match is labelled entered by staff, not verified (see owner-directory-verification), and writes no permanent email binding. The provider sees each owner's match state only, not the IDs or who matched.",
+  },
   "group-membership-reader": {
     id: "group-membership-reader",
     label: "Databricks group membership snapshot",
     status: "live",
     notes:
-      "The server reads current membership and bounded Change Data Feed history through the allow-listed SQL proxy as the app service principal. Dataset owners see domain groups for their owned datasets' domains and dataset groups only for their exact owned dataset tags; EDP staff can read all rows. Manager-only identities see no member rows.",
+      "The server reads current membership and bounded Change Data Feed history through the allow-listed SQL proxy as the app service principal. Dataset owners see domain groups for their owned datasets' domains and dataset groups only for their exact owned dataset tags; EDP staff can read all rows. Maintainer-only identities see no member rows.",
   },
 
   // ---- Grayed preview panels (inert stubs). Semantics preserved. ----------
@@ -158,6 +172,15 @@ export const FEATURES = {
     status: "planned",
     phase: 3,
     notes: "Planned for Phase 3.",
+  },
+
+  "owner-directory-verification": {
+    id: "owner-directory-verification",
+    label: "Confirm owners from a user directory",
+    status: "planned",
+    phase: 2,
+    notes:
+      "Not built: the app can't read a user directory (SCIM user search is admin-only and app user tokens have no scim scope), so a staff-entered Databricks account ID is checked for format only and stays not verified. A directory projection that resolves owners in code is #249.",
   },
 
   // ---- Mock-backed surfaces — hidden from nav, gated as coming-soon -------

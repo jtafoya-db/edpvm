@@ -85,3 +85,23 @@ describe("header avatar → Profile link", () => {
     expect(go).toHaveBeenCalledWith("profile");
   });
 });
+
+describe("profile avatar", () => {
+  it("shows the initials of a real name", () => {
+    setData({ user: { initials: "CR", isAdmin: false } });
+    render(<TopNav route={{ section: "home" }} go={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Open your profile" })).toHaveTextContent("CR");
+  });
+
+  it("shows a neutral glyph, never an identifier, when there is no name on file", () => {
+    setGlobal("AppIcon", ({ name }: { name: string }) => <span data-icon={name} />);
+    setData({
+      user: { name: "casey.rivera@example.gov", initials: "", nameSource: "email", isAdmin: false },
+    });
+    render(<TopNav route={{ section: "home" }} go={vi.fn()} />);
+    const avatar = screen.getByRole("button", { name: "Open your profile" });
+    expect(avatar).toHaveTextContent(/^$/);
+    expect(avatar.querySelector('[data-icon="person"]')).not.toBeNull();
+    expect(avatar).toHaveAttribute("title", "Your profile");
+  });
+});

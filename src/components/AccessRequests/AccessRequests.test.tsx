@@ -72,14 +72,16 @@ describe("RequestAccessScreen", () => {
 
     expect(await screen.findByText("Its owners decide: Olive Owner")).toBeInTheDocument();
     const roles = screen.getByRole("radiogroup", { name: "Dataset role" });
-    // Manager isn't requestable: an owner grants it directly.
+    // Maintainer isn't requestable: an owner grants it directly.
     expect(
       within(roles)
         .getAllByRole("radio")
         .map((r) => r.getAttribute("aria-label")),
     ).toEqual(["Tester", "Dev (test)"]);
     expect(
-      screen.getByText(/manager role .*granted directly by a dataset owner/i),
+      screen.getByText(
+        /^The Maintainer role can't be requested\..*granted directly by a dataset owner/,
+      ),
     ).toBeInTheDocument();
     fireEvent.click(within(roles).getByRole("radio", { name: "Dev (test)" }));
 
@@ -235,7 +237,7 @@ describe("MyAccessRequestsScreen", () => {
     const notice = screen.getByRole("note", { name: "Session-only state" });
     expect(notice).toHaveTextContent(/reloading the page discards them/i);
     expect(notice).toHaveTextContent(
-      /sample requests .* are recreated, open, every time the app loads/,
+      /sample requests .* are recreated, open, every time the app loads\. Production has none\./,
     );
     expect(screen.getByLabelText("Service-level agreement target")).toHaveTextContent(
       "Provisional service-level agreement (SLA) target",

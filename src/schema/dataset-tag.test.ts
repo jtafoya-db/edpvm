@@ -43,9 +43,11 @@ describe("the dataset tag rule", () => {
 describe("dataset tags in an intake", () => {
   const dataset = (datasetTag: string) => ({
     name: "Signals",
+    sourceSystem: "IMF / Individual Master File",
     domain: "individual-filing",
+    ingestionMethod: "eftu",
     datasetTag,
-    owners: [{ name: "Olive Owner", email: "olive.owner@example.test" }],
+    owners: [{ name: "Olive Owner", email: "olive.owner@example.gov" }],
   });
 
   it("reports a rule break against the dataset's tag", () => {

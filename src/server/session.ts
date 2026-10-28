@@ -10,8 +10,8 @@
  * Config comes from the server environment:
  * - `DATABRICKS_HOST`         — workspace host for the SCIM `/Me` call.
  * - `EDP_ADMIN_GROUP_ID`      — stable SCIM id of the EDP admin group. In the MVP
- *                               membership in it (workspace-visible) gives every
- *                               staff role: `isAdmin`, `isSafeguardsValidator` and
+ *                               direct membership in it (workspace-visible) gives
+ *                               every staff role: `isAdmin`, `isSafeguardsValidator` and
  *                               both onboarding reviewer roles (#226). Unset ⇒
  *                               nobody holds a staff role. Requires the admin group
  *                               be assigned to the app's workspace; account-wide
@@ -41,9 +41,11 @@
  * documented default until a profile table exists (ADR-0004, decision 3).
  */
 import { eirSelfValidationFromEnv } from "./eir-test-mode.ts";
+import { sampleAccessRequestsFromEnv } from "./sample-access-requests.ts";
 import type { UserProfile } from "../data/types";
 import type { SessionUser } from "./delta/registry.ts";
 import { configuredSlaConfig } from "./sla-config.ts";
+import { isPersonNameSource } from "../data/person-name.ts";
 import {
   IdentityResolutionError,
   readForwardedHeaders,
@@ -139,8 +141,14 @@ export function resetSessionIdentityCacheForTests(): void {
   identityCache = undefined;
 }
 
-/** Initials from a display name (first letters of the first two words). */
-function initialsOf(displayName: string): string {
+/**
+ * Initials from a person's display name (first letters of the first two
+ * words). None for an email, username or placeholder fallback: the avatar
+ * shows a neutral glyph rather than letters of an identifier.
+ */
+function initialsOf(identity: ResolvedIdentity): string {
+  if (!isPersonNameSource(identity.nameSource)) return "";
+  const { displayName } = identity;
   const words = displayName.trim().split(/\s+/).filter(Boolean);
   const letters = words.slice(0, 2).map((word) => word[0] ?? "");
   return (letters.join("") || displayName.slice(0, 2)).toUpperCase();
@@ -159,7 +167,8 @@ function toUserProfile(identity: ResolvedIdentity, env?: unknown): UserProfile {
     name: identity.displayName,
     ...(identity.givenName ? { givenName: identity.givenName } : {}),
     ...(identity.familyName ? { familyName: identity.familyName } : {}),
-    initials: initialsOf(identity.displayName),
+    ...(identity.nameSource ? { nameSource: identity.nameSource } : {}),
+    initials: initialsOf(identity),
     email: identity.email,
     isAdmin: identity.isAdmin,
     isSafeguardsValidator: identity.isSafeguardsValidator ?? false,
@@ -173,6 +182,8 @@ function toUserProfile(identity: ResolvedIdentity, env?: unknown): UserProfile {
     ...(identity.isSafeguardsValidator && eirSelfValidationFromEnv(env)
       ? { eirSelfDecisionTestMode: true }
       : {}),
+    // Only a PR preview with the switch on has sample access requests (#312).
+    ...(sampleAccessRequestsFromEnv(env) ? { sampleAccessRequests: true } : {}),
   };
 }
 

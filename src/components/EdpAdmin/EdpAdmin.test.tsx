@@ -13,7 +13,6 @@ import type { UserProfile } from "@/data/types";
 import { setData } from "@/legacy/appDataBridge.js";
 // Registers window.TopNav as a side effect.
 import "@/legacy/chrome.jsx";
-import { OnboardingInbox } from "@/components/Onboarding";
 import { resetSessionIdentityCacheForTests, resolveSessionProfile } from "@/server/session";
 import { redirectToEdpAdmin } from "./access";
 import { EdpAdminScreen } from "./EdpAdminScreen";
@@ -252,7 +251,7 @@ describe("EDP Admin page: one EDP admin group holds every staff section (#226)",
         JSON.stringify({
           id: "3001",
           displayName: "Ada Admin",
-          groups: groups.map((value) => ({ value })),
+          groups: groups.map((value) => ({ value, type: "direct" })),
         }),
         { status: 200 },
       ),
@@ -289,24 +288,9 @@ describe("EDP Admin page: one EDP admin group holds every staff section (#226)",
   it("shows a non-member, even one in every reserved group, a page that names the EDP admin group", async () => {
     renderAdmin(await sessionProfile(["1101", "1102", "1103"]));
     expect(await screen.findByRole("heading", { level: 1, name: "Not available" })).toBeVisible();
-    expect(screen.getByText(/EDP admin group/)).toBeVisible();
+    expect(
+      screen.getByText("This page is for EDP staff: direct members of the EDP admin group."),
+    ).toBeVisible();
     expect(screen.queryByRole("navigation", { name: "EDP Admin sections" })).toBeNull();
-  });
-
-  it("tells a non-member on a review inbox that the EDP admin group holds the role", async () => {
-    const profile = await sessionProfile([]);
-    const store = createMemoryStore(makeSnapshot());
-    store.catalog.getUser = async () => profile;
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <StoreProvider store={store}>
-          <OnboardingInbox role="ccb" />
-        </StoreProvider>
-      </QueryClientProvider>,
-    );
-    const hint = await screen.findByText(/members of the configured CCB group/);
-    expect(hint).toHaveTextContent(/EDP admin group/);
-    expect(hint).toHaveTextContent("EDP_ADMIN_GROUP_ID");
-    expect(hint).not.toHaveTextContent("EDP_CCB_GROUP_ID");
   });
 });

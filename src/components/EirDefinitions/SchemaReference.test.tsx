@@ -97,7 +97,16 @@ describe("EIR definition schema reference (#219)", () => {
     const blocking = entry("blocking");
     expect(blocking).toHaveTextContent("PDFCan't be generated");
     expect(blocking).toHaveTextContent("UploadRefused");
-    expect(blocking).toHaveTextContent("Automatic validityNever eligible");
+    expect(blocking).toHaveTextContent("Automatic validityNever");
+    // #204: a warning qualifies only when the deploy names it, which by default it doesn't.
+    expect(entry("warning")).toHaveTextContent(
+      "Automatic validityOnly if the deploy names it (not by default)",
+    );
+    expect(entry("manual-review")).toHaveTextContent("Automatic validityNever");
+    // Automatic validity is built but not authorized: the reference says so.
+    expect(document.body).toHaveTextContent(
+      "Automatic validity isn't authorized for production use until Safeguards signs off.",
+    );
 
     expect(entry("validityDays")).toHaveTextContent(
       "Non-production MVP default (#148): the bootstrap uses 365 days",

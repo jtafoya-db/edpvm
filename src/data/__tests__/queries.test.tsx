@@ -12,6 +12,7 @@ import {
   useAcknowledgePrivacyNotice,
   useEvaluateEirDraft,
   useGenerateEirPdf,
+  usePrepareEirPdf,
   useRespondEir,
   useStartEir,
   useSubmitEirFile,
@@ -60,6 +61,7 @@ function useGuardedEirActions() {
     acknowledge: useAcknowledgePrivacyNotice(),
     evaluate: useEvaluateEirDraft(),
     generatePdf: useGenerateEirPdf(),
+    prepare: usePrepareEirPdf(),
     start: useStartEir(),
     submit: useSubmitEirFile(),
     respond: useRespondEir(),
@@ -135,7 +137,7 @@ describe("Query hooks read through the seam", () => {
     });
   });
 
-  it("EIR evaluation, PDF generation, start, submit/upload, and respond wait for the in-flight privacy acknowledgment", async () => {
+  it("EIR evaluation, PDF generation, PDF preparation, start, submit/upload, and respond wait for the in-flight privacy acknowledgment", async () => {
     const privacy = createMemoryPrivacyAcknowledgmentRepository({
       identity: { principalId: "person-1", displayName: "Synthetic Person", actorApp: "tenant" },
     });
@@ -157,6 +159,10 @@ describe("Query hooks read through the seam", () => {
       actorApp: "system",
     });
     const generatePdf = vi.spyOn(store.eir, "generatePdf").mockResolvedValue(new Uint8Array());
+    const prepare = vi.spyOn(store.eir, "preparePdf").mockResolvedValue({
+      record: existing,
+      evaluation: await evaluate.getMockImplementation()!("person-1"),
+    });
     const submit = vi.spyOn(store.eir, "submitWithFile").mockResolvedValue(existing);
     const respond = vi.spyOn(store.eir, "respond").mockResolvedValue(existing);
     const { Wrapper } = makeWrapper(store);
@@ -171,6 +177,12 @@ describe("Query hooks read through the seam", () => {
       writes = Promise.all([
         result.current.evaluate.mutateAsync("person-1"),
         result.current.generatePdf.mutateAsync("person-1"),
+        result.current.prepare.mutateAsync({
+          principalId: "person-1",
+          personName: "Synthetic",
+          values: {},
+          expectedDraftVersion: 0,
+        }),
         result.current.start.mutateAsync({ principalId: "person-1", personName: "Synthetic" }),
         result.current.submit.mutateAsync({
           principalId: "person-1",
@@ -190,6 +202,7 @@ describe("Query hooks read through the seam", () => {
     expect(start).not.toHaveBeenCalled();
     expect(evaluate).not.toHaveBeenCalled();
     expect(generatePdf).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
     expect(respond).not.toHaveBeenCalled();
 
@@ -211,6 +224,7 @@ describe("Query hooks read through the seam", () => {
     expect(start).toHaveBeenCalledTimes(1);
     expect(evaluate).toHaveBeenCalledTimes(1);
     expect(generatePdf).toHaveBeenCalledTimes(1);
+    expect(prepare).toHaveBeenCalledTimes(1);
     expect(submit).toHaveBeenCalledTimes(1);
     expect(respond).toHaveBeenCalledTimes(1);
   });

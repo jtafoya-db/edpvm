@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { hashKey, useQueryClient } from "@tanstack/react-query";
 import {
   PendingActionButton,
   PendingActionStatus,
@@ -18,10 +19,7 @@ import {
   eirErrorStatus,
   eirFormsFrom,
   formForNextSave,
-  useSaveEirDraft,
-  useEvaluateEirDraft,
-  useGenerateEirPdf,
-  useStartEir,
+  usePrepareEirPdf,
   useRespondEir,
   useSubmitEirFile,
   useUser,
@@ -33,11 +31,15 @@ import {
   type EirEvaluation,
   definitionLabel,
   eirFormName,
+  preflightDefinitionFor,
+  preflightEir,
 } from "@/data";
 import { SaveNotices } from "@/components/SaveStatus";
-import { useRecordSave, useSave } from "@/data/optimistic-save";
-import { eirRecord, saveEirDraftSave } from "@/data/queries";
+import { useSave, useSaves } from "@/data/optimistic-save";
+import { EIR_CHANGED_RELOAD, isEirChangedRefusal } from "@/data/eir/errors";
+import { eirRecord, prepareEirPdfKey, queryKeys, saveEirDraftSave } from "@/data/queries";
 import { EirAnswers } from "./EirAnswers";
+import { DiscardUnsavedChanges } from "./DiscardUnsavedChanges";
 import { EirForm } from "./EirForm";
 import {
   DocumentLinks,
@@ -221,21 +223,24 @@ function EirEmployeeJourney({ ctx, chrome }: EirScreenProps) {
   }
   const definitionForms = formsRead.data ? eirFormsFrom(formsRead.data) : undefined;
   const submitFile = useSubmitEirFile();
-  const saveDraft = useSaveEirDraft();
-  const evaluateDraft = useEvaluateEirDraft();
-  const generatePdf = useGenerateEirPdf();
-  const startEir = useStartEir();
+  const preparePdf = usePrepareEirPdf();
   const respondEir = useRespondEir();
   const pending = usePendingActionGroup();
   // Save draft doesn't block: the person keeps typing while it saves (ADR-0009 phase 1).
   const saveDraftNow = useSave(saveEirDraftSave);
-  const draftSave = useRecordSave(eirRecord(principalId));
+  const draftSaves = useSaves((save) => save.record === eirRecord(principalId));
+  const draftSave = draftSaves.at(-1);
   const draftSaving = draftSave?.state === "saving";
   /** The answers this screen just saved as a draft: its own save landing doesn't reset the form. */
   const ownDraft = useRef<EirFormValues | null>(null);
   // Other actions use the draft's version, so they wait for a draft save on its way.
   const busy = pending.isRecordPending(principalId) || draftSaving || record.isLoading;
+  // Only Download and the record's other actions wait for it; the form doesn't (#235).
+  const preparingPdf = pending.isActionPending(principalId, "download-pdf");
   const [values, setValues] = useState<EirFormValues>({});
+  // What's on screen now, for a Download that finishes after more typing (#235).
+  const valuesNow = useRef(values);
+  valuesNow.current = values;
   const fieldIds = currentForm ? answerIdsOf(currentForm) : [];
   const [formErrors, setFormErrors] = useState<EirFieldError[]>([]);
   const [failedAttempts, setFailedAttempts] = useState(0);
@@ -247,8 +252,23 @@ function EirEmployeeJourney({ ctx, chrome }: EirScreenProps) {
   const [downloadedValues, setDownloadedValues] = useState<EirFormValues | null>(null);
   const [evaluation, setEvaluation] = useState<EirEvaluation | null>(null);
   const [evaluationStale, setEvaluationStale] = useState(false);
+  /**
+   * A Download was refused because the EIR moved on elsewhere: Download can't
+   * succeed until the EIR is read again, so the out-of-date pre-check doesn't
+   * say it will.
+   */
+  const [downloadRefused, setDownloadRefused] = useState(false);
+  /** The same, as of the latest cache event rather than the latest render. */
+  const downloadRefusalStands = useRef(false);
+  const queryClient = useQueryClient();
   const formRef = useRef<HTMLFormElement>(null);
   const messageRef = useRef<HTMLParagraphElement>(null);
+  /**
+   * Whether the next message takes focus. A Download that finishes in the
+   * background doesn't take it from a field the person is typing in (#235):
+   * its message is a status, announced where it is.
+   */
+  const messageTakesFocus = useRef(true);
   const reviewErrorRef = useRef<HTMLDivElement>(null);
   const replaceFileRef = useRef<HTMLInputElement>(null);
   const [editRequested, setEditRequested] = useState(0);
@@ -320,8 +340,67 @@ function EirEmployeeJourney({ ctx, chrome }: EirScreenProps) {
     );
   }, [record.data, user.data, currentForm]);
 
+  // A read of the EIR that began after an out-of-date refusal supersedes it:
+  // Download and Save draft can succeed again, so its reload instruction goes.
+  // Refusals and reads are numbered in the order their cache events fire, not
+  // as they render or by the clock. Only a fetch of the EIR itself counts: not
+  // the person's or the forms' read, nor a save writing its result.
   useEffect(() => {
-    if (message) messageRef.current?.focus();
+    const eirHash = hashKey(queryKeys.eir(principalId));
+    const prepareHash = hashKey(prepareEirPdfKey);
+    let sequence = 0;
+    let readStartedAt: number | null = null;
+    let downloadRefusedAt: number | null = null;
+    const draftRefusals = new Map<number, { at: number; dismiss: () => void }>();
+    const offMutations = queryClient.getMutationCache().subscribe((event) => {
+      if (event.type !== "updated" || event.action.type !== "error") return;
+      if (!isEirChangedRefusal(event.action.error)) return;
+      const { mutation } = event;
+      const save = mutation.options.meta?.["save"] as
+        { record?: unknown; dismiss?: () => void } | undefined;
+      if (save?.record === eirRecord(principalId) && save.dismiss) {
+        draftRefusals.set(mutation.mutationId, { at: ++sequence, dismiss: save.dismiss });
+      } else if (
+        mutation.options.mutationKey &&
+        hashKey(mutation.options.mutationKey) === prepareHash &&
+        (mutation.state.variables as { principalId?: unknown } | undefined)?.principalId ===
+          principalId
+      ) {
+        downloadRefusedAt = ++sequence;
+        downloadRefusalStands.current = true;
+        setDownloadRefused(true);
+      }
+    });
+    const offQueries = queryClient.getQueryCache().subscribe((event) => {
+      if (event.type !== "updated" || event.query.queryHash !== eirHash) return;
+      const { action } = event;
+      if (action.type === "fetch") readStartedAt ??= ++sequence;
+      else if (action.type === "success" && !action.manual && readStartedAt !== null) {
+        const startedAt = readStartedAt;
+        for (const [id, refusal] of draftRefusals) {
+          if (refusal.at > startedAt) continue;
+          draftRefusals.delete(id);
+          refusal.dismiss();
+        }
+        if (downloadRefusedAt !== null && downloadRefusedAt < startedAt) {
+          downloadRefusedAt = null;
+          downloadRefusalStands.current = false;
+          setDownloadRefused(false);
+          setMessage((shown) => (shown === EIR_CHANGED_RELOAD ? "" : shown));
+        }
+      }
+      // A read that ended (or was cancelled) starts nothing more.
+      if (event.query.state.fetchStatus === "idle") readStartedAt = null;
+    });
+    return () => {
+      offMutations();
+      offQueries();
+    };
+  }, [queryClient, principalId]);
+
+  useEffect(() => {
+    if (message && messageTakesFocus.current) messageRef.current?.focus();
+    messageTakesFocus.current = true;
   }, [message]);
 
   useEffect(() => {
@@ -419,76 +498,129 @@ function EirEmployeeJourney({ ctx, chrome }: EirScreenProps) {
     setMessage("");
   };
 
-  /** Check the answers, start the record (its Record ID goes in the PDF), save, and download. */
-  const generate = async (event: FormEvent) => {
+  /** A refused answer on screen (#217): the error summary takes focus; no competing message. */
+  const showBlocking = (blocking: EirEvaluation) => {
+    setEvaluation(blocking);
+    setEvaluationStale(false);
+    setFormErrors(
+      blocking.outcomes
+        .filter((item) => item.disposition === "blocking")
+        .map((item) => ({ field: item.field, message: item.guidance })),
+    );
+    setFailedAttempts((count) => count + 1);
+    setMessage("");
+  };
+
+  /**
+   * Download PDF to sign (#235). The answers as they are at the click are
+   * checked here first, on the draft's pinned definition: a certain block
+   * shows at once and sends nothing. Otherwise one call saves them, evaluates
+   * them on the server (which decides) and returns the PDF. The form stays
+   * editable meanwhile; if it changed, that PDF isn't the answers on screen,
+   * so it isn't downloaded and another Download is needed.
+   */
+  const generate = (event: FormEvent) => {
     event.preventDefault();
     if (busy) return;
-    const errors = validateAnswersOn(form, values);
+    const snapshot = {
+      values: { ...values },
+      formVersion: form.version,
+      expectedDraftVersion: record.data?.draftVersion ?? 0,
+    };
+    const errors = validateAnswersOn(form, snapshot.values);
     setFormErrors(errors);
     if (errors.length) {
       setFailedAttempts((count) => count + 1);
       setMessage("");
       return;
     }
+    const preflight = preflightEir({
+      definition: preflightDefinitionFor(form, formsRead.data?.rules),
+      values: snapshot.values,
+      // The saved draft's start, as the server keeps it; else this save starts it.
+      ...(record.data?.draftValues && record.data.draftStartedAt
+        ? { savedDraftStartedAt: record.data.draftStartedAt }
+        : {}),
+      draftVersion: snapshot.expectedDraftVersion,
+      now: new Date(),
+    });
+    if (preflight.outcome === "blocking") {
+      showBlocking(preflight.evaluation);
+      return;
+    }
+    void prepareOnServer(snapshot);
+  };
+
+  /** Whether the person is in one of the form's fields right now. */
+  const typingInForm = () => {
+    const active = document.activeElement;
+    return Boolean(
+      active && formRef.current?.contains(active) && active.matches("input, select, textarea"),
+    );
+  };
+
+  const prepareOnServer = async (snapshot: {
+    values: EirFormValues;
+    formVersion: string;
+    expectedDraftVersion: number;
+  }) => {
+    setMessage("");
+    // The save lands as these answers: the form keeps whatever was typed since.
+    ownDraft.current = snapshot.values;
     try {
-      const started = await pending.run(
-        { recordId: principalId, actionId: "download-pdf", label: "Saving draft" },
-        async () => {
-          let next = record.data;
-          if (!next?.recordId) {
-            next = await startEir.mutateAsync({ principalId, personName: user.data.name });
-          }
-          await saveDraft.mutateAsync(draftInput());
-          const evaluated = await evaluateDraft.mutateAsync(principalId);
-          setEvaluation(evaluated);
-          setEvaluationStale(false);
-          if (evaluated.outcome === "blocking") {
-            setFormErrors(
-              evaluated.outcomes
-                .filter((item) => item.disposition === "blocking")
-                .map((item) => ({ field: item.field, message: item.guidance })),
-            );
-            throw new Error("Correct the highlighted fields before downloading the PDF.");
-          }
-          return {
-            record: next,
-            evaluation: evaluated,
-            bytes: await generatePdf.mutateAsync(principalId),
-          };
-        },
+      const prepared = await pending.run(
+        { recordId: principalId, actionId: "download-pdf", label: "Preparing PDF" },
+        () => preparePdf.mutateAsync({ principalId, personName: user.data.name, ...snapshot }),
       );
-      if (!started) return;
-      download(started.bytes, `employee-identity-record-${started.record.recordId ?? "draft"}.pdf`);
-      setDownloadedValues({ ...values });
+      if (!prepared) return;
+      const changedSince = !sameAnswers(valuesNow.current, snapshot.values);
+      messageTakesFocus.current = !typingInForm();
+      if (prepared.evaluation.outcome === "blocking" || !prepared.pdf) {
+        showBlocking(prepared.evaluation);
+        if (changedSince) setEvaluationStale(true);
+        return;
+      }
+      setEvaluation(prepared.evaluation);
+      if (changedSince) {
+        setEvaluationStale(true);
+        setMessage(
+          "You changed your answers while the PDF was being prepared, so it wasn't downloaded: it has the earlier answers. Choose Download PDF to sign again for a PDF with your answers as they are now.",
+        );
+        return;
+      }
+      setEvaluationStale(false);
+      download(prepared.pdf, `employee-identity-record-${prepared.record.recordId ?? "draft"}.pdf`);
+      setDownloadedValues(snapshot.values);
       setMessage(
-        started.evaluation.outcome === "warning"
+        prepared.evaluation.outcome === "warning"
           ? "PDF generated with pre-check warnings. Review them, sign the PDF digitally, then upload the signed copy."
-          : started.evaluation.outcome === "manual-review"
+          : prepared.evaluation.outcome === "manual-review"
             ? "PDF generated for manual Safeguards handling. Sign it digitally, then upload the signed copy."
             : "PDF generated after the saved draft passed the EIR pre-check. Sign it digitally, then upload the signed copy.",
       );
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith("Correct the highlighted")) {
-        // The pre-check blocked (#217): like a refused answer on screen, the
-        // error summary takes focus and lists what to do; no competing message.
-        setFailedAttempts((count) => count + 1);
-        setMessage("");
-      } else {
-        setMessage(
-          saveFailureMessage(error) ??
-            "The pre-check couldn't be completed or recorded. Nothing was saved. Try again.",
-        );
-      }
+      ownDraft.current = null;
+      messageTakesFocus.current = !typingInForm();
+      // Already read past since it settled: Download can succeed again, so no reload to ask for.
+      if (isEirChangedRefusal(error) && !downloadRefusalStands.current) return;
+      setMessage(
+        saveFailureMessage(error) ??
+          "The pre-check couldn't be completed or recorded. Nothing was saved. Try again.",
+      );
     }
   };
 
-  /** Cancel request: discard what isn't saved, and store nothing. */
-  const cancelRequest = () => {
-    const saved = savedFormValues(record.data);
-    setValues(saved ? { ...emptyAnswersOn(form), ...saved } : prefilledAnswersOn(form, user.data));
+  /** The answers as last saved, or as first filled in when nothing is saved yet. */
+  const savedAnswers = savedFormValues(record.data);
+  const lastSaved = savedAnswers
+    ? { ...emptyAnswersOn(form), ...savedAnswers }
+    : prefilledAnswersOn(form, user.data);
+  /** Discard unsaved changes: back to the last saved answers; nothing is sent or deleted. */
+  const discardUnsaved = () => {
+    setValues(lastSaved);
     setFormErrors([]);
     clearSelectedFile();
-    setMessage("Changes discarded. Nothing was saved.");
+    setMessage("Unsaved changes discarded. Your saved answers are kept.");
   };
 
   const stage = record.data?.stage ?? "not-started";
@@ -500,6 +632,9 @@ function EirEmployeeJourney({ ctx, chrome }: EirScreenProps) {
   const submitted = isSubmitted ? savedForm(record.data) : undefined;
   const questions = renewal?.stage === "questions" ? renewal.questions : record.data?.questions;
   const signedFor = downloadedValues ?? savedFormValues(record.data);
+  // Only a reload helps then: that's what the refusal says, and nothing else does.
+  const refusedAsChanged =
+    downloadRefused || (draftSave?.state === "refused" && isEirChangedRefusal(draftSave.error));
   const pdfIsOutOfDate = Boolean(
     signedFor && fieldIds.some((id) => (signedFor[id] ?? "") !== (values[id] ?? "")),
   );
@@ -536,6 +671,7 @@ function EirEmployeeJourney({ ctx, chrome }: EirScreenProps) {
   const canSendResponse = signedOnCurrentForm && !answersChanged;
   // The form is collapsed while the answers are as signed and the person hasn't chosen to correct them.
   const formLocked = Boolean(questions) && canSendResponse && !correcting && !selectedFile;
+  const hasUnsaved = Boolean(selectedFile) || !sameAnswers(values, lastSaved);
   const clearSelectedFile = () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setSelectedFile(null);
@@ -631,7 +767,10 @@ function EirEmployeeJourney({ ctx, chrome }: EirScreenProps) {
       setMessage(
         submitted.renewal?.stage === "submitted"
           ? "Submitted for validation. Renewal pending with a safeguards validator."
-          : "Submitted for validation. With a safeguards validator.",
+          : submitted.stage === "valid"
+            ? // Only automatic approval mode (#204) makes an upload valid at once.
+              "Valid. Your EIR met the rules for automatic validity, so the app recorded it as valid. A safeguards validator can still revoke it."
+            : "Submitted for validation. With a safeguards validator.",
       );
     } catch (error) {
       setReviewError(
@@ -992,7 +1131,7 @@ function EirEmployeeJourney({ ctx, chrome }: EirScreenProps) {
           <form ref={formRef} onSubmit={generate} noValidate aria-label="EIR form">
             <Panel>
               <SectionHead eyebrow="Step 1" title="Complete the EIR form" />
-              {evaluationStale ? (
+              {evaluationStale && !refusedAsChanged ? (
                 <div
                   role="status"
                   style={{
@@ -1065,15 +1204,15 @@ function EirEmployeeJourney({ ctx, chrome }: EirScreenProps) {
                   >
                     Save draft
                   </PendingActionButton>
-                  <button
-                    type="button"
-                    style={disabledPendingStyle(linkButton, busy)}
-                    onClick={cancelRequest}
-                    disabled={busy}
-                  >
-                    Cancel request
-                  </button>
-                  <PendingActionStatus pending={pending.isRecordPending(principalId)} />
+                  <DiscardUnsavedChanges
+                    disabled={!hasUnsaved || (busy && !preparingPdf)}
+                    onDiscard={discardUnsaved}
+                  />
+                  <PendingActionStatus pending={pending.isRecordPending(principalId)}>
+                    {preparingPdf
+                      ? "Preparing your PDF. You can keep editing; if you change an answer now, download again to get it in the PDF."
+                      : undefined}
+                  </PendingActionStatus>
                 </div>
                 <div style={{ marginTop: 10 }}>
                   <SaveNotices prefixes={[eirRecord(principalId)]} label="Your draft" />

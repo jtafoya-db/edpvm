@@ -14,10 +14,12 @@ import {
   answerSections,
   eirFlags,
   oneYearBefore,
+  prefilledAnswersOn,
   prefilledEirAnswers,
   validateEirAnswers,
 } from "../eir/form";
 import { generateEirPdf } from "../eir/pdf";
+import type { NameSource } from "../types";
 import { EIR_STUB_VALUES, EIR_VALUES } from "./eir-fixtures";
 
 const field = (id: string) => EIR_FIELDS.find((f) => f.id === id)!;
@@ -339,6 +341,190 @@ describe("EIR pre-fill from the session (SCIM /Me)", () => {
       firstName: "Test",
       lastName: "Middle Person",
     });
+  });
+
+  it("splits a real SCIM display name the session reports as one", () => {
+    expect(prefilledEirAnswers({ name: "Casey Rivera", nameSource: "scim-display" })).toMatchObject(
+      { firstName: "Casey", lastName: "Rivera" },
+    );
+  });
+
+  it("leaves first and last name blank when the only name is the email (GovCloud)", () => {
+    const answers = prefilledEirAnswers({
+      name: "casey.rivera@example.gov",
+      nameSource: "email",
+      email: "casey.rivera@example.gov",
+    });
+    expect(answers).toMatchObject({
+      workEmail: "casey.rivera@example.gov",
+      firstName: "",
+      lastName: "",
+    });
+  });
+
+  it("never puts the numeric <userId>@<workspaceId> in the first-name field", () => {
+    expect(
+      prefilledEirAnswers({ name: "1234567890123456@7890123456789012", nameSource: "header" }),
+    ).toMatchObject({ firstName: "", lastName: "" });
+    expect(prefilledEirAnswers({ name: "1234567890123456@7890123456789012" })).toMatchObject({
+      firstName: "",
+      lastName: "",
+    });
+  });
+
+  it("leaves the names blank for a username or no name at all", () => {
+    for (const nameSource of ["username", "none"] as const) {
+      expect(prefilledEirAnswers({ name: "crivera", nameSource })).toMatchObject({
+        firstName: "",
+        lastName: "",
+      });
+    }
+  });
+
+  it("never splits an email-shaped name, whatever the session says", () => {
+    expect(prefilledEirAnswers({ name: "casey.rivera@example.gov" })).toMatchObject({
+      firstName: "",
+      lastName: "",
+    });
+  });
+
+  it("never splits a scim-display name that is an identifier", () => {
+    for (const name of ["casey.rivera@example.gov", "casey.rivera", "1234567890"]) {
+      expect(
+        prefilledEirAnswers({ name, nameSource: "scim-display", email: "casey.rivera@example.gov" }),
+      ).toMatchObject({ firstName: "", lastName: "" });
+    }
+  });
+
+  it("drops a malformed name part, each field on its own", () => {
+    expect(
+      prefilledEirAnswers({
+        name: "casey.rivera@example.gov",
+        nameSource: "email",
+        givenName: "casey.rivera@example.gov",
+        familyName: "Rivera",
+        email: "casey.rivera@example.gov",
+      }),
+    ).toMatchObject({ firstName: "", lastName: "Rivera" });
+    expect(
+      prefilledEirAnswers({
+        name: "Casey",
+        nameSource: "scim-parts",
+        givenName: "Casey",
+        familyName: "12345",
+      }),
+    ).toMatchObject({ firstName: "Casey", lastName: "" });
+  });
+
+  it("does not copy a parts-only name into both fields", () => {
+    expect(
+      prefilledEirAnswers({ name: "Rivera", nameSource: "scim-parts", familyName: "Rivera" }),
+    ).toMatchObject({ firstName: "", lastName: "Rivera" });
+  });
+
+  it("prefills a real single-word display name as the first name", () => {
+    expect(
+      prefilledEirAnswers({
+        name: "Cher",
+        nameSource: "scim-display",
+        email: "c.sarkisian@example.gov",
+      }),
+    ).toMatchObject({ firstName: "Cher", lastName: "" });
+  });
+
+  it("still takes SCIM name parts when the display name is only the email", () => {
+    expect(
+      prefilledEirAnswers({
+        name: "casey.rivera@example.gov",
+        nameSource: "email",
+        givenName: "Casey",
+        familyName: "Rivera",
+      }),
+    ).toMatchObject({ firstName: "Casey", lastName: "Rivera" });
+  });
+});
+
+describe("prefilledAnswersOn — a custom form", () => {
+  /** A form whose prefilled fields have their own ids, split across sections. */
+  const FORM: EirFormConfig = {
+    version: "test",
+    title: "Test form",
+    intro: "",
+    trainingRule: "",
+    sections: [
+      {
+        id: "who",
+        title: "Who",
+        fields: [
+          { id: "given", label: "Given", kind: "text", required: true, prefill: "first-name" },
+          { id: "note", label: "Note", kind: "text", required: false },
+        ],
+      },
+      {
+        id: "contact",
+        title: "Contact",
+        fields: [
+          { id: "surname", label: "Surname", kind: "text", required: true, prefill: "last-name" },
+          { id: "mail", label: "Mail", kind: "text", required: true, prefill: "email" },
+        ],
+      },
+    ],
+    declaration: { text: "", attestation: { id: "agreed", label: "Agreed" } },
+  };
+  const EMAIL = "casey.rivera@example.gov";
+  const fill = (session: Parameters<typeof prefilledAnswersOn>[1]) =>
+    prefilledAnswersOn(FORM, session);
+
+  it("fills only the custom form's prefill fields", () => {
+    expect(fill({ givenName: "Casey", familyName: "Rivera", email: EMAIL })).toEqual({
+      given: "Casey",
+      note: "",
+      surname: "Rivera",
+      mail: EMAIL,
+      agreed: "",
+    });
+  });
+
+  it.each([
+    ["valid given, invalid family", "Casey", "１２３４", "Casey", ""],
+    ["invalid given, valid family", "casey.rivera@example.gov", "Rivera", "", "Rivera"],
+    ["given is the email's local part", "Casey.Rivera", "Rivera", "", "Rivera"],
+    ["both invalid", "١٢٣٤", "1234@5678", "", ""],
+    ["both valid, padded", "  Casey ", " Rivera  ", "Casey", "Rivera"],
+  ])("checks each name part on its own: %s", (_label, givenName, familyName, given, surname) => {
+    expect(fill({ givenName, familyName, email: EMAIL })).toMatchObject({ given, surname });
+  });
+
+  const SPLIT: Record<NameSource, boolean> = {
+    "scim-display": true,
+    "scim-parts": false,
+    header: false,
+    email: false,
+    username: false,
+    none: false,
+  };
+  it.each(Object.entries(SPLIT) as [NameSource, boolean][])(
+    "splits the display name only for a scim-display source: %s",
+    (nameSource, splits) => {
+      expect(fill({ name: "Casey Rivera", nameSource, email: EMAIL })).toMatchObject(
+        splits ? { given: "Casey", surname: "Rivera" } : { given: "", surname: "" },
+      );
+    },
+  );
+
+  it.each(Object.keys(SPLIT) as NameSource[])(
+    "takes valid SCIM name parts whatever the source: %s",
+    (nameSource) => {
+      expect(
+        fill({ name: EMAIL, nameSource, givenName: "Casey", familyName: "Rivera", email: EMAIL }),
+      ).toMatchObject({ given: "Casey", surname: "Rivera", mail: EMAIL });
+    },
+  );
+
+  it("never splits a Unicode-digit scim-display name", () => {
+    for (const name of ["１２３４", "١٢٣٤ ٥٦٧٨"]) {
+      expect(fill({ name, nameSource: "scim-display" })).toMatchObject({ given: "", surname: "" });
+    }
   });
 });
 

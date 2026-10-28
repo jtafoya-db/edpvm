@@ -32,25 +32,38 @@ function next(): HTMLButtonElement {
   return screen.getByRole("button", { name: /continue/i }) as HTMLButtonElement;
 }
 
+function formControl(label: string | RegExp): HTMLElement {
+  return screen.getAllByLabelText(label).find((element) => element.tagName !== "BUTTON")!;
+}
+
 // Source step, then architecture and delivery on their defaults, to business.
 function goToBusinessStep() {
-  fireEvent.change(screen.getByLabelText(/initiative name/i), {
+  fireEvent.change(formControl(/initiative name/i), {
     target: { value: "Preparer e-file submissions (curated)" },
   });
   fireEvent.click(screen.getByRole("radio", { name: /myself/i }));
+  fireEvent.change(formControl(/data sensitivity/i), { target: { value: "SBU" } });
   fireEvent.click(next()); // -> architecture
+  fireEvent.click(screen.getByRole("button", { name: /All within Databricks/i }));
   fireEvent.click(next()); // -> delivery
+  fireEvent.click(screen.getByRole("button", { name: /We have our own resources/i }));
   fireEvent.click(next()); // -> business
+  fireEvent.click(screen.getByRole("button", { name: /Reduce fraud and improper payments/i }));
+  fireEvent.change(formControl(/primary mission outcome/i), { target: { value: "fraud" } });
+  fireEvent.change(formControl(/estimated annual benefit/i), { target: { value: "100000" } });
+  fireEvent.change(formControl(/estimated annual benefit/i), { target: { value: "750000" } });
 }
 
 function benefitBox(): HTMLInputElement {
-  return screen.getByLabelText(/estimated annual benefit/i) as HTMLInputElement;
+  return formControl(/estimated annual benefit/i) as HTMLInputElement;
 }
 
 // Click into the box and select its contents, as a user replacing the number.
 async function selectAll(input: HTMLInputElement) {
   await userEvent.click(input);
-  await userEvent.keyboard("{Control>}a{/Control}");
+  await userEvent.keyboard(
+    navigator.platform.startsWith("Mac") ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
+  );
 }
 
 const REQUIRED = "Estimated annual benefit (USD) is required.";
@@ -154,7 +167,9 @@ describe("SchemaForm — number fields in a real browser", () => {
           datasets: [
             {
               name: "Case signals",
+              sourceSystem: "IMF / Individual Master File",
               domain: "individual-filing",
+              ingestionMethod: "eftu",
               datasetTag: "case_signals",
               owners: [{ name: "", email: "" }],
             },
@@ -176,28 +191,34 @@ describe("SchemaForm — number fields in a real browser", () => {
     expect(document.activeElement).toBe(within(row).getByLabelText("Owner's name"));
     await userEvent.keyboard("Olive Owner");
     await userEvent.tab();
-    await userEvent.keyboard("olive.owner@example.test");
+    await userEvent.keyboard("olive.owner@example.gov");
     expect((within(row).getByLabelText("Owner's email") as HTMLInputElement).value).toBe(
-      "olive.owner@example.test",
+      "olive.owner@example.gov",
     );
   });
 
   it("submits the typed text, which the intake reads as a number", async () => {
     const { onSubmit } = renderForm();
     goToBusinessStep();
-    fireEvent.change(screen.getByLabelText(/business justification/i), {
+    fireEvent.change(formControl(/business justification/i), {
       target: { value: "Score preparer risk weekly instead of quarterly." },
     });
     await selectAll(benefitBox());
     await userEvent.keyboard("$1,250,000");
     fireEvent.click(next()); // -> datasets
-    fireEvent.change(screen.getByLabelText("Dataset 1 name"), {
+    fireEvent.change(formControl("Dataset 1 name"), {
       target: { value: "Case signals" },
     });
-    fireEvent.change(screen.getByLabelText("Dataset 1 domain"), {
+    fireEvent.change(formControl("Dataset 1 source system"), {
+      target: { value: "IMF / Individual Master File" },
+    });
+    fireEvent.change(formControl("Dataset 1 domain"), {
       target: { value: "individual-filing" },
     });
-    fireEvent.change(screen.getByLabelText("Dataset 1 tag"), { target: { value: "case_signals" } });
+    fireEvent.change(formControl("Dataset 1 ingestion method"), {
+      target: { value: "eftu" },
+    });
+    fireEvent.change(formControl("Dataset 1 tag"), { target: { value: "case_signals" } });
     fireEvent.click(
       within(screen.getByRole("group", { name: "Dataset 1 owner 1" })).getByRole("radio", {
         name: /someone else/i,
@@ -216,17 +237,25 @@ describe("SchemaForm — number fields in a real browser", () => {
         "Owner's email",
       ),
       {
-        target: { value: "olive.owner@example.test" },
+        target: { value: "olive.owner@example.gov" },
       },
     );
     fireEvent.click(next()); // -> workspace
-    fireEvent.change(screen.getByLabelText(/isolated from other tenants/i), {
-      target: { value: "Not sure" },
+    fireEvent.change(formControl(/code or work products/i), {
+      target: { value: "Not sure — ask EDP staff to assess" },
     });
-    fireEvent.change(screen.getByLabelText(/how many people/i), { target: { value: "6" } });
+    fireEvent.change(formControl(/how many people/i), { target: { value: "6" } });
     fireEvent.click(next()); // -> sizing
-    fireEvent.click(screen.getByRole("button", { name: /run ai sizing/i }));
-    await screen.findByRole("button", { name: /re-run ai sizing/i });
+    fireEvent.change(formControl(/data volume/i), { target: { value: "500" } });
+    fireEvent.change(formControl(/load frequency/i), { target: { value: "Daily" } });
+    fireEvent.change(formControl(/transformation complexity/i), {
+      target: { value: "Moderate — joins and recurring business rules" },
+    });
+    fireEvent.change(formControl(/business users needing to query/i), {
+      target: { value: "40" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /run preliminary estimate/i }));
+    await screen.findByRole("button", { name: /re-run preliminary estimate/i });
     fireEvent.click(next()); // -> review
     fireEvent.click(screen.getByRole("button", { name: /submit data onboarding request/i }));
 

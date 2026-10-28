@@ -1,4 +1,4 @@
-import type { ChangeListEntry } from "@/data/change-list/types";
+import { entryDatasetId, isPendingChange, type ChangeListEntry } from "@/data/change-list/types";
 import {
   PendingActionButton,
   PendingActionStatus,
@@ -40,19 +40,20 @@ export function ChangeListScreen({ ctx, params, chrome: injected }: ScreenProps)
   // `#change-list/<dataset id>`, from a team page's Pending changes (#114): that dataset only.
   const datasetId = params?.id;
   const filteredTo = datasetId ? datasets.data?.find((d) => d.id === datasetId) : undefined;
-  const shown = (entries.data ?? []).filter((e) => !datasetId || e.target.datasetId === datasetId);
-  const pending = shown.filter((e) => !e.applied).length;
+  const shown = (entries.data ?? []).filter((e) => !datasetId || entryDatasetId(e) === datasetId);
+  const pending = shown.filter(isPendingChange).length;
 
   return (
     <Page>
       <Trail items={[{ label: "Home", go: () => ctx.go("home") }, { label: "Change list" }]} />
       <FeatureGate id="change-list">
-        <div style={s.titleRow}>
+        <div style={{ ...s.titleRow, flexWrap: "wrap" }}>
           <div>
             <h1 style={s.h1}>Change list</h1>
             <p style={s.subtitle}>
-              The app doesn't change Databricks. EDP staff apply each entry by hand, then mark it
-              applied.
+              Entries start Requested. EDP staff apply them by hand and can record Marked applied. A
+              fresh, complete membership snapshot can show Seen in snapshot. The app never changes
+              Databricks.
             </p>
             {datasetId ? (
               <p style={{ ...s.subtitle, marginTop: 6 }}>
@@ -110,52 +111,66 @@ export function ChangeListScreen({ ctx, params, chrome: injected }: ScreenProps)
               </Panel>
             ) : (
               <Panel pad={0} style={{ overflow: "hidden" }}>
-                <table style={s.table} aria-label="Change-list entries">
-                  <thead>
-                    <tr style={s.headRow}>
-                      {["Entry", "What to do", "Why", "Created", "State"].map((h) => (
-                        <th key={h} style={s.th}>
-                          {h}
-                        </th>
+                {/* At high zoom the table scrolls sideways in its own focusable
+                    region (WCAG 1.4.10's data-table exception); the page reflows. */}
+                <div
+                  role="region"
+                  aria-label="Change-list entries, scrolls sideways"
+                  tabIndex={0}
+                  style={{ overflowX: "auto" }}
+                >
+                  <table style={{ ...s.table, minWidth: 720 }} aria-label="Change-list entries">
+                    <thead>
+                      <tr style={s.headRow}>
+                        {["Entry", "What to do", "Why", "Created", "State"].map((h) => (
+                          <th key={h} style={s.th}>
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {shown.map((entry) => (
+                        <EntryRow
+                          key={entry.id}
+                          chrome={chrome}
+                          entry={entry}
+                          roles={roles.data}
+                          dataset={datasets.data?.find((d) => d.id === entryDatasetId(entry))}
+                          canMark={isStaff}
+                          supersedingApplied={Boolean(
+                            entry.supersededBy &&
+                            entries.data?.find((candidate) => candidate.id === entry.supersededBy)
+                              ?.applied,
+                          )}
+                          marking={pendingActions.isActionPending(entry.id, "mark-applied")}
+                          locked={pendingActions.isRecordPending(entry.id)}
+                          onMark={() =>
+                            void (() => {
+                              const intent = pendingActions.makeIntent(
+                                entry.id,
+                                "mark-applied",
+                                JSON.stringify({ entryId: entry.id }),
+                              );
+                              return pendingActions
+                                .run(
+                                  {
+                                    recordId: entry.id,
+                                    actionId: "mark-applied",
+                                    label: "Marking applied",
+                                  },
+                                  ({ idempotencyKey }) =>
+                                    markApplied.mutateAsync({ entryId: entry.id, idempotencyKey }),
+                                  { intent, keepIntentOnError: keepIntentForUnknownOutcome },
+                                )
+                                .catch(() => undefined);
+                            })()
+                          }
+                        />
                       ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {shown.map((entry) => (
-                      <EntryRow
-                        key={entry.id}
-                        chrome={chrome}
-                        entry={entry}
-                        roles={roles.data}
-                        dataset={datasets.data?.find((d) => d.id === entry.target.datasetId)}
-                        canMark={isStaff}
-                        marking={pendingActions.isActionPending(entry.id, "mark-applied")}
-                        locked={pendingActions.isRecordPending(entry.id)}
-                        onMark={() =>
-                          void (() => {
-                            const intent = pendingActions.makeIntent(
-                              entry.id,
-                              "mark-applied",
-                              JSON.stringify({ entryId: entry.id }),
-                            );
-                            return pendingActions
-                              .run(
-                                {
-                                  recordId: entry.id,
-                                  actionId: "mark-applied",
-                                  label: "Marking applied",
-                                },
-                                ({ idempotencyKey }) =>
-                                  markApplied.mutateAsync({ entryId: entry.id, idempotencyKey }),
-                                { intent, keepIntentOnError: keepIntentForUnknownOutcome },
-                              )
-                              .catch(() => undefined);
-                          })()
-                        }
-                      />
-                    ))}
-                  </tbody>
-                </table>
+                    </tbody>
+                  </table>
+                </div>
               </Panel>
             )}
           </QueryGate>
@@ -171,6 +186,7 @@ function EntryRow({
   roles,
   dataset,
   canMark,
+  supersedingApplied,
   marking,
   locked,
   onMark,
@@ -180,13 +196,19 @@ function EntryRow({
   roles: RoleDescriptions | undefined;
   dataset: Dataset | undefined;
   canMark: boolean;
+  supersedingApplied: boolean;
   marking: boolean;
   locked: boolean;
   onMark: () => void;
 }) {
   const { Pill, Icon } = chrome;
   return (
-    <tr style={s.row}>
+    <tr
+      style={{
+        ...s.row,
+        ...(entry.supersededBy ? { background: "var(--color-gray-cool-2)" } : {}),
+      }}
+    >
       <td style={{ ...s.td, fontWeight: 700, whiteSpace: "nowrap" }}>{entry.id}</td>
       <td style={s.td}>
         <EntryWhat entry={entry} dataset={dataset} />
@@ -196,41 +218,88 @@ function EntryRow({
         <Timestamp iso={entry.createdAt} />
       </td>
       <td style={s.td}>
-        {entry.applied ? (
+        <div style={{ display: "grid", gap: 8 }}>
           <div>
             <Pill
-              icon="check_circle"
-              bg="var(--theme-success-lighter)"
-              fg="var(--theme-success-darker)"
+              icon={isPendingChange(entry) ? "schedule" : "info"}
+              bg="var(--color-blue-5v)"
+              fg="var(--theme-primary)"
             >
-              Applied
+              Requested
             </Pill>
-            <div style={{ ...s.muted, marginTop: 4 }}>
-              by <code style={s.mono}>{entry.applied.by}</code>,{" "}
-              <Timestamp iso={entry.applied.at} />
-            </div>
           </div>
-        ) : canMark ? (
-          <>
+          {entry.applied ? (
+            <div>
+              <Pill
+                icon="check_circle"
+                bg="var(--theme-success-lighter)"
+                fg="var(--theme-success-darker)"
+              >
+                Marked applied
+              </Pill>
+              <div style={{ ...s.muted, marginTop: 4 }}>
+                by <code style={s.mono}>{entry.applied.by}</code>,{" "}
+                <Timestamp iso={entry.applied.at} />
+              </div>
+            </div>
+          ) : null}
+          {entry.verified ? (
+            <div>
+              <Pill
+                icon="verified"
+                bg="var(--theme-success-lighter)"
+                fg="var(--theme-success-darker)"
+              >
+                Seen in snapshot
+              </Pill>
+              <div style={{ ...s.muted, marginTop: 4 }}>
+                Seen in membership snapshot, <Timestamp iso={entry.verified.at} />
+              </div>
+            </div>
+          ) : null}
+          {entry.supersededBy ? (
+            <div>
+              <Pill icon="block" bg="var(--color-gray-cool-10)" fg="var(--color-gray-cool-70)">
+                Superseded by {entry.supersededBy}
+              </Pill>
+              <div style={{ ...s.muted, marginTop: 4 }}>
+                A later entry replaced this change. It is no longer pending and cannot be marked
+                applied.
+              </div>
+            </div>
+          ) : null}
+          {entry.supersededBy && !entry.verified && !supersedingApplied && canMark ? (
             <PendingActionButton
               type="button"
-              onClick={onMark}
-              pending={marking}
-              locked={locked}
+              pending={false}
+              disabled
               style={s.outlineBtn}
-              aria-label={marking ? `Saving… Mark applied ${entry.id}` : `Mark applied ${entry.id}`}
-              aria-busy={marking}
+              aria-label={`Mark applied ${entry.id} unavailable: superseded by ${entry.supersededBy}`}
             >
-              <Icon name="check" size={16} color="var(--theme-primary)" />
-              Mark applied
+              <Icon name="block" size={16} color="var(--color-gray-cool-70)" />
+              Mark applied unavailable
             </PendingActionButton>
-            <PendingActionStatus pending={marking} />
-          </>
-        ) : (
-          <Pill icon="schedule" bg="var(--theme-warning-lighter)" fg="var(--theme-warning-darker)">
-            Pending
-          </Pill>
-        )}
+          ) : null}
+          {!entry.applied && !entry.verified && !entry.supersededBy && canMark ? (
+            <>
+              <PendingActionButton
+                type="button"
+                onClick={onMark}
+                pending={marking}
+                locked={locked}
+                style={s.outlineBtn}
+                aria-label={
+                  marking ? `Saving… Mark applied ${entry.id}` : `Mark applied ${entry.id}`
+                }
+                aria-busy={marking}
+              >
+                <Icon name="check" size={16} color="var(--theme-primary)" />
+                Mark applied
+              </PendingActionButton>
+              <PendingActionStatus pending={marking} />
+            </>
+          ) : null}
+        </div>
       </td>
     </tr>
   );

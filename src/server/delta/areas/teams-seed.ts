@@ -3,7 +3,7 @@
  * configuration, or a preview's sample seed: see src/server/pilot-config.ts)
  * into Delta once (#123): per initiative, one command by `system` that
  * records the initiative `created`, with where its configuration came from,
- * its datasets `created`, and their owners and owners' manager roles `added`.
+ * its datasets `created`, and their owners and owners' Maintainer (stored as `manager`) roles `added`.
  *
  * Idempotent three ways: an initiative already in Delta is skipped; the
  * command's idempotency key derives from the initiative's ID, so two servers
@@ -12,6 +12,11 @@
  * After the first load, owners are managed in the app.
  *
  * Not an API endpoint: the server runs it before serving these areas.
+ *
+ * A sample requester as an owner refuses the whole load, before any write,
+ * unless sample mode is on for the store (#312). The configuration is
+ * refused before this too (src/server/pilot-config.ts); this is for any
+ * other caller.
  */
 import { z } from "zod";
 
@@ -23,6 +28,8 @@ import {
 } from "../../../data/datasets/group-naming";
 import { normalizeEmail, type DatasetSeed } from "../../../data/datasets/types";
 import { DomainError, IdempotencyKeyReusedError } from "../errors.ts";
+import { sampleOwners } from "../../pilot-config.ts";
+import { sampleAccessRequestsForStore } from "../../sample-access-requests.ts";
 import { uuidV5 } from "../ids.ts";
 import type { CommandDefinition, SessionUser } from "../registry.ts";
 import type { StoreNames } from "../sql-builder.ts";
@@ -163,8 +170,8 @@ const LOAD: CommandDefinition<ConfiguredInitiative, { id: string }> = {
       [];
     for (const o of owners)
       members.push({ id: await next(), datasetId: o.datasetId, owner: o.owner });
-    // ADR-0005: every owner holds the manager role. Standup puts them in the
-    // manager group outside the app, so nothing goes on the change list.
+    // ADR-0005: every owner holds the Maintainer (stored as `manager`) role. Standup puts
+    // them in its group outside the app, so nothing goes on the change list.
     insertStateRows(
       ctx,
       MEMBERS,
@@ -247,6 +254,8 @@ export interface ConfiguredDatasetsOptions {
   groupNaming?: GroupNamingConfig;
   /** Recorded on each initiative's `created` action. */
   source?: ConfiguredSource;
+  /** Whether sample access requests are on for the store; the env and its prefix by default (#312). */
+  sampleAccessRequests?: (names: StoreNames) => boolean;
 }
 
 /** Load every configured initiative not in Delta yet. */
@@ -259,6 +268,15 @@ export async function loadConfiguredDatasets(
     validateGroupNames(naming, seed.datasets);
   } catch (error) {
     throw configurationError((error as Error).message);
+  }
+  const found = sampleOwners(seed);
+  if (
+    found.length &&
+    !(options.sampleAccessRequests ?? sampleAccessRequestsForStore)(options.names)
+  ) {
+    throw configurationError(
+      `The configured datasets name a sample identity, refused outside a PR preview's sample mode (#312): ${found.join("; ")}.`,
+    );
   }
   const read = options.runner.reader({ readId: globalThis.crypto.randomUUID() });
   for (const initiative of seed.initiatives) {

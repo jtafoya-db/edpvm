@@ -40,9 +40,11 @@ export function completeIntake(overrides: Partial<OnboardingIntake> = {}): Onboa
     datasets: [
       {
         name: "Case signals",
+        sourceSystem: "IMF / Individual Master File",
         domain: "individual-filing",
+        ingestionMethod: "eftu",
         datasetTag: "case_signals",
-        owners: [{ name: "Olive Owner", email: "olive.owner@example.test" }],
+        owners: [{ name: "Olive Owner", email: "olive.owner@example.gov" }],
       },
     ],
     workspaceNeeds: { isolation: "shared", teamSize: 4 },

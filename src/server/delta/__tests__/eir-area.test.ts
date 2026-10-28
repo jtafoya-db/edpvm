@@ -27,6 +27,11 @@ import {
 } from "./eir-harness.ts";
 import type { EirRecord } from "../../../data/eir/types";
 import type { SessionUser } from "../registry.ts";
+import {
+  GOVCLOUD_CASES,
+  govCloudSessionUser,
+  leaksIdentifier,
+} from "../../__tests__/govcloud-identity.ts";
 
 const KEY = "0b9f6f6e-4b1a-4c55-9b0e-1f2d3c4b5a69";
 const DAY = 86_400_000;
@@ -81,6 +86,30 @@ async function submitted(impl: DeltaImplementation, user = APPLICANT) {
     values: VALUES,
   });
 }
+
+describe("EIR on Delta: a GovCloud person with no name (#332)", () => {
+  it.each(GOVCLOUD_CASES)(
+    "stores the record's display name and the actor as %s, never the numeric id",
+    async (_label, govCloud, expected) => {
+      const user = await govCloudSessionUser(govCloud);
+      const impl = deltaImplementation();
+      const response = await impl.request(
+        user,
+        post("/api/commands/eir/start", { idempotencyKey: KEY, expectedVersion: 0, payload: {} }),
+      );
+      expect(response.status).toBe(200);
+      const [record] = impl.warehouse.query<Record<string, unknown>>(
+        "SELECT person_principal_id, person_display FROM eir__eirs",
+      );
+      expect(record).toEqual({ person_principal_id: user.principalId, person_display: expected });
+      const actions = impl.warehouse.query<Record<string, unknown>>(
+        "SELECT actor_display FROM eir__eir_actions",
+      );
+      expect(actions).toEqual([{ actor_display: expected }]);
+      expect(leaksIdentifier(record!["person_display"])).toBe(false);
+    },
+  );
+});
 
 describe("EIR on Delta: what's stored", () => {
   it("writes the EIR, its submission and a lead action as the person, with the PDF's server-read hash", async () => {

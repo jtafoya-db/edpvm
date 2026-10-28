@@ -35,6 +35,9 @@ const problems = [];
 if (!BACKENDS.includes(build?.dataBackend)) {
   problems.push(`dataBackend must be one of ${BACKENDS.join(", ")}`);
 }
+if (typeof build?.minified !== "boolean") {
+  problems.push("minified must be true or false");
+}
 for (const field of ["commit", "builtAt"]) {
   if (typeof build?.[field] !== "string" || build[field] === "")
     problems.push(`${field} is missing`);
@@ -55,6 +58,21 @@ const expected = process.env.VITE_DATA_BACKEND || "memory";
 if (built !== expected) {
   console.error(
     `[serve] This server was built with VITE_DATA_BACKEND=${built}, but the target sets ${expected}. Redeploy with scripts/deploy-turnkey.sh.`,
+  );
+  process.exit(1);
+}
+
+const targetMinifiedRaw = process.env.EDP_CLIENT_MINIFIED;
+if (targetMinifiedRaw !== "true" && targetMinifiedRaw !== "false") {
+  console.error(
+    '[serve] EDP_CLIENT_MINIFIED must be "true" or "false". Redeploy from committed target policy.',
+  );
+  process.exit(1);
+}
+const targetMinified = targetMinifiedRaw === "true";
+if (build.minified !== targetMinified) {
+  console.error(
+    `[serve] This server was built with minified=${build.minified}, but the target sets ${targetMinified}. Redeploy with scripts/deploy-turnkey.sh.`,
   );
   process.exit(1);
 }
@@ -102,6 +120,32 @@ function readHolidays() {
   }
   return holidays;
 }
+// The EIR approval settings (#204; src/server/eir-approval-mode.ts): exact values only.
+// Both parsers pass one table of cases (src/server/__tests__/eir-approval-config-cases.ts).
+function readEirApprovalMode() {
+  const raw = process.env.EDP_EIR_APPROVAL_MODE;
+  if (raw === undefined) return "manual-validator";
+  const mode = raw.trim();
+  if (mode === "manual-validator" || mode === "automatic") return mode;
+  throw new Error('EDP_EIR_APPROVAL_MODE must be "manual-validator" or "automatic".');
+}
+function readEirAutomaticValidityOutcomes() {
+  const name = "EDP_EIR_AUTOMATIC_VALIDITY_OUTCOMES";
+  const raw = process.env[name];
+  if (raw === undefined) return ["pass"];
+  if (!raw.trim()) throw new Error(`${name} must name pass, warning, or both.`);
+  const parts = raw.split(",").map((part) => part.trim());
+  if (parts.some((part) => !part)) throw new Error(`${name} must not have an empty item.`);
+  for (const part of parts) {
+    if (part === "blocking" || part === "block")
+      throw new Error(`${name} can never include blocking.`);
+    if (part === "manual-review")
+      throw new Error(`${name} can't include manual-review: it always goes to a validator.`);
+    if (part !== "pass" && part !== "warning")
+      throw new Error(`${name} must name pass, warning, or both.`);
+  }
+  return [...new Set(parts)];
+}
 function validateSlaConfig() {
   readIntegerInRange("EDP_SLA_EDP_ROI_REVIEW_BUSINESS_DAYS", 5, 1, 60);
   readIntegerInRange("EDP_SLA_CCB_BUSINESS_DAYS", 5, 1, 60);
@@ -110,6 +154,8 @@ function validateSlaConfig() {
   readIntegerInRange("EDP_SLA_DUE_SOON_BUSINESS_DAYS", 1, 0, 60);
   readHolidays();
   readIntegerInRange("EDP_EIR_VALIDITY_DAYS", 365, 1, 3650);
+  readEirApprovalMode();
+  readEirAutomaticValidityOutcomes();
   readBoolean("EDP_ACCESS_REQUEST_SLA_PROVISIONAL", true);
 }
 try {
@@ -130,7 +176,7 @@ process.env.HOST = process.env.HOST ?? "0.0.0.0";
 // package.json's engines (>=24, which applies to building). Log it so every
 // deploy shows the version the prebuilt server actually runs on.
 console.log(
-  `[serve] prebuilt server: commit ${build.commit}, VITE_DATA_BACKEND=${built}, built ${build.builtAt}, node ${process.version}`,
+  `[serve] prebuilt server: commit ${build.commit}, VITE_DATA_BACKEND=${built}, minified=${build.minified} (target policy matched), built ${build.builtAt}, node ${process.version}`,
 );
 try {
   await import(entry.href);

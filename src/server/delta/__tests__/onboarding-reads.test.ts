@@ -14,6 +14,7 @@ import { COMPLETE_INTAKE_ANSWERS } from "../../../data/onboarding/intake.fixture
 import { DEFAULT_EFFECTIVE_SLA_CONFIG } from "../../../data/sla-config.ts";
 import { handleDeltaApiRequest, type DeltaApiDeps } from "../api.ts";
 import { createAppRegistry } from "../areas/index.ts";
+import { stateOnlyOwners } from "../../../data/onboarding/owners.ts";
 import { REQUEST_COLUMNS, toRequest } from "../areas/onboarding.ts";
 import type { SessionUser } from "../registry.ts";
 import { createStoreNames } from "../sql-builder.ts";
@@ -24,7 +25,7 @@ import { createSqliteWarehouse, type SqliteWarehouse } from "./sqlite-warehouse.
 const user = (principalId: string, roles: SessionUser["onboardingReviewerRoles"] = []) => ({
   principalId,
   displayName: principalId,
-  email: `${principalId}@example.test`,
+  email: `${principalId}@example.gov`,
   isAdmin: false,
   onboardingReviewerRoles: roles,
 });
@@ -42,18 +43,22 @@ const intake = (n: number): OnboardingIntake => ({
   datasets: [
     {
       name: `Dataset ${n}a`,
+      sourceSystem: "IMF / Individual Master File",
       domain: "individual-filing",
+      ingestionMethod: "eftu",
       datasetTag: `dataset_${n}_a`,
       owners: [
-        { name: "Olive Owner", email: "olive.owner@example.test" },
-        { name: "Bo Second", email: "bo.second@example.test" },
+        { name: "Olive Owner", email: "olive.owner@example.gov" },
+        { name: "Bo Second", email: "bo.second@example.gov" },
       ],
     },
     {
       name: `Dataset ${n}b`,
+      sourceSystem: "BMF / Business Master File",
       domain: "enforcement-collections",
+      ingestionMethod: "informatica",
       datasetTag: `dataset_${n}_b`,
-      owners: [{ name: "Cy Third", email: "cy.third@example.test" }],
+      owners: [{ name: "Cy Third", email: "cy.third@example.gov" }],
     },
   ],
   workspaceNeeds: { isolation: "shared", teamSize: 4 + n },
@@ -128,7 +133,7 @@ async function oldPath(where: string, params: Record<string, string>, orderBy: s
     rows.map(async (row) => {
       const [datasets, owners, actions] = await Promise.all([
         sql<Parameters<typeof toRequest>[1][number]>(
-          `SELECT id, onboarding_request_id, position, name, domain, dataset_tag FROM ${t("onboarding_intake_datasets")} WHERE onboarding_request_id = :id ORDER BY position`,
+          `SELECT id, onboarding_request_id, position, name, source_system, domain, ingestion_method, ingestion_details, dataset_tag FROM ${t("onboarding_intake_datasets")} WHERE onboarding_request_id = :id ORDER BY position`,
           { id: row.uuid },
         ),
         sql<Parameters<typeof toRequest>[2][number]>(
@@ -145,8 +150,11 @@ async function oldPath(where: string, params: Record<string, string>, orderBy: s
   );
 }
 
-const oldMine = (u: SessionUser) =>
-  oldPath("provider_principal_id = :me", { me: u.principalId }, "submitted_at DESC");
+// The provider's reads carry owner match state only (#103, 103-B); the inbox keeps it all.
+const oldMine = async (u: SessionUser) =>
+  (await oldPath("provider_principal_id = :me", { me: u.principalId }, "submitted_at DESC")).map(
+    stateOnlyOwners,
+  );
 const oldInbox = (stage: string) => oldPath("stage = :stage", { stage }, "stage_entered_at");
 
 /** Submit `n` requests as `provider`, spaced a second apart so their order is fixed. */
@@ -162,7 +170,9 @@ async function submitMany(provider: SessionUser, n: number, from = 1) {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-28T09:00:00.000Z"));
-  warehouse = createSqliteWarehouse({ files: ["store-admin.sql", "store-onboarding.sql"] });
+  warehouse = createSqliteWarehouse({
+    files: ["store-admin.sql", "store-teams.sql", "store-onboarding.sql"],
+  });
   executed = [];
   const client = {
     execute: ((statement, tag) => {

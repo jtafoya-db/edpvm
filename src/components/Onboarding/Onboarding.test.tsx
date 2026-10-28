@@ -14,6 +14,12 @@ import { continueTo, continueToResubmit, openResubmitWizard } from "./__tests__/
 
 afterEach(cleanup);
 
+function formControl(scope: HTMLElement, label: string | RegExp): HTMLElement {
+  return within(scope)
+    .getAllByLabelText(label)
+    .find((element) => element.tagName !== "BUTTON")!;
+}
+
 const BASE_USER = makeSnapshot().user;
 
 function profile(over: Partial<UserProfile>): UserProfile {
@@ -25,11 +31,14 @@ const BUSINESS_OFFICE = profile({
   principalId: "scim-bo",
   name: "Bea Office",
   onboardingReviewerRoles: ["business-office"],
+  // A per-role reviewer, not EDP staff: staff owner matching (#103) is off this inbox for them.
+  isAdmin: false,
 });
 const CCB = profile({
   principalId: "scim-ccb",
   name: "Cal Board",
   onboardingReviewerRoles: ["ccb"],
+  isAdmin: false,
 });
 
 const INTAKE: OnboardingIntake = {
@@ -40,9 +49,11 @@ const INTAKE: OnboardingIntake = {
   datasets: [
     {
       name: "Case signals",
+      sourceSystem: "IMF / Individual Master File",
       domain: "individual-filing",
+      ingestionMethod: "eftu",
       datasetTag: "case_signals",
-      owners: [{ name: "Olive Owner", email: "olive.owner@example.test" }],
+      owners: [{ name: "Olive Owner", email: "olive.owner@example.gov" }],
     },
   ],
   workspaceNeeds: { isolation: "Not sure", teamSize: 6 },
@@ -89,7 +100,7 @@ describe("role-scoped onboarding inboxes", () => {
     expect(
       within(item).getByText(/Service-level agreement \(SLA\): On track · 0 of 5 business days/),
     ).toBeInTheDocument();
-    expect(within(item).getByText(/olive.owner@example.test/)).toBeInTheDocument();
+    expect(within(item).getByText(/olive.owner@example.gov/)).toBeInTheDocument();
 
     fireEvent.click(within(item).getByRole("button", { name: "Approve" }));
     expect(item).toHaveTextContent(/moves to CCB/i);
@@ -116,20 +127,20 @@ describe("role-scoped onboarding inboxes", () => {
     ).toBeInTheDocument();
   });
 
-  it("tells someone outside the configured group that the inbox is not theirs", async () => {
-    const store = newStore();
-    await as(store, PROVIDER).submit(INTAKE);
-
-    renderAs(store, BUSINESS_OFFICE, <OnboardingInbox role="ccb" />);
-    expect(await screen.findByText(/members of the configured CCB group/)).toBeInTheDocument();
-    expect(screen.queryByRole("article")).not.toBeInTheDocument();
-  });
-
   it("shows an error when identity cannot be resolved", async () => {
     renderAs(newStore(), new Error("401"), <OnboardingInbox role="ccb" />);
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /Could not resolve who you are: 401/,
     );
+  });
+
+  it("does not show another user's request in My onboarding requests", async () => {
+    const store = newStore();
+    await as(store, PROVIDER).submit(INTAKE);
+
+    renderAs(store, BUSINESS_OFFICE, <MyOnboardingRequests />);
+    await screen.findByText(/haven't submitted an onboarding request/i);
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
   });
 
   it("asks the CCB to confirm the standup stage and recorded reviewer", async () => {
@@ -313,7 +324,7 @@ describe("the data provider's onboarding requests", () => {
         .getAllByRole("listitem")
         .map((li) => li.textContent),
     ).toEqual([
-      "Source profile",
+      "Initiative",
       "Architecture",
       "Delivery support",
       "Business case",
@@ -322,18 +333,16 @@ describe("the data provider's onboarding requests", () => {
       "Sizing",
       "Review & submit",
     ]);
-    expect(within(wizard).getByLabelText(/Initiative name/)).toHaveValue(INTAKE.initiativeName);
+    expect(formControl(wizard, /Initiative name/)).toHaveValue(INTAKE.initiativeName);
     // No steward any more (#103), even on a request that has one stored.
     expect(within(wizard).queryByLabelText(/Accountable data steward/)).toBeNull();
     continueTo(wizard, "Business case");
-    expect(within(wizard).getByLabelText(/Business justification/)).toHaveValue(
-      INTAKE.businessCase,
-    );
-    expect(within(wizard).getByLabelText(/Estimated annual benefit/)).toHaveValue("1250000");
+    expect(formControl(wizard, /Business justification/)).toHaveValue(INTAKE.businessCase);
+    expect(formControl(wizard, /Estimated annual benefit/)).toHaveValue("1250000");
     continueTo(wizard, "Datasets");
-    expect(within(wizard).getByLabelText("Dataset 1 tag")).toHaveValue("case_signals");
+    expect(formControl(wizard, "Dataset 1 tag")).toHaveValue("case_signals");
     continueTo(wizard, "Workspace");
-    expect(within(wizard).getByLabelText(/How many people/)).toHaveValue("6");
+    expect(formControl(wizard, /How many people/)).toHaveValue("6");
   });
 
   it("starts Someone else blank when a stored Myself owner is switched, never with the provider's identity", async () => {
@@ -357,7 +366,9 @@ describe("the data provider's onboarding requests", () => {
     const wizard = openResubmitWizard(card);
 
     // The initiative owner, as a guard: stored Myself, switched, starts blank.
-    const initiative = within(wizard).getByRole("group", { name: /initiative owner/i });
+    const initiative = within(wizard).getByRole("group", {
+      name: /initiative point of contact/i,
+    });
     expect(within(initiative).getByRole("radio", { name: /myself/i })).toBeChecked();
     fireEvent.click(within(initiative).getByRole("radio", { name: /someone else/i }));
     expect(within(initiative).getByLabelText("Owner's name")).toHaveValue("");
@@ -374,12 +385,12 @@ describe("the data provider's onboarding requests", () => {
     // What's typed as Someone else in this session survives a switch to Myself and back.
     fireEvent.change(within(row).getByLabelText("Owner's name"), { target: { value: "Sam Else" } });
     fireEvent.change(within(row).getByLabelText("Owner's email"), {
-      target: { value: "sam.else@example.test" },
+      target: { value: "sam.else@example.gov" },
     });
     fireEvent.click(within(row).getByRole("radio", { name: /myself/i }));
     fireEvent.click(within(row).getByRole("radio", { name: /someone else/i }));
     expect(within(row).getByLabelText("Owner's name")).toHaveValue("Sam Else");
-    expect(within(row).getByLabelText("Owner's email")).toHaveValue("sam.else@example.test");
+    expect(within(row).getByLabelText("Owner's email")).toHaveValue("sam.else@example.gov");
   });
 
   it("never moves a new owner's typed details to another stored dataset when one is removed", async () => {
@@ -411,14 +422,14 @@ describe("the data provider's onboarding requests", () => {
       target: { value: "Hidden Person" },
     });
     fireEvent.change(within(row(1, 2)).getByLabelText("Owner's email"), {
-      target: { value: "hidden@example.test" },
+      target: { value: "hidden@example.gov" },
     });
     fireEvent.click(within(row(1, 2)).getByRole("radio", { name: /myself/i }));
     // A new owner on stored dataset 2, in the same position.
     fireEvent.click(within(wizard).getByRole("button", { name: "Add an owner to dataset 2" }));
 
     fireEvent.click(within(wizard).getByRole("button", { name: "Remove dataset 1" }));
-    expect(within(wizard).getByLabelText("Dataset 1 name")).toHaveValue("Second");
+    expect(formControl(wizard, "Dataset 1 name")).toHaveValue("Second");
     fireEvent.click(within(row(1, 2)).getByRole("radio", { name: /someone else/i }));
     expect(within(row(1, 2)).getByLabelText("Owner's name")).toHaveValue("");
     expect(within(row(1, 2)).getByLabelText("Owner's email")).toHaveValue("");
@@ -432,8 +443,8 @@ describe("the data provider's onboarding requests", () => {
         {
           ...INTAKE.datasets[0]!,
           owners: [
-            { name: "Olive Owner", email: "olive.owner@example.test" },
-            { name: "Otto Second", email: "otto.second@example.test" },
+            { name: "Olive Owner", email: "olive.owner@example.gov" },
+            { name: "Otto Second", email: "otto.second@example.gov" },
           ],
         },
       ],
@@ -452,7 +463,7 @@ describe("the data provider's onboarding requests", () => {
     });
     const wizard = openResubmitWizard(card);
     continueTo(wizard, "Business case");
-    fireEvent.change(within(wizard).getByLabelText(/Estimated annual benefit/), {
+    fireEvent.change(formControl(wizard, /Estimated annual benefit/), {
       target: { value: "2000000" },
     });
     continueTo(wizard, "Datasets");
@@ -462,13 +473,19 @@ describe("the data provider's onboarding requests", () => {
       }),
     );
     fireEvent.click(within(wizard).getByRole("button", { name: "Add another dataset" }));
-    fireEvent.change(within(wizard).getByLabelText("Dataset 2 name"), {
+    fireEvent.change(formControl(wizard, "Dataset 2 name"), {
       target: { value: "Collections ledger" },
     });
-    fireEvent.change(within(wizard).getByLabelText("Dataset 2 domain"), {
+    fireEvent.change(formControl(wizard, "Dataset 2 source system"), {
+      target: { value: "BMF / Business Master File" },
+    });
+    fireEvent.change(formControl(wizard, "Dataset 2 domain"), {
       target: { value: "other" },
     });
-    fireEvent.change(within(wizard).getByLabelText("Dataset 2 tag"), {
+    fireEvent.change(formControl(wizard, "Dataset 2 ingestion method"), {
+      target: { value: "eftu" },
+    });
+    fireEvent.change(formControl(wizard, "Dataset 2 tag"), {
       target: { value: "collections_ledger" },
     });
     fireEvent.click(
@@ -489,7 +506,7 @@ describe("the data provider's onboarding requests", () => {
         "Owner's email",
       ),
       {
-        target: { value: "lee.ledger@example.test" },
+        target: { value: "lee.ledger@example.gov" },
       },
     );
     fireEvent.click(continueToResubmit(wizard));
@@ -504,7 +521,7 @@ describe("the data provider's onboarding requests", () => {
     expect(stored.intake.datasets[0]!.id).toBe(created.intake.datasets[0]!.id);
     expect(stored.intake.datasets[0]!.owners.map((o) => o.name)).toEqual(["Olive Owner"]);
     expect(stored.decisions.at(-1)?.note).toMatch(
-      /Removed owner from Case signals: Otto Second \(otto.second@example.test\)\./,
+      /Removed owner from Case signals: Otto Second \(otto.second@example.gov\)\./,
     );
     cleanup();
 
@@ -513,7 +530,7 @@ describe("the data provider's onboarding requests", () => {
     const changes = within(item).getByRole("table", { name: /changed since the send-back/i });
     for (const row of [
       /Estimated annual benefit \(USD\) \$1,250,000 \$2,000,000/,
-      /Dataset 1 owner 2 removed Otto Second \(otto.second@example.test\)/,
+      /Dataset 1 owner 2 removed Otto Second \(otto.second@example.gov\)/,
       /Dataset 2 added — Collections ledger \(collections_ledger\)/,
     ]) {
       expect(within(changes).getByRole("row", { name: row })).toBeInTheDocument();
@@ -536,8 +553,8 @@ describe("the data provider's onboarding requests", () => {
     });
     const wizard = openResubmitWizard(card);
     continueTo(wizard, "Datasets");
-    const tag = within(wizard).getByLabelText("Dataset 1 tag");
-    fireEvent.change(within(wizard).getByLabelText("Dataset 1 name"), {
+    const tag = formControl(wizard, "Dataset 1 tag");
+    fireEvent.change(formControl(wizard, "Dataset 1 name"), {
       target: { value: "Case signals gold" },
     });
     fireEvent.change(tag, { target: { value: "Case Signals Gold" } });

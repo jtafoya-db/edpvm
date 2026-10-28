@@ -125,10 +125,12 @@ function IntakePage({
     );
     if (!started) return;
     const num = 2080 + Math.floor(Math.random() * 19);
-    const domainName = domains.find((d) => d.id === values["domain"])?.name ?? "";
+    const firstDataset = Array.isArray(values["datasets"]) ? values["datasets"][0] : undefined;
+    const domainName = domains.find((d) => d.id === firstDataset?.domain)?.name ?? "";
+    const domainNames = Object.fromEntries(domains.map((domain) => [domain.id, domain.name]));
     showing.current = intentKey;
     setSubmitted({
-      request: assembleRequest(SCHEMA, { values, domainName, num }),
+      request: assembleRequest(SCHEMA, { values, domainName, domainNames, num }),
       intentKey,
       onboarding: null,
     });
@@ -187,10 +189,10 @@ function IntakePage({
           // Never a silently empty required list: say why the form can't be finished.
           <div style={{ marginBottom: 16 }}>
             <Notice tone="error">
-              <strong>Target domains couldn't be loaded.</strong> The list of business domains is
-              empty, so the required Target domain can't be chosen and this request can't be
-              submitted yet. This isn't something you did. Reload the page, and if it's still empty,
-              tell EDP staff the domain list is missing.
+              <strong>Data domains couldn't be loaded.</strong> The list of business domains is
+              empty, so each input dataset's required domain can't be chosen and this request can't
+              be submitted yet. This isn't something you did. Reload the page, and if it's still
+              empty, tell EDP staff the domain list is missing.
             </Notice>
           </div>
         ) : null}

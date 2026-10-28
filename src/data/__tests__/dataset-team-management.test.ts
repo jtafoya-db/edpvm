@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { isMembershipEntry, type ChangeListEntry } from "../change-list/types";
 import { findSameOwner, ownerKey, type OwnerBindings } from "../datasets/ownership";
 import type { DatasetRoleName, DatasetSeed } from "../datasets/types";
 import type { UserProfile } from "../types";
@@ -15,6 +16,13 @@ import {
   addedMembers,
 } from "./dataset-fixture";
 import { BACKENDS, createTeamStore, type TeamStoreOptions } from "./team-backends";
+
+function membershipKindAndRole(entry: ChangeListEntry) {
+  if (!isMembershipEntry(entry)) {
+    throw new Error(`Expected a membership entry, received ${entry.kind}`);
+  }
+  return [entry.kind, entry.target.role];
+}
 
 // The same scenarios on the memory adapter and on the Delta path (#123).
 describe.each(BACKENDS)("on the %s backend", (backend) => {
@@ -39,15 +47,15 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
     };
   }
 
-  const TESS = { name: "Tess Tester", email: "tess.tester@example.test" };
-  const DREW = { name: "Drew Partner", email: "drew.partner@example.test" };
+  const TESS = { name: "Tess Tester", email: "tess.tester@example.gov" };
+  const DREW = { name: "Drew Partner", email: "drew.partner@example.gov" };
 
   /** Someone signed in whose session email is Drew's, with their own SCIM id. */
   const DREW_SIGNED_IN: UserProfile = {
     ...STRANGER,
     principalId: "scim-drew-1",
     name: DREW.name,
-    email: "Drew.Partner@example.test",
+    email: "Drew.Partner@example.gov",
   };
 
   async function addTess(
@@ -65,7 +73,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
 
       const result = await store.datasetTeam.changeMemberRole({
         datasetId: DATASET_ID,
-        email: " Tess.Tester@example.test ",
+        email: " Tess.Tester@example.gov ",
         role: "tester",
         newRole: "developer",
       });
@@ -312,7 +320,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       const result = await store.datasetTeam.addOwner({
         datasetId: DATASET_ID,
         name: " Drew Partner ",
-        email: " Drew.Partner@example.test ",
+        email: " Drew.Partner@example.gov ",
       });
 
       expect(result.dataset.owners).toEqual([
@@ -365,11 +373,11 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
         store.datasetTeam.addOwner({
           datasetId: DATASET_ID,
           name: "Drew",
-          email: "DREW.partner@example.test",
+          email: "DREW.partner@example.gov",
         }),
       ).rejects.toMatchObject({ code: "duplicate" });
       await expect(
-        store.datasetTeam.addOwner({ datasetId: DATASET_ID, name: " ", email: "x@example.test" }),
+        store.datasetTeam.addOwner({ datasetId: DATASET_ID, name: " ", email: "x@example.gov" }),
       ).rejects.toMatchObject({ code: "invalid" });
       await expect(
         store.datasetTeam.addOwner({ datasetId: DATASET_ID, name: "X", email: "not-an-email" }),
@@ -410,6 +418,30 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
           newRole: "tester",
         }),
       ).rejects.toMatchObject({ code: "owner-holds-manager" });
+    });
+
+    it("the refusal names the stored manager role by its configured label (#260)", async () => {
+      const { store } = setup({
+        roleDescriptions: {
+          ...TEST_ROLE_DESCRIPTIONS,
+          roles: {
+            ...TEST_ROLE_DESCRIPTIONS.roles,
+            manager: { ...TEST_ROLE_DESCRIPTIONS.roles.manager, label: "Keeper (test)" },
+          },
+        },
+      });
+      await store.datasetTeam.addOwner({ datasetId: DATASET_ID, ...DREW });
+
+      await expect(
+        store.datasetTeam.removeMember({
+          datasetId: DATASET_ID,
+          email: DREW.email,
+          role: "manager",
+        }),
+      ).rejects.toMatchObject({
+        code: "owner-holds-manager",
+        message: expect.stringMatching(/every owner holds the Keeper \(test\) role\. Remove them/),
+      });
     });
 
     it("removing an owner also removes their manager role and lists the remove-member entry", async () => {
@@ -475,17 +507,126 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       ).toBe(false);
     });
 
-    it("refuses making an existing member an owner, so the manager grant can't become a second role", async () => {
-      const { store } = setup();
-      await addTess(store, "tester");
+    it.each(["tester", "developer"] as const)(
+      "making an existing %s an owner replaces that role with manager in one action",
+      async (oldRole) => {
+        const { store } = setup();
+        await addTess(store, oldRole);
 
+        const result = await store.datasetTeam.addOwner({
+          datasetId: DATASET_ID,
+          name: TESS.name,
+          email: TESS.email,
+          idempotencyKey:
+            oldRole === "tester"
+              ? "00000000-0000-4000-8000-000000000254"
+              : "00000000-0000-4000-8000-000000000255",
+        });
+
+        expect(result.dataset.owners).toContainEqual(
+          expect.objectContaining({ email: TESS.email }),
+        );
+        expect(
+          (await addedMembers(store, DATASET_ID)).map((m) => [m.person.email, m.role]),
+        ).toEqual([[TESS.email, "manager"]]);
+        expect(result.entries.map(membershipKindAndRole)).toEqual([
+          ["remove-member", oldRole],
+          ["add-member", "manager"],
+        ]);
+        expect(result.entries.map((entry) => entry.reason)).toEqual([
+          expect.objectContaining({ kind: "dataset-owner-added", replacedRole: oldRole }),
+          expect.objectContaining({ kind: "dataset-owner-added", replacedRole: oldRole }),
+        ]);
+        // ADR-0005 decision 6: the pending old-role add is preserved, then
+        // compensated; no listed entry is silently cancelled or mutated.
+        expect(
+          (await store.changeList.listEntries()).map((entry) => [entry.id, entry.kind]),
+        ).toEqual([
+          ["CL-0001", "add-member"],
+          ["CL-0002", "remove-member"],
+          ["CL-0003", "add-member"],
+        ]);
+        expect(await store.datasetTeam.listTeamEvents(DATASET_ID)).toEqual([
+          expect.objectContaining({
+            kind: "owner-added",
+            person: TESS,
+            replacedRole: oldRole,
+            entryIds: ["CL-0002", "CL-0003"],
+          }),
+        ]);
+
+        const replay = await store.datasetTeam.addOwner({
+          datasetId: DATASET_ID,
+          name: TESS.name,
+          email: TESS.email,
+          idempotencyKey:
+            oldRole === "tester"
+              ? "00000000-0000-4000-8000-000000000254"
+              : "00000000-0000-4000-8000-000000000255",
+        });
+        expect(replay).toEqual(result);
+        expect(await store.changeList.listEntries()).toHaveLength(3);
+        expect(await store.datasetTeam.listTeamEvents(DATASET_ID)).toHaveLength(1);
+      },
+    );
+
+    it("refuses another actor who reuses the owner's successful add-owner key", async () => {
+      const { store, actAs } = setup();
+      await addTess(store, "tester");
+      const key = "00000000-0000-4000-8000-000000000256";
+      await store.datasetTeam.addOwner({
+        datasetId: DATASET_ID,
+        name: TESS.name,
+        email: TESS.email,
+        idempotencyKey: key,
+      });
+
+      actAs(STRANGER);
       await expect(
-        store.datasetTeam.addOwner({ datasetId: DATASET_ID, name: TESS.name, email: TESS.email }),
-      ).rejects.toMatchObject({ code: "duplicate" });
-      // Tess keeps her one role; no manager row was added alongside it.
-      expect((await addedMembers(store, DATASET_ID)).map((m) => [m.person.email, m.role])).toEqual([
-        [TESS.email, "tester"],
+        store.datasetTeam.addOwner({
+          datasetId: DATASET_ID,
+          name: TESS.name,
+          email: TESS.email,
+          idempotencyKey: key,
+        }),
+      ).rejects.toMatchObject({
+        code: "invalid",
+        message: "This change was already submitted. Refresh to see the latest.",
+      });
+      actAs(STAFF);
+      await expect(
+        store.datasetTeam.addOwner({
+          datasetId: DATASET_ID,
+          name: TESS.name,
+          email: TESS.email,
+          idempotencyKey: key,
+        }),
+      ).rejects.toMatchObject({
+        code: "invalid",
+        message: "This change was already submitted. Refresh to see the latest.",
+      });
+      actAs(OWNER);
+      expect(await store.changeList.listEntries()).toHaveLength(3);
+    });
+
+    it("preserves an applied old-role add and lists its compensating replacement", async () => {
+      const { store, actAs } = setup();
+      await addTess(store, "tester");
+      actAs(STAFF);
+      await store.changeList.markApplied("CL-0001");
+      actAs(OWNER);
+
+      const result = await store.datasetTeam.addOwner({ datasetId: DATASET_ID, ...TESS });
+
+      expect(result.entries.map(membershipKindAndRole)).toEqual([
+        ["remove-member", "tester"],
+        ["add-member", "manager"],
       ]);
+      expect((await store.changeList.listEntries())[0]).toMatchObject({
+        id: "CL-0001",
+        kind: "add-member",
+        applied: { by: STAFF.principalId },
+      });
     });
 
     it("re-adding a removed owner grants the manager role again with a fresh add entry", async () => {
@@ -540,7 +681,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
     it("refuses non-owners, and an owner who isn't listed", async () => {
       const { store, actAs } = setup();
       await expect(
-        store.datasetTeam.removeOwner({ datasetId: DATASET_ID, owner: "nobody@example.test" }),
+        store.datasetTeam.removeOwner({ datasetId: DATASET_ID, owner: "nobody@example.gov" }),
       ).rejects.toMatchObject({ code: "not-found" });
       actAs(STRANGER);
       await expect(
@@ -613,14 +754,14 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
 
     it("matches the session email in any case or spacing", async () => {
       const { store, actAs } = await withDrewAsOwner();
-      actAs({ ...DREW_SIGNED_IN, email: "  DREW.PARTNER@example.test " });
+      actAs({ ...DREW_SIGNED_IN, email: "  DREW.PARTNER@example.gov " });
 
       await expect(addTess(store)).resolves.toMatchObject({ created: true });
     });
 
     it("refuses a session whose email doesn't match any owner", async () => {
       const { store, actAs } = await withDrewAsOwner();
-      actAs({ ...DREW_SIGNED_IN, email: "drew.partner2@example.test" });
+      actAs({ ...DREW_SIGNED_IN, email: "drew.partner2@example.gov" });
 
       await expect(addTess(store)).rejects.toMatchObject({ code: "not-owner" });
       expect((await drewOwner(store))?.matchedPrincipalId).toBeUndefined();
@@ -637,12 +778,12 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
         matchedAt: "2026-10-01T12:00:05.000Z",
       });
       // The same SCIM id keeps owner rights even if its session email changes.
-      actAs({ ...DREW_SIGNED_IN, email: "drew.p@example.test" });
+      actAs({ ...DREW_SIGNED_IN, email: "drew.p@example.gov" });
       await expect(
         store.datasetRoles.addMember({
           datasetId: DATASET_ID,
           name: "New Member",
-          email: "new.member@example.test",
+          email: "new.member@example.gov",
           role: "tester",
         }),
       ).resolves.toMatchObject({ created: true });
@@ -725,11 +866,11 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       await store.datasetTeam.addOwner({
         datasetId: DATASET_ID,
         name: "Pat",
-        email: "pat@example.test",
+        email: "pat@example.gov",
       });
       const owners = (await store.datasets.getDataset(DATASET_ID))!.owners;
 
-      expect(owners.map(ownerKey)).toEqual([OWNER.principalId, "scim-drew-1", "pat@example.test"]);
+      expect(owners.map(ownerKey)).toEqual([OWNER.principalId, "scim-drew-1", "pat@example.gov"]);
     });
 
     it("remove, re-add, then a different SCIM id with the same email is refused", async () => {
@@ -753,7 +894,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
         store.datasetRoles.addMember({
           datasetId: DATASET_ID,
           name: "New Member",
-          email: "new.member@example.test",
+          email: "new.member@example.gov",
           role: "developer",
         }),
       ).rejects.toMatchObject({ code: "owner-mismatch" });
@@ -762,7 +903,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       // The add wrote nothing.
       expect(
         (await addedMembers(store, DATASET_ID)).some(
-          (m) => m.person.email === "new.member@example.test",
+          (m) => m.person.email === "new.member@example.gov",
         ),
       ).toBe(false);
     });
@@ -785,12 +926,12 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       await store.datasetTeam.removeOwner({ datasetId: DATASET_ID, owner: DREW.email });
       await store.datasetTeam.addOwner({ datasetId: DATASET_ID, ...DREW });
 
-      actAs({ ...DREW_SIGNED_IN, email: "drew.renamed@example.test" });
+      actAs({ ...DREW_SIGNED_IN, email: "drew.renamed@example.gov" });
       await expect(
         store.datasetRoles.addMember({
           datasetId: DATASET_ID,
           name: "New Member",
-          email: "new.member@example.test",
+          email: "new.member@example.gov",
           role: "developer",
         }),
       ).resolves.toMatchObject({ created: true });
@@ -812,7 +953,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       actAs({ ...STAFF, email: DREW.email });
 
       await expect(
-        store.datasetTeam.addOwner({ datasetId: DATASET_ID, name: "Pat", email: "pat@example.test" }),
+        store.datasetTeam.addOwner({ datasetId: DATASET_ID, name: "Pat", email: "pat@example.gov" }),
       ).rejects.toMatchObject({ code: "owner-mismatch" });
       await expect(
         store.datasetTeam.removeOwner({ datasetId: DATASET_ID, owner: OWNER.principalId }),
@@ -829,11 +970,11 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       });
       actAs(IMPOSTOR);
       await expect(
-        store.datasetTeam.addOwner({ datasetId: OTHER_DATASET, name: "Pat", email: "pat@example.test" }),
+        store.datasetTeam.addOwner({ datasetId: OTHER_DATASET, name: "Pat", email: "pat@example.gov" }),
       ).rejects.toMatchObject({ code: "owner-mismatch" });
       actAs(DREW_SIGNED_IN);
       await expect(
-        store.datasetTeam.addOwner({ datasetId: OTHER_DATASET, name: "Pat", email: "pat@example.test" }),
+        store.datasetTeam.addOwner({ datasetId: OTHER_DATASET, name: "Pat", email: "pat@example.gov" }),
       ).resolves.toBeDefined();
     });
   });
@@ -952,7 +1093,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
         store.datasetTeam.removeOwner({ datasetId: DATASET_ID, owner: "Nameless Record" }),
       ).rejects.toMatchObject({
         code: "invalid",
-        message: expect.stringMatching(/no email or SCIM id/),
+        message: expect.stringMatching(/no email or SCIM id.*from the Maintainer group/),
       });
       expect((await store.datasets.getDataset(DATASET_ID))?.owners).toHaveLength(3);
       expect(await store.changeList.listEntries()).toEqual([]);
@@ -992,7 +1133,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       actAs(IMPOSTOR);
       await expect(addTess(store, "developer")).rejects.toMatchObject({ code: "owner-mismatch" });
       await expect(
-        store.datasetTeam.addOwner({ datasetId: DATASET_ID, name: "X", email: "x@example.test" }),
+        store.datasetTeam.addOwner({ datasetId: DATASET_ID, name: "X", email: "x@example.gov" }),
       ).rejects.toMatchObject({ code: "owner-mismatch" });
     });
 
@@ -1023,7 +1164,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
         const ctx = setup();
         await ctx.store.datasetTeam.addOwner({ datasetId: DATASET_ID, ...DREW });
         ctx.actAs(DREW_SIGNED_IN);
-        await addTess(ctx.store); // binds drew.partner@example.test to scim-drew-1
+        await addTess(ctx.store); // binds drew.partner@example.gov to scim-drew-1
         ctx.actAs(OWNER);
         return ctx;
       })();
@@ -1046,7 +1187,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
         DREW.email,
       );
       // Someone else, either way.
-      expect(findSameOwner(bySCIM, { email: "pat@example.test" }, bindings)).toBeUndefined();
+      expect(findSameOwner(bySCIM, { email: "pat@example.gov" }, bindings)).toBeUndefined();
       expect(findSameOwner(byEmail, { principalId: "scim-pat-1" }, bindings)).toBeUndefined();
     });
 

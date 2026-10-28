@@ -30,6 +30,13 @@
 @font-face {
   font-family: "Public Sans";
   font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../assets/fonts/PublicSans-SemiBold.otf") format("opentype");
+}
+@font-face {
+  font-family: "Public Sans";
+  font-style: normal;
   font-weight: 700;
   font-display: swap;
   src: url("../assets/fonts/PublicSans-Bold.otf") format("opentype");

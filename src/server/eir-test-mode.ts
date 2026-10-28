@@ -22,7 +22,8 @@
 export { SELF_DECISION_TEST_MODE_NOTE } from "../data/eir/self-decision.ts";
 
 export const EIR_SELF_VALIDATION_ENV = "EDP_EIR_ALLOW_SELF_VALIDATION";
-export const PREVIEW_SCHEMA_PREFIX = /^edp_vm_pr\d+_$/;
+/** A PR preview's store prefix: `edp_vm_pr<N>_`, N a positive PR number (no `pr0_`, no leading zero). */
+export const PREVIEW_SCHEMA_PREFIX = /^edp_vm_pr[1-9]\d*_$/;
 
 const warned = new Set<string>();
 const warnOnce = (message: string) => {

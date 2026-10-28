@@ -1,7 +1,7 @@
 # EDP Vending Machine — Phase 1 Build Plan
 
 **Purpose:** the technical/design plan for making P1 real — how we stub-and-evolve, how the intake form becomes editable, and how the LLM challenger works. Review this architecture before code.
-**Companions:** [implementation-plan.md](implementation-plan.md) (the LOE/phasing) · [onepager-copy.md](onepager-copy.md) / [slide-distilled.md](slide-distilled.md) (the IRS executive sponsor pitch).
+**Companions:** implementation-plan.md (private source document; not published) (the LOE/phasing) · onepager-copy.md (private source document; not published) / slide-distilled.md (private source document; not published) (the executive sponsor pitch).
 **Source app:** `~/Downloads/EDP Front Door.zip` — TanStack Start + React + shadcn/ui + USWDS. The real screens live in `src/legacy/*.jsx`; the onboarding wizard is `src/legacy/onboarding.jsx`.
 
 ---
@@ -108,6 +108,6 @@ Mock data lives in one `mock/` module so stub screens look real without a backen
 
 ## 5. Open questions carried in / added
 
-- **OQ-1 / OQ-2 / OQ-6** — from [implementation-plan.md](implementation-plan.md) (BEARS-as-record; tag granularity; DBX→JIRA egress). Unchanged.
+- **OQ-1 / OQ-2 / OQ-6** — from implementation-plan.md (private source document; not published) (BEARS-as-record; tag granularity; DBX→JIRA egress). Unchanged.
 - **OQ-7 (DECIDED):** schema store = **repo file behind a `loadSchema()` seam**; admin editor live but repo-backed in P1; runtime Delta/UC store is the P2+ swap. (See §2.)
 - **OQ-8 (DECIDED):** LLM challenger ships as a **P1 grayed stub**; skill designed in P1, wired live later. (See §3.)

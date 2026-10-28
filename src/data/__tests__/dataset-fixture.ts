@@ -11,7 +11,7 @@ function person(principalId: string, name: string, isAdmin = false): UserProfile
     initials: name.slice(0, 2).toUpperCase(),
     title: "EDP User",
     tenant: "RAAS",
-    email: `${principalId}@example.test`,
+    email: `${principalId}@example.gov`,
     isOnboardingLead: false,
     isAdmin,
   };
@@ -61,14 +61,21 @@ export const TEST_GROUP_NAMING: GroupNamingConfig = {
 /** Test wording, deliberately unlike the checked-in config, so tests prove it's read from config. */
 export const TEST_ROLE_DESCRIPTIONS: RoleDescriptions = {
   roles: {
-    tester: { label: "Tester", summary: "Test summary: read", grants: ["Test grant: read"] },
+    tester: {
+      label: "Tester",
+      pluralLabel: "Testers",
+      summary: "Test summary: read",
+      grants: ["Test grant: read"],
+    },
     developer: {
       label: "Dev (test)",
+      pluralLabel: "Devs (test)",
       summary: "Test summary: read/write",
       grants: ["Test grant: read/write"],
     },
     manager: {
-      label: "Manager",
+      label: "Maintainer",
+      pluralLabel: "Maintainers",
       summary: "Test summary: manage",
       grants: ["Test grant: read/write", "Test grant: manage"],
     },

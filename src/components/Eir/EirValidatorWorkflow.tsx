@@ -13,6 +13,7 @@ import {
   type EirInboxItem,
   definitionLabel,
 } from "@/data";
+import { AutomaticValidityNote } from "./AutomaticValidityNote";
 import { EirAnswers } from "./EirAnswers";
 import {
   DocumentLinks,
@@ -349,6 +350,7 @@ export function EirValidatorWorkflow({
                       {itemMeta.label}
                     </Pill>
                   </div>
+                  <AutomaticValidityNote item={item} />
                   {hasPendingRenewal ? (
                     <div
                       style={{

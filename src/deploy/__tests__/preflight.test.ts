@@ -27,6 +27,7 @@ const PROD_MINIMAL = {
   membership_allowlist_json:
     '[{"group_id":"g1","group_name":"edp-admins","kind":"domain","domain":"edp-operations","managed_by":"manual","account_group":true}]',
 };
+
 const GOVDEV_MINIMAL = {
   ...MINIMAL,
   app_name: "edp-vm-test",
@@ -57,6 +58,42 @@ describe("resolvePreflight — govdev isolation", () => {
         { target: "govdev" },
       ),
     ).toContainEqual(expect.objectContaining({ variable: "app_name", severity: "error" }));
+  });
+
+  it.each([
+    ["app_name", "edp-vm-govdev-unset"],
+    ["store_schema_prefix", "edp_vm_govdev_unset_"],
+    ["eir_volume_name", "eir_govdev_unset"],
+    ["edp_admin_group_id", "configure-edp-admin-group-id"],
+  ])("rejects an explicitly passed committed sentinel %s=%s", (name, value) => {
+    expect(
+      resolvePreflight({ ...GOVDEV_MINIMAL, [name]: value }, { target: "govdev" }),
+    ).toContainEqual(
+      expect.objectContaining({
+        variable: name,
+        severity: "error",
+        message: expect.stringContaining("sentinel"),
+      }),
+    );
+  });
+
+  it.each(["\u00a0", "\u2003", "\u3000"])("treats a Unicode-blank value %j as missing", (blank) => {
+    for (const name of [
+      "app_name",
+      "store_schema_prefix",
+      "eir_volume_name",
+      "edp_admin_group_id",
+    ]) {
+      expect(
+        resolvePreflight({ ...GOVDEV_MINIMAL, [name]: blank }, { target: "govdev" }),
+      ).toContainEqual(
+        expect.objectContaining({
+          variable: name,
+          severity: "error",
+          message: expect.stringContaining(`govdev requires ${name}`),
+        }),
+      );
+    }
   });
 
   it("rejects an explicit memory backend", () => {
@@ -412,7 +449,10 @@ describe("missingCatalogProblems — the catalog must exist on the workspace", (
 
   it("is clean when the catalog exists", () => {
     expect(
-      missingCatalogProblems({ catalog: "example_catalog" }, workspace("example_catalog")),
+      missingCatalogProblems(
+        { catalog: "example_catalog" },
+        workspace("example_catalog"),
+      ),
     ).toEqual([]);
   });
 

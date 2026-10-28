@@ -1026,7 +1026,7 @@ describe("EirScreen query-hook wiring", () => {
     expect(fullName).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("form", { name: "EIR form" })).not.toBeInTheDocument();
-    for (const name of ["Download PDF to sign", "Save draft", "Cancel request"]) {
+    for (const name of ["Download PDF to sign", "Save draft", "Discard unsaved changes"]) {
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     }
     expect(screen.getAllByRole("heading", { name: "User details" })).toHaveLength(1);

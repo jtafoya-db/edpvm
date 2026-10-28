@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { SaveNotices } from "@/components/SaveStatus";
-import type { ChangeListEntry } from "@/data/change-list/types";
+import { entryDatasetId, isPendingChange, type ChangeListEntry } from "@/data/change-list/types";
 import {
   addMemberSave,
   useChangeList,
@@ -24,6 +24,7 @@ import { useUser } from "@/data/queries";
 import type { UserProfile } from "@/data/types";
 import { FeatureGate } from "@/features/FeatureGate";
 import { AddPersonForm, type AddChoice, type AddDraft } from "./AddPersonForm";
+import { AddTeamMemberPanel } from "./AddTeamMemberPanel";
 import { Notice, QueryGate, SessionStateNotice } from "./chrome";
 import {
   resolveChrome,
@@ -46,7 +47,7 @@ import { FilterStatus, KpiCards, PeopleTable, TEAM_TABLE_ID } from "./TeamOvervi
 /**
  * A dataset's team page, overview first (#114): KPI cards that filter a
  * table with one row per person, then the owners and the team's history.
- * Owners add people as tester, developer, manager or owner, and edit or
+ * Owners add people as tester, developer, Maintainer or owner, and edit or
  * remove them, in a panel, seeing exactly what each role grants before they confirm; each
  * change puts entries on the change list. Owners and EDP staff manage owners
  * (TeamManagement.tsx). Anyone else sees only their own row, with no counts
@@ -154,7 +155,9 @@ function Team({
   const canSeeTeam = canReadTeam(dataset, viewer);
   const team = teamPeople(dataset, members, canSeeTeam ? entries : []);
   const shown = team.filter((p) => matchesFilter(p, filter, rowSave(p)));
-  const pending = entries.filter((e) => e.target.datasetId === dataset.id && !e.applied).length;
+  const pending = entries.filter(
+    (entry) => entryDatasetId(entry) === dataset.id && isPendingChange(entry),
+  ).length;
   const changeListHref = `#change-list/${encodeURIComponent(dataset.id)}`;
   // What the server lets this viewer add: owners add members and owners; EDP
   // staff who don't own the dataset add owners only (UAT round 2, PR #234).
@@ -222,13 +225,15 @@ function Team({
             pending={pending}
             filter={filter}
             onFilter={setFilter}
+            roles={roles}
             chrome={chrome}
           />
         ) : null}
         {canSeeTeam ? (
           <p style={{ ...s.help, margin: "-10px 0 0" }}>
-            Pending changes counts change-list entries waiting on EDP staff. A role change is two:
-            remove from the old group, add to the new one.
+            Pending changes counts entries still waiting on EDP staff. Entries seen in a membership
+            snapshot are no longer pending. A role change is two: remove from the old group, add to
+            the new one.
           </p>
         ) : null}
         <div>
@@ -240,6 +245,7 @@ function Team({
                 shown={shown.length}
                 total={team.length}
                 onClear={() => setFilter("everyone")}
+                roles={roles}
               />
             ) : (
               <p role="note" aria-label="Who can see this team" style={{ margin: 0 }}>
@@ -266,31 +272,27 @@ function Team({
           roles={roles}
           canManage={isOwner || isStaff}
           isStaff={isStaff}
-          canAdd={false}
           chrome={chrome}
         />
         <TeamHistory dataset={dataset} roles={roles} events={events.data ?? []} chrome={chrome} />
       </div>
       {panel?.kind === "add" ? (
-        <SidePanel title="Add team member" onClose={close} chrome={chrome}>
-          <AddPersonForm
-            dataset={dataset}
-            roles={roles}
-            members={members}
-            choices={addChoices}
-            idPrefix={ownerOnly ? "owner" : "member"}
-            note={
-              ownerOnly
-                ? "As EDP staff, you can add owners. Only the dataset's owners add members."
-                : undefined
-            }
-            viewerId={viewer.principalId ?? ""}
-            draft={draft}
-            onDraft={setDraft}
-            onDone={close}
-            chrome={chrome}
-          />
-        </SidePanel>
+        <AddTeamMemberPanel
+          dataset={dataset}
+          roles={roles}
+          members={members}
+          choices={addChoices}
+          note={
+            ownerOnly
+              ? "As EDP staff, you can add owners. Only the dataset's owners add members."
+              : undefined
+          }
+          viewerId={viewer.principalId ?? ""}
+          draft={draft}
+          onDraft={setDraft}
+          onClose={close}
+          chrome={chrome}
+        />
       ) : panel?.kind === "edit" && panel.person.member ? (
         <SidePanel
           title={`Edit access: ${panel.person.person.name}`}
@@ -313,7 +315,7 @@ function Team({
   );
 }
 
-/** The viewer's role here, as the header shows it: "Manager · Owner", "Tester" or "No role". */
+/** The viewer's role here, as the header shows it: "Maintainer · Owner", "Tester" or "No role". */
 function viewerRole(
   dataset: Dataset,
   members: DatasetMember[],

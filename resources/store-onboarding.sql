@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog_name || '.' || :schema_prefix || 
   initiative_owner_display STRING COMMENT 'The initiative owner\'s name: the session\'s for self, as typed for someone-else',
   initiative_owner_email STRING COMMENT 'The initiative owner\'s email, normalised. Display and matching data, never a key (ADR-0006)',
   initiative_owner_principal_id STRING COMMENT 'The signed-in session\'s principal for self; null for someone-else (not verified)',
+  initiative_owner_match_source STRING COMMENT 'How the initiative owner principal was recorded (#103): self (Myself) or staff (entered by EDP staff, not verified); null while unmatched',
+  initiative_owner_matched_by_principal_id STRING COMMENT 'The EDP staff member who entered a staff match; null otherwise',
+  initiative_owner_matched_by_display STRING COMMENT 'Their display name when they matched',
+  initiative_owner_matched_at TIMESTAMP COMMENT 'When staff entered the match',
   version BIGINT NOT NULL,
   created_at TIMESTAMP NOT NULL,
   created_by_principal_id STRING NOT NULL,
@@ -51,7 +55,10 @@ CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog_name || '.' || :schema_prefix || 
   onboarding_request_id STRING NOT NULL,
   position INT NOT NULL,
   name STRING NOT NULL,
+  source_system STRING COMMENT 'Provider-named source for this stable dataset ID',
   domain STRING NOT NULL,
+  ingestion_method STRING COMMENT 'Ingest pattern for this stable dataset ID',
+  ingestion_details STRING COMMENT 'Provider context for this dataset ingest pattern',
   dataset_tag STRING NOT NULL,
   CONSTRAINT onboarding_intake_datasets_pk PRIMARY KEY (id)
 )
@@ -66,6 +73,10 @@ CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog_name || '.' || :schema_prefix || 
   person_display STRING NOT NULL,
   person_email STRING NOT NULL,
   person_principal_id STRING,
+  person_match_source STRING COMMENT 'How person_principal_id was recorded (#103): self (Myself) or staff (entered by EDP staff, not verified); null while unmatched, and on rows from before staff matching',
+  person_matched_by_principal_id STRING COMMENT 'The EDP staff member who entered a staff match; null otherwise',
+  person_matched_by_display STRING COMMENT 'Their display name when they matched',
+  person_matched_at TIMESTAMP COMMENT 'When staff entered the match',
   CONSTRAINT onboarding_intake_owners_pk PRIMARY KEY (id)
 )
 COMMENT 'One row per owner contact named for an intake dataset; IDs are reserved at submit.'
@@ -173,12 +184,166 @@ SET VAR edp_migrate_onboarding_requests_initiative_owner_principal_id = (
 );
 EXECUTE IMMEDIATE edp_migrate_onboarding_requests_initiative_owner_principal_id;
 
+-- Staff owner matching (#103, slice 103-B): how each owner's principal was
+-- recorded and, for a staff match, who entered it and when. All nullable; a
+-- row from before has none, and only Myself could have set its principal.
+DECLARE OR REPLACE VARIABLE edp_migrate_onboarding_requests_initiative_owner_match_source STRING;
+SET VAR edp_migrate_onboarding_requests_initiative_owner_match_source = (
+  SELECT CASE WHEN count(*) = 0
+    THEN 'ALTER TABLE `' || replace(:catalog_name, '`', '``') || '`.`' || replace(:schema_prefix, '`', '``') || 'onboarding`.`onboarding_requests` '
+      || 'ADD COLUMN initiative_owner_match_source STRING COMMENT \'How the initiative owner principal was recorded (#103): self (Myself) or staff (entered by EDP staff, not verified); null while unmatched\''
+    ELSE 'SELECT 1' END
+  FROM IDENTIFIER(:catalog_name || '.information_schema.columns')
+  WHERE table_catalog = :catalog_name
+    AND table_schema = :schema_prefix || 'onboarding'
+    AND table_name = 'onboarding_requests'
+    AND column_name = 'initiative_owner_match_source'
+);
+EXECUTE IMMEDIATE edp_migrate_onboarding_requests_initiative_owner_match_source;
+DECLARE OR REPLACE VARIABLE edp_migrate_onboarding_requests_initiative_owner_matched_by_principal_id STRING;
+SET VAR edp_migrate_onboarding_requests_initiative_owner_matched_by_principal_id = (
+  SELECT CASE WHEN count(*) = 0
+    THEN 'ALTER TABLE `' || replace(:catalog_name, '`', '``') || '`.`' || replace(:schema_prefix, '`', '``') || 'onboarding`.`onboarding_requests` '
+      || 'ADD COLUMN initiative_owner_matched_by_principal_id STRING COMMENT \'The EDP staff member who entered a staff match; null otherwise\''
+    ELSE 'SELECT 1' END
+  FROM IDENTIFIER(:catalog_name || '.information_schema.columns')
+  WHERE table_catalog = :catalog_name
+    AND table_schema = :schema_prefix || 'onboarding'
+    AND table_name = 'onboarding_requests'
+    AND column_name = 'initiative_owner_matched_by_principal_id'
+);
+EXECUTE IMMEDIATE edp_migrate_onboarding_requests_initiative_owner_matched_by_principal_id;
+DECLARE OR REPLACE VARIABLE edp_migrate_onboarding_requests_initiative_owner_matched_by_display STRING;
+SET VAR edp_migrate_onboarding_requests_initiative_owner_matched_by_display = (
+  SELECT CASE WHEN count(*) = 0
+    THEN 'ALTER TABLE `' || replace(:catalog_name, '`', '``') || '`.`' || replace(:schema_prefix, '`', '``') || 'onboarding`.`onboarding_requests` '
+      || 'ADD COLUMN initiative_owner_matched_by_display STRING COMMENT \'Their display name when they matched\''
+    ELSE 'SELECT 1' END
+  FROM IDENTIFIER(:catalog_name || '.information_schema.columns')
+  WHERE table_catalog = :catalog_name
+    AND table_schema = :schema_prefix || 'onboarding'
+    AND table_name = 'onboarding_requests'
+    AND column_name = 'initiative_owner_matched_by_display'
+);
+EXECUTE IMMEDIATE edp_migrate_onboarding_requests_initiative_owner_matched_by_display;
+DECLARE OR REPLACE VARIABLE edp_migrate_onboarding_requests_initiative_owner_matched_at STRING;
+SET VAR edp_migrate_onboarding_requests_initiative_owner_matched_at = (
+  SELECT CASE WHEN count(*) = 0
+    THEN 'ALTER TABLE `' || replace(:catalog_name, '`', '``') || '`.`' || replace(:schema_prefix, '`', '``') || 'onboarding`.`onboarding_requests` '
+      || 'ADD COLUMN initiative_owner_matched_at TIMESTAMP COMMENT \'When staff entered the match\''
+    ELSE 'SELECT 1' END
+  FROM IDENTIFIER(:catalog_name || '.information_schema.columns')
+  WHERE table_catalog = :catalog_name
+    AND table_schema = :schema_prefix || 'onboarding'
+    AND table_name = 'onboarding_requests'
+    AND column_name = 'initiative_owner_matched_at'
+);
+EXECUTE IMMEDIATE edp_migrate_onboarding_requests_initiative_owner_matched_at;
+DECLARE OR REPLACE VARIABLE edp_migrate_onboarding_intake_owners_person_match_source STRING;
+SET VAR edp_migrate_onboarding_intake_owners_person_match_source = (
+  SELECT CASE WHEN count(*) = 0
+    THEN 'ALTER TABLE `' || replace(:catalog_name, '`', '``') || '`.`' || replace(:schema_prefix, '`', '``') || 'onboarding`.`onboarding_intake_owners` '
+      || 'ADD COLUMN person_match_source STRING COMMENT \'How person_principal_id was recorded (#103): self (Myself) or staff (entered by EDP staff, not verified); null while unmatched, and on rows from before staff matching\''
+    ELSE 'SELECT 1' END
+  FROM IDENTIFIER(:catalog_name || '.information_schema.columns')
+  WHERE table_catalog = :catalog_name
+    AND table_schema = :schema_prefix || 'onboarding'
+    AND table_name = 'onboarding_intake_owners'
+    AND column_name = 'person_match_source'
+);
+EXECUTE IMMEDIATE edp_migrate_onboarding_intake_owners_person_match_source;
+DECLARE OR REPLACE VARIABLE edp_migrate_onboarding_intake_owners_person_matched_by_principal_id STRING;
+SET VAR edp_migrate_onboarding_intake_owners_person_matched_by_principal_id = (
+  SELECT CASE WHEN count(*) = 0
+    THEN 'ALTER TABLE `' || replace(:catalog_name, '`', '``') || '`.`' || replace(:schema_prefix, '`', '``') || 'onboarding`.`onboarding_intake_owners` '
+      || 'ADD COLUMN person_matched_by_principal_id STRING COMMENT \'The EDP staff member who entered a staff match; null otherwise\''
+    ELSE 'SELECT 1' END
+  FROM IDENTIFIER(:catalog_name || '.information_schema.columns')
+  WHERE table_catalog = :catalog_name
+    AND table_schema = :schema_prefix || 'onboarding'
+    AND table_name = 'onboarding_intake_owners'
+    AND column_name = 'person_matched_by_principal_id'
+);
+EXECUTE IMMEDIATE edp_migrate_onboarding_intake_owners_person_matched_by_principal_id;
+DECLARE OR REPLACE VARIABLE edp_migrate_onboarding_intake_owners_person_matched_by_display STRING;
+SET VAR edp_migrate_onboarding_intake_owners_person_matched_by_display = (
+  SELECT CASE WHEN count(*) = 0
+    THEN 'ALTER TABLE `' || replace(:catalog_name, '`', '``') || '`.`' || replace(:schema_prefix, '`', '``') || 'onboarding`.`onboarding_intake_owners` '
+      || 'ADD COLUMN person_matched_by_display STRING COMMENT \'Their display name when they matched\''
+    ELSE 'SELECT 1' END
+  FROM IDENTIFIER(:catalog_name || '.information_schema.columns')
+  WHERE table_catalog = :catalog_name
+    AND table_schema = :schema_prefix || 'onboarding'
+    AND table_name = 'onboarding_intake_owners'
+    AND column_name = 'person_matched_by_display'
+);
+EXECUTE IMMEDIATE edp_migrate_onboarding_intake_owners_person_matched_by_display;
+DECLARE OR REPLACE VARIABLE edp_migrate_onboarding_intake_owners_person_matched_at STRING;
+SET VAR edp_migrate_onboarding_intake_owners_person_matched_at = (
+  SELECT CASE WHEN count(*) = 0
+    THEN 'ALTER TABLE `' || replace(:catalog_name, '`', '``') || '`.`' || replace(:schema_prefix, '`', '``') || 'onboarding`.`onboarding_intake_owners` '
+      || 'ADD COLUMN person_matched_at TIMESTAMP COMMENT \'When staff entered the match\''
+    ELSE 'SELECT 1' END
+  FROM IDENTIFIER(:catalog_name || '.information_schema.columns')
+  WHERE table_catalog = :catalog_name
+    AND table_schema = :schema_prefix || 'onboarding'
+    AND table_name = 'onboarding_intake_owners'
+    AND column_name = 'person_matched_at'
+);
+EXECUTE IMMEDIATE edp_migrate_onboarding_intake_owners_person_matched_at;
+
+-- Per-dataset ingestion (#279): nullable for requests provisioned before the
+-- question moved onto each stable dataset row. Re-provisioning upgrades in place.
+DECLARE OR REPLACE VARIABLE edp_migrate_onboarding_intake_datasets_source_system STRING;
+SET VAR edp_migrate_onboarding_intake_datasets_source_system = (
+  SELECT CASE WHEN count(*) = 0
+    THEN 'ALTER TABLE `' || replace(:catalog_name, '`', '``') || '`.`' || replace(:schema_prefix, '`', '``') || 'onboarding`.`onboarding_intake_datasets` '
+      || 'ADD COLUMN source_system STRING COMMENT \'Provider-named source for this stable dataset ID\''
+    ELSE 'SELECT 1' END
+  FROM IDENTIFIER(:catalog_name || '.information_schema.columns')
+  WHERE table_catalog = :catalog_name
+    AND table_schema = :schema_prefix || 'onboarding'
+    AND table_name = 'onboarding_intake_datasets'
+    AND column_name = 'source_system'
+);
+EXECUTE IMMEDIATE edp_migrate_onboarding_intake_datasets_source_system;
+DECLARE OR REPLACE VARIABLE edp_migrate_onboarding_intake_datasets_ingestion_method STRING;
+SET VAR edp_migrate_onboarding_intake_datasets_ingestion_method = (
+  SELECT CASE WHEN count(*) = 0
+    THEN 'ALTER TABLE `' || replace(:catalog_name, '`', '``') || '`.`' || replace(:schema_prefix, '`', '``') || 'onboarding`.`onboarding_intake_datasets` '
+      || 'ADD COLUMN ingestion_method STRING COMMENT \'Ingest pattern for this stable dataset ID\''
+    ELSE 'SELECT 1' END
+  FROM IDENTIFIER(:catalog_name || '.information_schema.columns')
+  WHERE table_catalog = :catalog_name
+    AND table_schema = :schema_prefix || 'onboarding'
+    AND table_name = 'onboarding_intake_datasets'
+    AND column_name = 'ingestion_method'
+);
+EXECUTE IMMEDIATE edp_migrate_onboarding_intake_datasets_ingestion_method;
+DECLARE OR REPLACE VARIABLE edp_migrate_onboarding_intake_datasets_ingestion_details STRING;
+SET VAR edp_migrate_onboarding_intake_datasets_ingestion_details = (
+  SELECT CASE WHEN count(*) = 0
+    THEN 'ALTER TABLE `' || replace(:catalog_name, '`', '``') || '`.`' || replace(:schema_prefix, '`', '``') || 'onboarding`.`onboarding_intake_datasets` '
+      || 'ADD COLUMN ingestion_details STRING COMMENT \'Provider context for this dataset ingest pattern\''
+    ELSE 'SELECT 1' END
+  FROM IDENTIFIER(:catalog_name || '.information_schema.columns')
+  WHERE table_catalog = :catalog_name
+    AND table_schema = :schema_prefix || 'onboarding'
+    AND table_name = 'onboarding_intake_datasets'
+    AND column_name = 'ingestion_details'
+);
+EXECUTE IMMEDIATE edp_migrate_onboarding_intake_datasets_ingestion_details;
+
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'onboarding.onboarding_requests') DROP CONSTRAINT IF EXISTS onboarding_requests_stage;
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'onboarding.onboarding_requests') ADD CONSTRAINT onboarding_requests_stage CHECK (stage IN ('submitted', 'business-roi-review', 'ccb', 'standup', 'rejected', 'withdrawn'));
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'onboarding.onboarding_requests') DROP CONSTRAINT IF EXISTS onboarding_requests_initiative_owner_kind;
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'onboarding.onboarding_requests') ADD CONSTRAINT onboarding_requests_initiative_owner_kind CHECK (initiative_owner_kind IS NULL OR initiative_owner_kind IN ('self', 'someone-else'));
+ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'onboarding.onboarding_requests') DROP CONSTRAINT IF EXISTS onboarding_requests_initiative_owner_match_source;
+ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'onboarding.onboarding_requests') ADD CONSTRAINT onboarding_requests_initiative_owner_match_source CHECK (initiative_owner_match_source IS NULL OR initiative_owner_match_source IN ('self', 'staff'));
+ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'onboarding.onboarding_intake_owners') DROP CONSTRAINT IF EXISTS onboarding_intake_owners_match_source;
+ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'onboarding.onboarding_intake_owners') ADD CONSTRAINT onboarding_intake_owners_match_source CHECK (person_match_source IS NULL OR person_match_source IN ('self', 'staff'));
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'onboarding.onboarding_request_actions') DROP CONSTRAINT IF EXISTS onboarding_request_actions_action;
-ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'onboarding.onboarding_request_actions') ADD CONSTRAINT onboarding_request_actions_action CHECK (action IN ('submitted', 'forwarded', 'approved', 'sent-back', 'resubmitted', 'rejected', 'withdrawn', 'activated'));
+ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'onboarding.onboarding_request_actions') ADD CONSTRAINT onboarding_request_actions_action CHECK (action IN ('submitted', 'forwarded', 'approved', 'sent-back', 'resubmitted', 'rejected', 'withdrawn', 'activated', 'owner-matched', 'owner-onboarding-requested'));
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'onboarding.onboarding_request_actions') DROP CONSTRAINT IF EXISTS onboarding_request_actions_actor_app;
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'onboarding.onboarding_request_actions') ADD CONSTRAINT onboarding_request_actions_actor_app CHECK (actor_app IN ('tenant', 'staff', 'job', 'system'));
 

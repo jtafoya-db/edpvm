@@ -54,6 +54,7 @@ const REFUSALS: readonly RefusalCode[] = [
   "not-active",
   "invalid",
   "already-applied",
+  "superseded",
   "duplicate",
   "last-owner",
   "owner-holds-manager",

@@ -5,7 +5,7 @@
  *
  * The SLA target comes from deployment configuration. The note says whether
  * that target is still provisional and whether configured holidays are skipped.
- * Manager isn't requestable (a dataset owner grants it directly);
+ * Maintainer (stored as `manager`) isn't requestable (a dataset owner grants it directly);
  * `nonRequestableNote` says so on the request form and in the refusal.
  */
 import defaultConfig from "./access-request-config.json";

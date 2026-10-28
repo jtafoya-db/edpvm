@@ -151,6 +151,8 @@ export interface SnapshotReadContext<Q> {
   user: SessionUser;
   names: StoreNames;
   snapshot: DeltaSnapshot;
+  /** Server-only SQL fallback for external projections not held in the app-state cache. */
+  snapshotRead?: ReadFn;
 }
 
 export interface ReadDefinition<Q = unknown, R = unknown> {

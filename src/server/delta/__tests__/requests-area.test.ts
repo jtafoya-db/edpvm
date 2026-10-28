@@ -17,6 +17,11 @@ import { createStoreNames } from "../sql-builder.ts";
 import { createTransactionRunner } from "../transaction.ts";
 import { deltaConflict, fakeSqlClient, type RecordedStatement } from "./fake-sql-client.ts";
 import { createSqliteWarehouse, type SqliteWarehouse } from "./sqlite-warehouse.ts";
+import {
+  ACCOUNT_LABEL_CASES,
+  govCloudSessionUser,
+  leaksIdentifier,
+} from "../../__tests__/govcloud-identity.ts";
 
 const ANALYST: SessionUser = {
   principalId: "scim-42",
@@ -414,4 +419,125 @@ describe("legacy cart requests on the server", () => {
     expect(response.status).toBe(400);
     expect(fake.calls).toHaveLength(0);
   });
+});
+
+/** The row an `INSERT INTO <table> (cols) SELECT CAST(:p AS T), …` statement writes. */
+function insertedRow(call: RecordedStatement): Record<string, unknown> {
+  const match = /^INSERT INTO \S+ \(([^)]*)\) SELECT (.*) WHERE NOT EXISTS/.exec(call.statement)!;
+  const columns = match[1]!.split(", ").map((c) => c.replace(/`/g, ""));
+  const markers = [...match[2]!.matchAll(/CAST\(:(\w+) AS/g)].map((m) => m[1]!);
+  return Object.fromEntries(columns.map((c, i) => [c, call.parameters[markers[i]!]]));
+}
+
+/** A fake warehouse that keeps what the legacy request writes insert and reads it back. */
+function storingWarehouse() {
+  const stored: { request?: Record<string, unknown>; attestations: Record<string, unknown>[] } = {
+    attestations: [],
+  };
+  const fake = fakeSqlClient((call) => {
+    const sql = call.statement;
+    if (sql.startsWith("SELECT 1 AS found")) return { rows: stored.request ? [{ found: 1 }] : [] };
+    if (sql.startsWith("INSERT INTO `edp_vending`.`requests`.`access_requests`")) {
+      stored.request = insertedRow(call);
+      return { numAffectedRows: 1 };
+    }
+    if (sql.startsWith("INSERT INTO `edp_vending`.`requests`.`waiver_attestations`")) {
+      stored.attestations.push(insertedRow(call));
+      return { numAffectedRows: 1 };
+    }
+    if (/^(MERGE|DELETE|UPDATE)/.test(sql)) return { numAffectedRows: 1 };
+    if (sql.startsWith("SELECT id, title") && stored.request) {
+      const { id, title, status, overall, purpose, stage_index } = stored.request;
+      const { requester_principal_id, requester_username } = stored.request;
+      return {
+        rows: [
+          {
+            ...{ id, title, status, overall, purpose, stage_index },
+            submitted_at: "2026-06-05 00:00:00",
+            ...{ requester_principal_id, requester_username },
+          },
+        ],
+      };
+    }
+    return { rows: [] };
+  });
+  return { fake, stored };
+}
+
+describe("legacy cart requests: a GovCloud requester and attestor (#332)", () => {
+  const ATTESTATION = {
+    id: "ATT-GOV",
+    requestId: REQUEST.id,
+    checklistItemId: "ldw",
+    attested: true,
+    attestedAt: "2026-09-30T12:00:00Z",
+    source: "app",
+    createdAt: "2026-09-30T12:00:00Z",
+  };
+
+  it.each(ACCOUNT_LABEL_CASES)(
+    "stores and shows %s as its account label, never a digit id",
+    async (_label, govCloud, expected) => {
+      const user = await govCloudSessionUser(govCloud);
+      const { fake, stored } = storingWarehouse();
+      const call = api(fake, user);
+
+      const created = await call(legacy("create-request", REQUEST));
+      expect(created.status).toBe(200);
+      expect(stored.request).toMatchObject({
+        requester_principal_id: user.principalId,
+        requester_username: expected,
+      });
+      expect((await created.json()).result).toMatchObject({
+        requesterPrincipalId: user.principalId,
+        requesterUsername: expected,
+      });
+
+      // Shown back on both reads; "mine" still keys on the principal id.
+      const list = await (
+        await call(new Request("https://app.example/api/reads/requests/access-requests"))
+      ).json();
+      expect(list).toEqual([
+        expect.objectContaining({
+          requesterPrincipalId: user.principalId,
+          requesterUsername: expected,
+        }),
+      ]);
+      const statuses = await (
+        await call(new Request("https://app.example/api/reads/requests/statuses"))
+      ).json();
+      expect(statuses.requests).toEqual([
+        expect.objectContaining({
+          requesterPrincipalId: user.principalId,
+          requesterUsername: expected,
+        }),
+      ]);
+      const reads = fake.calls.filter((c) => c.statement.startsWith("SELECT id, title"));
+      expect(reads.length).toBeGreaterThan(0);
+      for (const read of reads) {
+        expect(read.statement).toContain("requester_principal_id = :me");
+        expect(read.statement).not.toMatch(/WHERE[^]*requester_username/);
+      }
+
+      const attested = await call(legacy("append-waiver-attestation", ATTESTATION));
+      expect(attested.status).toBe(200);
+      expect(stored.attestations).toEqual([
+        expect.objectContaining({
+          attestor_principal_id: user.principalId,
+          attestor_username: expected,
+        }),
+      ]);
+      expect((await attested.json()).result).toMatchObject({
+        attestorPrincipalId: user.principalId,
+        attestorUsername: expected,
+      });
+      // The supersede keys on the principal id, not the label.
+      const supersede = fake.calls.find((c) => c.statement.startsWith("UPDATE"))!;
+      expect(supersede.statement).toContain("attestor_principal_id = ");
+      expect(supersede.statement).not.toContain("attestor_username");
+
+      expect(leaksIdentifier(expected)).toBe(false);
+      expect(JSON.stringify(stored)).not.toMatch(/١٢٣٤|1234567890123456/);
+    },
+  );
 });

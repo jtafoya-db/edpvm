@@ -18,7 +18,8 @@
 #   1. `bundle validate` resolves the target's variables, as deploy will.
 #   2. `bundle plan` must not drop a Unity Catalog schema or volume, since the
 #      deploy below is auto-approved (#141).
-#   3. `npm run build:databricks` with that target's VITE_DATA_BACKEND.
+#   3. `npm run build:databricks` with that target's VITE_DATA_BACKEND and
+#      committed minify_client policy.
 #   4. Stage .output/ into databricks-app/, the app's source.
 #   5. `bundle deploy`, then `bundle run` to restart the app on the new build.
 #
@@ -168,6 +169,7 @@ read_bundle() {
         mode: bundle.bundle?.mode ?? "",
         host: bundle.workspace?.host ?? "",
         data_backend: bundle.variables?.data_backend?.value || "memory",
+        minify_client: bundle.variables?.minify_client?.value ?? "",
         app_name: bundle.resources?.apps?.edp_vending_machine?.name ?? "",
       }[process.argv[1]];
       process.stdout.write(value);
@@ -180,10 +182,43 @@ resolved_target=$(read_bundle target)
 resolved_mode=$(read_bundle mode)
 resolved_app_name=$(read_bundle app_name)
 resolved_host=$(read_bundle host)
+minify_client=$(read_bundle minify_client)
+case "$minify_client" in
+  true) minified=true ;;
+  false) minified=false ;;
+  *) refuse 'minify_client must resolve to "true" or "false"; fix the committed target in databricks.yml.' ;;
+esac
 [ "$resolved_target" = "$target" ] ||
   refuse "bundle validate resolved target $resolved_target, but the arguments name $target."
+if [ "$resolved_target" = "$PROD_TARGET" ]; then
+  committed_bundle=$(git show HEAD:databricks.yml 2>/dev/null) ||
+    refuse "Cannot read the committed production policy from git HEAD:databricks.yml."
+else
+  committed_bundle=$(<databricks.yml)
+fi
+committed_minify_client=$(printf '%s' "$committed_bundle" | node -e '
+  const { readFileSync } = require("node:fs");
+  const { load } = require("js-yaml");
+  const bundle = load(readFileSync(0, "utf8"));
+  const target = process.argv[1];
+  const value =
+    bundle.targets?.[target]?.variables?.minify_client ??
+    bundle.variables?.minify_client?.default;
+  if (value !== true && value !== false && value !== "true" && value !== "false") {
+    process.stderr.write(
+      `[deploy] committed minify_client for ${target} must be true or false in databricks.yml.\n`,
+    );
+    process.exit(2);
+  }
+  process.stdout.write(String(value));
+' "$resolved_target") || exit $?
+[ "$minify_client" = "$committed_minify_client" ] ||
+  refuse "resolved minify_client=$minify_client does not match committed $resolved_target policy $committed_minify_client; remove deploy-time overrides."
 if [ "$resolved_target" = "$PROD_TARGET" ] || [ "$resolved_mode" = production ]; then
   needs_ack "The $resolved_target target is in production mode; deploying it"
+  if [ -n "${EDP_UNMINIFIED_BUILD+x}" ]; then
+    refuse "EDP_UNMINIFIED_BUILD cannot control deployed builds. Unset it before deploying $resolved_target."
+  fi
 elif [ "$resolved_app_name" = "$PROD_APP_NAME" ]; then
   # A target default or BUNDLE_VAR_app_name the argument check can't see.
   refuse "The $target target resolves app_name to $PROD_APP_NAME, the production app name."
@@ -205,14 +240,19 @@ fi
 # Clear the previous artifact first, so a failed build leaves nothing to ship.
 rm -rf "$APP_DIR/server" "$APP_DIR/public" "$APP_DIR/build-info.json"
 
-echo "[deploy] building $resolved_app_name (target $resolved_target, ${resolved_mode:-unknown} mode, ${resolved_host:-profile host}) with VITE_DATA_BACKEND=$data_backend"
-VITE_DATA_BACKEND="$data_backend" npm run build:databricks
+echo "[deploy] building $resolved_app_name (target $resolved_target, ${resolved_mode:-unknown} mode, ${resolved_host:-profile host}) with VITE_DATA_BACKEND=$data_backend (minified=$minified)"
+if [ "$minified" = true ]; then
+  env -u EDP_UNMINIFIED_BUILD VITE_DATA_BACKEND="$data_backend" npm run build:databricks
+else
+  env -u EDP_UNMINIFIED_BUILD EDP_UNMINIFIED_BUILD=1 VITE_DATA_BACKEND="$data_backend" npm run build:databricks
+fi
 
 cp -R .output/server "$APP_DIR/server"
 cp -R .output/public "$APP_DIR/public"
-DATA_BACKEND="$data_backend" COMMIT="$commit" node -e '
+DATA_BACKEND="$data_backend" MINIFIED="$minified" COMMIT="$commit" node -e '
   const info = {
     dataBackend: process.env.DATA_BACKEND,
+    minified: process.env.MINIFIED === "true",
     commit: process.env.COMMIT,
     builtAt: new Date().toISOString(),
   };

@@ -10,7 +10,11 @@ from current public `main`; do not copy whole files when the private source has
 unpublished intervening changes. Adapt rejected hunks explicitly to the public
 tree and replace internal workspace names, IDs, hosts, users and account data
 with the repository's existing example values. Review the complete staged diff
-and update `PUBLICATION-MANIFEST.md` with the exact private source commit.
+and update `PUBLICATION-MANIFEST.md` with the exact private source commit. Run
+`node scripts/public-sanitize.mjs --apply .` after applying the private delta;
+the sanitizer removes the manifest's exact private-only path inventory,
+applies the established substitutions, and replaces links to excluded documents
+with explicit non-link text.
 
 Before publishing, verify the source commit in `PUBLICATION-MANIFEST.md`, run
 the repository's deterministic gates, and require this additional gate:
@@ -20,6 +24,8 @@ npm audit --audit-level=high
 ```
 
 Also run `scripts/public-audit.sh` and Gitleaks against the candidate commit.
+The audit runs `node scripts/public-sanitize.mjs --check .` to reject excluded
+paths and dangling relative Markdown links.
 The publication commit must contain only the reviewed source delta, required
 public sanitization adaptations, and publication metadata.
 

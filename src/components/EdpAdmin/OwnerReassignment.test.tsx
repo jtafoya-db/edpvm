@@ -65,7 +65,7 @@ async function addDrew() {
   const form = await screen.findByRole("form", { name: "Add an owner" });
   fireEvent.change(within(form).getByLabelText(/name/), { target: { value: "Drew Partner" } });
   fireEvent.change(within(form).getByLabelText(/email/), {
-    target: { value: "drew.partner@example.test" },
+    target: { value: "drew.partner@example.gov" },
   });
   fireEvent.click(within(form).getByRole("button", { name: /Review new owner/ }));
   fireEvent.click(screen.getByRole("button", { name: /Confirm new owner/ }));
@@ -75,7 +75,7 @@ async function addDrew() {
 async function expectOwnerRemovedStatus() {
   // The save notice, not the team history row ("Removed Olive Owner as an owner").
   expect(
-    await screen.findByText(/Removed Olive Owner as an owner and from the Manager role/),
+    await screen.findByText(/Removed Olive Owner as an owner and from the Maintainer role/),
   ).toBeInTheDocument();
 }
 
@@ -104,12 +104,36 @@ describe("EDP Admin owner reassignment", () => {
     );
   });
 
+  it("adds owners from the shared Owner-only Add team member panel", async () => {
+    const user = userEvent.setup();
+    reassignment(makeStore(STAFF));
+
+    await user.click(
+      await screen.findByRole("button", { name: "Manage owners of Refund anomaly scores" }),
+    );
+    const owners = screen.getByRole("region", { name: "Owners of Refund anomaly scores" });
+    expect(within(owners).queryByRole("form", { name: "Add an owner" })).toBeNull();
+
+    await user.click(within(owners).getByRole("button", { name: "Add team member" }));
+    const panel = screen.getByRole("dialog", { name: "Add team member" });
+    expect(within(panel).getByText(/As EDP staff, you can add owners/)).toBeInTheDocument();
+    expect(within(panel).queryByRole("radiogroup", { name: "Dataset role" })).toBeNull();
+    expect(within(panel).getByRole("form", { name: "Add an owner" })).toBeInTheDocument();
+
+    await addDrew();
+    expect(screen.queryByRole("dialog", { name: "Add team member" })).toBeNull();
+    expect(
+      within(screen.getByRole("table", { name: "Owners" })).getByText("Drew Partner"),
+    ).toBeVisible();
+  });
+
   it("keeps focus and every keystroke in an add-owner field after a failed submit (#179)", async () => {
     const user = userEvent.setup();
     reassignment(makeStore(STAFF));
     await user.click(
       await screen.findByRole("button", { name: "Manage owners of Refund anomaly scores" }),
     );
+    await user.click(screen.getByRole("button", { name: "Add team member" }));
     const form = await screen.findByRole("form", { name: "Add an owner" });
     await user.click(within(form).getByRole("button", { name: /Review new owner/ }));
     const summary = within(form).getByRole("alert");
@@ -117,9 +141,9 @@ describe("EDP Admin owner reassignment", () => {
 
     await user.click(within(summary).getByRole("link", { name: /email address/ }));
     const email = within(form).getByRole("textbox", { name: /Owner's email/ });
-    await user.keyboard("drew.partner@example.test");
+    await user.keyboard("drew.partner@example.gov");
     expect(email).toHaveFocus();
-    expect(email).toHaveValue("drew.partner@example.test");
+    expect(email).toHaveValue("drew.partner@example.gov");
     await user.tab();
     expect(summary).not.toHaveFocus();
 
@@ -135,6 +159,7 @@ describe("EDP Admin owner reassignment", () => {
     );
     const panel = screen.getByRole("region", { name: "Owners of Refund anomaly scores" });
     expect(within(panel).getByRole("table", { name: "Owners" })).toHaveTextContent("Olive Owner");
+    fireEvent.click(within(panel).getByRole("button", { name: "Add team member" }));
     await addDrew();
 
     // Reassignment: the old owner goes, with their manager role.
@@ -175,10 +200,11 @@ describe("EDP Admin owner reassignment", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Manage owners of Refund anomaly scores" }),
     );
+    fireEvent.click(screen.getByRole("button", { name: "Add team member" }));
     const form = await screen.findByRole("form", { name: "Add an owner" });
     fireEvent.change(within(form).getByLabelText(/name/), { target: { value: "Drew Partner" } });
     fireEvent.change(within(form).getByLabelText(/email/), {
-      target: { value: "drew.partner@example.test" },
+      target: { value: "drew.partner@example.gov" },
     });
     fireEvent.click(within(form).getByRole("button", { name: /Review new owner/ }));
 

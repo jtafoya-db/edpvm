@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_DATASET_SEED } from "../datasets/seed";
 import { loadStore, resetStoreForTests } from "../loadStore";
+import { COMPLETE_INTAKE_ANSWERS } from "../onboarding/intake.fixtures";
 import type { UserProfile } from "../types";
 
 const PROFILE: UserProfile = {
@@ -10,7 +11,7 @@ const PROFILE: UserProfile = {
   initials: "RR",
   title: "EDP staff",
   tenant: "EDP",
-  email: "riley.reviewer@example.test",
+  email: "riley.reviewer@example.gov",
   isOnboardingLead: false,
   isAdmin: true,
   onboardingReviewerRoles: ["business-office", "ccb"],
@@ -47,13 +48,15 @@ const INTAKE = {
   datasets: [
     {
       name: "Case signals",
+      sourceSystem: "IMF / Individual Master File",
       domain: "individual-filing",
+      ingestionMethod: "eftu",
       datasetTag: "case_signals",
-      owners: [{ name: "Olive Owner", email: "olive.owner@example.test" }],
+      owners: [{ name: "Olive Owner", email: "olive.owner@example.gov" }],
     },
   ],
   workspaceNeeds: { isolation: "shared", teamSize: 6 },
-  answers: {},
+  answers: { ...COMPLETE_INTAKE_ANSWERS },
   initiativeOwner: { kind: "self" as const },
 };
 

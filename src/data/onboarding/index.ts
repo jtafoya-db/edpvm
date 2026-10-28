@@ -4,6 +4,7 @@ export * from "./lifecycle";
 export {
   INTAKE_CHANGE_FIELD,
   datasetChangeField,
+  findDatasetOptionIdProblem,
   intakeChangeField,
   ownerChangeField,
   pendingResubmission,
@@ -21,4 +22,10 @@ export {
 export * from "./queries";
 export { useWriteIntent, type WriteIntents } from "./intent";
 export { intakeAnswers, toOnboardingIntake } from "./intake";
-export { initiativeOwnerText } from "./owners";
+export {
+  INITIATIVE_OWNER_ID,
+  initiativeOwnerText,
+  isPrincipalIdFormat,
+  ownersForStandup,
+  type StandupOwner,
+} from "./owners";

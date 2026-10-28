@@ -32,6 +32,7 @@ import {
   type RequestItemRow,
   type RequestStepRow,
 } from "../../../data/legacy-request-rows.ts";
+import { isDigitIdentifier } from "../../../data/person-name";
 import type { AccessRequest, RequestStatus, WaiverAttestation } from "../../../data/types";
 import { DomainError } from "../errors.ts";
 import type { ReadFn, Registry, SessionUser } from "../registry.ts";
@@ -162,6 +163,18 @@ function values(bag: ParameterBag, columns: Column[], row: object): string {
 }
 
 const columnList = (columns: Column[]) => columns.map(([name]) => ident(name)).join(", ");
+
+/**
+ * The display-only requester/attestor label stored beside the principal id
+ * (`requester_username`, `attestor_username`; docs/delta-schema.md): the email,
+ * unless it's blank or a digit-shaped id, else the sanitized display name
+ * (`src/server/identity.ts`: a username or "Signed-in user"). Nothing matches
+ * or authorises on it; ownership and "mine" key on the principal id.
+ */
+function accountLabel(user: SessionUser): string {
+  const email = user.email?.trim();
+  return email && !isDigitIdentifier(email) ? user.email : user.displayName;
+}
 
 /** Insert `row` unless a row with its `id` is already there. Reports 1 or 0 affected rows. */
 function insertIfMissing(table: string, columns: Column[], row: { id: string }): SqlStatement {
@@ -396,7 +409,7 @@ export function registerRequestsArea(registry: Registry): void {
       const rows = requestToRows({
         ...payload,
         requesterPrincipalId: user.principalId,
-        requesterUsername: user.email || user.displayName,
+        requesterUsername: accountLabel(user),
       } as AccessRequest);
       const requests = names.table("requests", "access_requests");
       const alreadyExists = new DomainError(
@@ -481,7 +494,7 @@ export function registerRequestsArea(registry: Registry): void {
       const row = attestationToRow({
         ...payload,
         attestorPrincipalId: user.principalId,
-        attestorUsername: user.email || user.displayName,
+        attestorUsername: accountLabel(user),
       } as WaiverAttestation);
       const table = names.table("requests", "waiver_attestations");
       if (!(await exists(read, names.table("requests", "access_requests"), row.request_id))) {

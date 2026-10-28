@@ -1,6 +1,11 @@
 // The team page's people (#114): one row per person, with their role, whether
 // they own the dataset, and where their latest change stands on the change list.
-import type { ChangeListEntry } from "@/data/change-list/types";
+import {
+  isMembershipEntry,
+  isPendingChange,
+  type ChangeListEntry,
+  type MembershipEntry,
+} from "@/data/change-list/types";
 import { memberRecord } from "@/data/datasets/queries";
 import { ownerIsPerson } from "@/data/datasets/ownership";
 import {
@@ -13,11 +18,12 @@ import {
 } from "@/data/datasets/types";
 import { useSavesUnder, type SaveView } from "@/data/optimistic-save";
 
-/** Where a person's latest change stands: applied (or none), or waiting on EDP staff. */
+/** Where a person's latest change stands: active, waiting, or seen in a snapshot. */
 export type PersonStatus =
   | { kind: "active" }
   | { kind: "pending-add"; entry: ChangeListEntry }
-  | { kind: "pending-removal"; entry: ChangeListEntry };
+  | { kind: "pending-removal"; entry: ChangeListEntry }
+  | { kind: "snapshot-seen"; entry: ChangeListEntry };
 
 export interface TeamPerson {
   key: string;
@@ -34,7 +40,7 @@ const rank = (role: DatasetRoleName) => DATASET_ROLES.indexOf(role);
 
 /**
  * The dataset's people, in the order the store lists them, then anyone whose
- * removal EDP staff haven't applied yet. Owners hold the manager role, so they
+ * removal EDP staff haven't applied yet. Owners hold the Maintainer role, so they
  * are already among the members.
  */
 export function teamPeople(
@@ -42,7 +48,7 @@ export function teamPeople(
   members: DatasetMember[],
   entries: ChangeListEntry[],
 ): TeamPerson[] {
-  const own = entries.filter((e) => e.target.datasetId === dataset.id);
+  const own = entries.filter(isMembershipEntry).filter((e) => e.target.datasetId === dataset.id);
   const entriesOf = (key: string) => own.filter((e) => personId(e.target.person) === key);
   const byPerson = new Map<string, DatasetMember[]>();
   for (const member of members) {
@@ -63,11 +69,17 @@ export function teamPeople(
       roles,
       member: held[0]!,
       isOwner: dataset.owners.some((o) => ownerIsPerson(o, held[0]!.person)),
-      status: add && !add.applied ? { kind: "pending-add", entry: add } : { kind: "active" },
+      status: add
+        ? add.verified
+          ? { kind: "snapshot-seen", entry: add }
+          : isPendingChange(add)
+            ? { kind: "pending-add", entry: add }
+            : { kind: "active" }
+        : { kind: "active" },
     };
   });
 
-  const removed = new Map<string, ChangeListEntry>();
+  const removed = new Map<string, ChangeListEntry & MembershipEntry>();
   for (const entry of own) {
     const key = personId(entry.target.person);
     if (byPerson.has(key)) continue;
@@ -82,7 +94,9 @@ export function teamPeople(
       roles: [entry.target.role],
       member: null,
       isOwner: false,
-      status: { kind: "pending-removal", entry },
+      status: entry.verified
+        ? { kind: "snapshot-seen", entry }
+        : { kind: "pending-removal", entry },
     });
   }
   return people;
@@ -120,7 +134,13 @@ export function matchesFilter(
   save: SaveView | undefined,
 ): boolean {
   if (filter === "everyone") return true;
-  if (filter === "pending") return Boolean(save) || person.status.kind !== "active";
+  if (filter === "pending") {
+    return (
+      Boolean(save) ||
+      person.status.kind === "pending-add" ||
+      person.status.kind === "pending-removal"
+    );
+  }
   if (!person.member) return false;
   return person.roles.includes(filter) || (filter === "manager" && person.isOwner);
 }

@@ -57,7 +57,7 @@ function wrap(ui: ReactNode, store: DataStore) {
 
 const ctx = () => ({ go: vi.fn() });
 
-const TESS = { name: "Tess Tester", email: "tess.tester@example.test" };
+const TESS = { name: "Tess Tester", email: "tess.tester@example.gov" };
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -90,17 +90,23 @@ describe("DatasetsScreen", () => {
     expect(rows[0]).toHaveTextContent("Olive Owner");
     // Tess, the viewer by email, and the seeded owner's manager role (by SCIM id).
     expect(within(rows[0]!).getAllByRole("cell")[4]).toHaveTextContent("3");
-    expect(within(rows[0]!).getAllByRole("cell")[5]).toHaveTextContent("OwnerManager");
+    expect(within(rows[0]!).getAllByRole("cell")[5]).toHaveTextContent("OwnerMaintainer");
     expect(within(rows[1]!).getAllByRole("cell")[4]).toHaveTextContent("1");
+    // Owners and EDP staff, not Maintainers, decide the team (#141, #260).
+    expect(
+      screen.getByText(
+        "Open a dataset to see its team. Only its owners and EDP staff decide who holds a role on it.",
+      ),
+    ).toBeInTheDocument();
   });
 
-  it("counts people, not rows: an owner holding the manager role is one member", async () => {
+  it("counts people, not rows: an owner holding the Maintainer role is one member", async () => {
     const store = makeStore(() => OWNER);
     // Drew is an owner, so they also hold the manager role (one row per person).
     await store.datasetTeam.addOwner({
       datasetId: DATASET_ID,
       name: "Drew",
-      email: "drew@example.test",
+      email: "drew@example.gov",
     });
     wrap(<DatasetsScreen ctx={ctx()} />, store);
 
@@ -318,7 +324,7 @@ describe("DatasetTeamScreen", () => {
     expect(cards.map((c) => c.getAttribute("aria-label"))).toEqual([
       "Tester",
       "Dev (test)",
-      "Manager",
+      "Maintainer",
       "Owner",
     ]);
     expect(cards[1]).toHaveTextContent("Test grant: read/write");
@@ -369,14 +375,14 @@ describe("DatasetTeamScreen", () => {
     wrap(<DatasetTeamScreen ctx={ctx()} params={{ id: DATASET_ID }} />, store);
 
     await screen.findByRole("heading", { name: /Refund anomaly scores: team/ });
-    fill("Tess Tester", "tess.tester@example.test", "Dev (test)");
+    fill("Tess Tester", "tess.tester@example.gov", "Dev (test)");
     fireEvent.click(screen.getByRole("button", { name: /Review add/ }));
     const confirm = screen.getByRole("button", { name: /Confirm add/ });
     fireEvent.click(confirm);
     fireEvent.click(confirm);
 
     const members = screen.getByRole("table", { name: "Members" });
-    const row = (await within(members).findByText("tess.tester@example.test")).closest("tr")!;
+    const row = (await within(members).findByText("tess.tester@example.gov")).closest("tr")!;
     expect(row).toHaveTextContent("Saving…");
     expect(within(row).queryByRole("button")).toBeNull();
     const notices = screen.getByRole("region", { name: "Team changes" });
@@ -400,7 +406,7 @@ describe("DatasetTeamScreen", () => {
 
     await screen.findByRole("heading", { name: /Refund anomaly scores: team/ });
     await waitFor(() => expect(listTeamEvents).toHaveBeenCalledTimes(1));
-    fill("Tess Tester", "tess.tester@example.test", "Tester");
+    fill("Tess Tester", "tess.tester@example.gov", "Tester");
     fireEvent.click(screen.getByRole("button", { name: /Review add/ }));
     fireEvent.click(screen.getByRole("button", { name: /Confirm add/ }));
 
@@ -416,7 +422,7 @@ describe("DatasetTeamScreen", () => {
     wrap(<DatasetTeamScreen ctx={ctx()} params={{ id: DATASET_ID }} />, store);
 
     await screen.findByRole("heading", { name: /Refund anomaly scores: team/ });
-    fill("Tess Tester", "tess.tester@example.test", "Dev (test)");
+    fill("Tess Tester", "tess.tester@example.gov", "Dev (test)");
     fireEvent.click(screen.getByRole("button", { name: /Review add/ }));
     fireEvent.click(screen.getByRole("button", { name: /Confirm add/ }));
 
@@ -425,11 +431,11 @@ describe("DatasetTeamScreen", () => {
     );
     // Rolled back: the row is gone, and what the owner typed is back.
     expect(
-      within(screen.getByRole("table", { name: "Members" })).queryByText("tess.tester@example.test"),
+      within(screen.getByRole("table", { name: "Members" })).queryByText("tess.tester@example.gov"),
     ).toBeNull();
     openAdd();
     expect(screen.getByLabelText(/^Name/)).toHaveValue("Tess Tester");
-    expect(screen.getByLabelText(/^Email/)).toHaveValue("tess.tester@example.test");
+    expect(screen.getByLabelText(/^Email/)).toHaveValue("tess.tester@example.gov");
   });
 
   it("doesn't lock the dataset: an owner add saves while a member add is pending", async () => {
@@ -448,7 +454,7 @@ describe("DatasetTeamScreen", () => {
     wrap(<DatasetTeamScreen ctx={ctx()} params={{ id: DATASET_ID }} />, store);
 
     await screen.findByRole("heading", { name: /Refund anomaly scores: team/ });
-    fill("Tess Tester", "tess.tester@example.test", "Dev (test)");
+    fill("Tess Tester", "tess.tester@example.gov", "Dev (test)");
     fireEvent.click(screen.getByRole("button", { name: /Review add/ }));
     fireEvent.click(screen.getByRole("button", { name: /Confirm add/ }));
 
@@ -457,7 +463,7 @@ describe("DatasetTeamScreen", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Owner" }));
     fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "Nora Owner" } });
     fireEvent.change(screen.getByLabelText(/^Email/), {
-      target: { value: "nora.owner@example.test" },
+      target: { value: "nora.owner@example.gov" },
     });
     fireEvent.click(screen.getByRole("button", { name: /Review new owner/ }));
     fireEvent.click(screen.getByRole("button", { name: /Confirm new owner/ }));
@@ -479,12 +485,12 @@ describe("DatasetTeamScreen", () => {
     expect(screen.getByRole("note", { name: "Session-only state" })).toHaveTextContent(
       "Reloading the page discards them.",
     );
-    fill("Tess Tester", " Tess.Tester@example.test ", "Dev (test)");
+    fill("Tess Tester", " Tess.Tester@example.gov ", "Dev (test)");
     fireEvent.click(screen.getByRole("button", { name: /Review add/ }));
 
     const summary = screen.getByRole("region", { name: "Confirm the add" });
     expect(summary).toHaveTextContent(
-      "You're adding Tess Tester (tess.tester@example.test) as Dev (test) on Refund anomaly scores. They will get:",
+      "You're adding Tess Tester (tess.tester@example.gov) as Dev (test) on Refund anomaly scores. They will get:",
     );
     expect(within(summary).getByRole("list", { name: "Grants" })).toHaveTextContent(
       "Test grant: read/write",
@@ -499,7 +505,7 @@ describe("DatasetTeamScreen", () => {
       ),
     ).toBeInTheDocument();
     const row = within(await screen.findByRole("table", { name: "Members" }))
-      .getByText("tess.tester@example.test")
+      .getByText("tess.tester@example.gov")
       .closest("tr")!;
     expect(row).toHaveTextContent("Tess Tester");
     expect(row).toHaveTextContent("Dev (test)Test summary: read/write");
@@ -511,11 +517,11 @@ describe("DatasetTeamScreen", () => {
     wrap(<DatasetTeamScreen ctx={ctx()} params={{ id: DATASET_ID }} />, store);
 
     await openAddWhenLoaded();
-    fill("Tess Tester", "tess.tester@example.test", "Tester");
+    fill("Tess Tester", "tess.tester@example.gov", "Tester");
     fireEvent.click(screen.getByRole("button", { name: /Review add/ }));
     fireEvent.click(screen.getByRole("button", { name: /Change details/ }));
 
-    expect(screen.getByLabelText(/^Email/)).toHaveValue("tess.tester@example.test");
+    expect(screen.getByLabelText(/^Email/)).toHaveValue("tess.tester@example.gov");
     expect(await addedMembers(store, DATASET_ID)).toEqual([]);
   });
 
@@ -580,12 +586,12 @@ describe("DatasetTeamScreen", () => {
     wrap(<DatasetTeamScreen ctx={ctx()} params={{ id: DATASET_ID }} />, store);
 
     await openAddWhenLoaded();
-    fill("Tess T.", "TESS.TESTER@example.test", "Tester");
+    fill("Tess T.", "TESS.TESTER@example.gov", "Tester");
     fireEvent.click(screen.getByRole("button", { name: /Review add/ }));
     fireEvent.click(screen.getByRole("button", { name: /Confirm add/ }));
 
     expect(
-      await screen.findByText("tess.tester@example.test already holds Tester; nothing new was listed."),
+      await screen.findByText("tess.tester@example.gov already holds Tester; nothing new was listed."),
     ).toBeInTheDocument();
   });
 
@@ -623,19 +629,160 @@ describe("ChangeListScreen", () => {
     const me = { current: OWNER };
     const store = await storeWithOneEntry(me);
     me.current = STAFF;
-    wrap(<ChangeListScreen ctx={ctx()} />, store);
+    wrap(
+      <ChangeListScreen
+        ctx={ctx()}
+        chrome={{
+          Pill: ({ icon, children }: { icon?: string; children?: ReactNode }) => (
+            <span data-icon={icon}>{children}</span>
+          ),
+        }}
+      />,
+      store,
+    );
 
     const table = await screen.findByRole("table", { name: "Change-list entries" });
     expect(screen.getByRole("note", { name: "Session-only state" })).toBeInTheDocument();
     expect(table).toHaveTextContent(
-      "Add Tess Tester (tess.tester@example.test) to group edp-refund_anomalies-tester",
+      "Add Tess Tester (tess.tester@example.gov) to group edp-refund_anomalies-tester",
     );
     expect(table).toHaveTextContent("Grants: Test grant: read");
     expect(table).toHaveTextContent("Olive Owner added them as Tester on Refund anomaly scores");
     fireEvent.click(screen.getByRole("button", { name: "Mark applied CL-0001" }));
 
-    expect(await within(table).findByText("Applied")).toBeInTheDocument();
+    expect(await within(table).findByText("Marked applied")).toBeInTheDocument();
     expect(table).toHaveTextContent(`by ${STAFF.principalId}`);
+    expect(within(table).getByText("Requested")).toHaveAttribute("data-icon", "info");
+  });
+
+  it("shows Requested, Marked applied and Seen in snapshot as separate facts without a machine actor", async () => {
+    const me = { current: OWNER };
+    const store = await storeWithOneEntry(me);
+    const realList = store.changeList.listEntries.bind(store.changeList);
+    store.changeList.listEntries = async () =>
+      (await realList()).map((entry) => ({
+        ...entry,
+        verified: { runId: "snapshot-run-88", at: "2026-10-01T11:59:00.000Z" },
+      }));
+    me.current = STAFF;
+    wrap(
+      <ChangeListScreen
+        ctx={ctx()}
+        chrome={{
+          Pill: ({ icon, children }: { icon?: string; children?: ReactNode }) => (
+            <span data-icon={icon}>{children}</span>
+          ),
+        }}
+      />,
+      store,
+    );
+
+    const table = await screen.findByRole("table", { name: "Change-list entries" });
+    expect(
+      screen.getByText(
+        /Entries start Requested.*fresh, complete membership snapshot can show Seen in snapshot/s,
+      ),
+    ).toBeInTheDocument();
+    expect(table).toHaveTextContent("Requested");
+    expect(table).toHaveTextContent("Seen in snapshot");
+    expect(table).toHaveTextContent("Seen in membership snapshot");
+    expect(within(table).getByText("Requested")).toHaveAttribute("data-icon", "info");
+    expect(table).not.toHaveTextContent("membership-snapshot:snapshot-run-88");
+    expect(screen.getByText(/staff apply them by hand/i)).toBeInTheDocument();
+  });
+
+  it("de-emphasises superseded entries, excludes them from pending, and explains the disabled action", async () => {
+    const me = { current: OWNER };
+    const store = await storeWithOneEntry(me);
+    await store.datasetTeam.removeMember({
+      datasetId: DATASET_ID,
+      email: TESS.email,
+      role: "tester",
+    });
+    me.current = STAFF;
+    wrap(<ChangeListScreen ctx={ctx()} />, store);
+
+    const table = await screen.findByRole("table", { name: "Change-list entries" });
+    const superseded = within(table).getByText("Superseded by CL-0002");
+    const row = superseded.closest("tr");
+    expect(row).toHaveStyle({ background: "var(--color-gray-cool-2)" });
+    expect(row).toHaveTextContent(
+      "A later entry replaced this change. It is no longer pending and cannot be marked applied.",
+    );
+    expect(
+      within(row!).getByRole("button", {
+        name: "Mark applied CL-0001 unavailable: superseded by CL-0002",
+      }),
+    ).toBeDisabled();
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
+  });
+
+  it("does not show the unavailable apply button when a superseded entry is also seen in snapshot", async () => {
+    const me = { current: OWNER };
+    const store = await storeWithOneEntry(me);
+    await store.datasetTeam.removeMember({
+      datasetId: DATASET_ID,
+      email: TESS.email,
+      role: "tester",
+    });
+    const realList = store.changeList.listEntries.bind(store.changeList);
+    store.changeList.listEntries = async () =>
+      (await realList()).map((entry) =>
+        entry.id === "CL-0001"
+          ? { ...entry, verified: { runId: "snapshot-run-311", at: "2026-10-01T11:59:00.000Z" } }
+          : entry,
+      );
+    me.current = STAFF;
+    wrap(<ChangeListScreen ctx={ctx()} />, store);
+
+    const table = await screen.findByRole("table", { name: "Change-list entries" });
+    const row = within(table).getByText("Superseded by CL-0002").closest("tr")!;
+    expect(row).toHaveTextContent("Seen in snapshot");
+    expect(
+      within(row).queryByRole("button", { name: /Mark applied .* unavailable/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not show the unavailable apply button when the superseding entry is marked applied", async () => {
+    const me = { current: OWNER };
+    const store = await storeWithOneEntry(me);
+    await store.datasetTeam.removeMember({
+      datasetId: DATASET_ID,
+      email: TESS.email,
+      role: "tester",
+    });
+    me.current = STAFF;
+    await store.changeList.markApplied("CL-0002");
+    wrap(<ChangeListScreen ctx={ctx()} />, store);
+
+    const table = await screen.findByRole("table", { name: "Change-list entries" });
+    const supersededRow = within(table).getByText("Superseded by CL-0002").closest("tr")!;
+    expect(
+      within(supersededRow).queryByRole("button", { name: /Mark applied .* unavailable/ }),
+    ).not.toBeInTheDocument();
+    const replacementRow = within(table).getByText("CL-0002").closest("tr")!;
+    expect(replacementRow).toHaveTextContent("Marked applied");
+  });
+
+  it("names the role an owner addition replaces in both change-list reasons", async () => {
+    const me = { current: OWNER };
+    const store = await storeWithOneEntry(me);
+    await store.datasetTeam.addOwner({ datasetId: DATASET_ID, ...TESS });
+    me.current = STAFF;
+    wrap(<ChangeListScreen ctx={ctx()} />, store);
+
+    const table = await screen.findByRole("table", { name: "Change-list entries" });
+    const replacementRows = within(table)
+      .getAllByRole("row")
+      .filter((row) =>
+        /^CL-000[23]$/.test(within(row).queryAllByRole("cell")[0]?.textContent ?? ""),
+      );
+    expect(replacementRows).toHaveLength(2);
+    for (const row of replacementRows) {
+      expect(row).toHaveTextContent(
+        "Olive Owner made them an owner of Refund anomaly scores; this replaces their Tester role with Maintainer",
+      );
+    }
   });
 
   it("keeps Mark applied synchronous: nothing shows applied until the server confirms", async () => {
@@ -670,13 +817,13 @@ describe("ChangeListScreen", () => {
     expect(key).toEqual(expect.any(String));
     // While it saves, the row and the pending count are what the server last said.
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(within(row).queryByText("Applied")).toBeNull();
+    expect(within(row).queryByText("Marked applied")).toBeNull();
     expect(row).not.toHaveTextContent(`by ${STAFF.principalId}`);
     expect(screen.getByText("1 pending")).toBeInTheDocument();
     expect(screen.queryByText("0 pending")).toBeNull();
 
     gate.resolve(await real(captured));
-    expect(await within(table).findByText("Applied")).toBeInTheDocument();
+    expect(await within(table).findByText("Marked applied")).toBeInTheDocument();
     expect(await screen.findByText("0 pending")).toBeInTheDocument();
   });
 
@@ -686,7 +833,7 @@ describe("ChangeListScreen", () => {
     await store.datasetRoles.addMember({
       datasetId: DATASET_ID,
       name: "Devon Developer",
-      email: "devon.developer@example.test",
+      email: "devon.developer@example.gov",
       role: "developer",
     });
     me.current = STAFF;
@@ -710,7 +857,7 @@ describe("ChangeListScreen", () => {
     expect(markApplied.mock.calls.map(([id]) => id)).toEqual(["CL-0001", "CL-0002"]);
     firstGate.resolve(await real("CL-0001"));
     secondGate.resolve(await real("CL-0002"));
-    await screen.findAllByText("Applied");
+    await screen.findAllByText("Marked applied");
   });
 
   it("reuses the idempotency key when an unknown outcome is retried", async () => {
@@ -737,7 +884,7 @@ describe("ChangeListScreen", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Mark applied CL-0001" }));
 
-    expect(await screen.findByText("Applied")).toBeInTheDocument();
+    expect(await screen.findByText("Marked applied")).toBeInTheDocument();
     expect(keys).toHaveLength(2);
     expect(keys[1]).toBe(keys[0]);
   });
@@ -760,13 +907,13 @@ describe("ChangeListScreen", () => {
 
     await screen.findByRole("heading", { name: /Refund anomaly scores: team/ });
     const add = async () => {
-      fill("Tess Tester", "tess.tester@example.test", "Tester");
+      fill("Tess Tester", "tess.tester@example.gov", "Tester");
       fireEvent.click(screen.getByRole("button", { name: /Review add/ }));
       fireEvent.click(screen.getByRole("button", { name: /Confirm add/ }));
     };
     await add();
     expect(await screen.findByText(/Added Tess Tester as Tester/)).toBeInTheDocument();
-    const tessRow = (await screen.findByText("tess.tester@example.test")).closest("tr")!;
+    const tessRow = (await screen.findByText("tess.tester@example.gov")).closest("tr")!;
     fireEvent.click(within(tessRow).getByRole("button", { name: "Edit access for Tess Tester" }));
     fireEvent.click(screen.getByRole("button", { name: /Remove Tess Tester's Tester role/ }));
     fireEvent.click(screen.getByRole("button", { name: /Confirm removal/ }));
@@ -800,7 +947,7 @@ describe("ChangeListScreen", () => {
     wrap(<DatasetTeamScreen ctx={ctx()} params={{ id: DATASET_ID }} />, store);
 
     await screen.findByRole("heading", { name: /Refund anomaly scores: team/ });
-    fill("Tess Tester", "tess.tester@example.test", "Tester");
+    fill("Tess Tester", "tess.tester@example.gov", "Tester");
     fireEvent.click(screen.getByRole("button", { name: /Review add/ }));
     fireEvent.click(screen.getByRole("button", { name: /Confirm add/ }));
     const notices = screen.getByRole("region", { name: "Team changes" });
@@ -811,7 +958,7 @@ describe("ChangeListScreen", () => {
     );
     expect(alert).not.toHaveTextContent(/refused/i);
     const row = within(screen.getByRole("table", { name: "Members" }))
-      .getByText("tess.tester@example.test")
+      .getByText("tess.tester@example.gov")
       .closest("tr")!;
     expect(row).toHaveTextContent("Not confirmed");
     fireEvent.click(within(notices).getByRole("button", { name: "Try again" }));
@@ -838,11 +985,11 @@ describe("ChangeListScreen", () => {
     wrap(<DatasetTeamScreen ctx={ctx()} params={{ id: DATASET_ID }} />, store);
 
     await screen.findByRole("heading", { name: /Refund anomaly scores: team/ });
-    fill("Tess Tester", "tess.tester@example.test", "Tester");
+    fill("Tess Tester", "tess.tester@example.gov", "Tester");
     fireEvent.click(screen.getByRole("button", { name: /Review add/ }));
     fireEvent.click(screen.getByRole("button", { name: /Confirm add/ }));
     expect(await screen.findByText("We couldn't confirm this save")).toBeVisible();
-    fill("Bob Builder", "bob.builder@example.test", "Tester");
+    fill("Bob Builder", "bob.builder@example.gov", "Tester");
     fireEvent.click(screen.getByRole("button", { name: /Review add/ }));
     fireEvent.click(screen.getByRole("button", { name: /Confirm add/ }));
 
@@ -870,7 +1017,7 @@ describe("ChangeListScreen", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("EDP staff only.");
     fireEvent.click(screen.getByRole("button", { name: "Mark applied CL-0001" }));
 
-    expect(await screen.findByText("Applied")).toBeInTheDocument();
+    expect(await screen.findByText("Marked applied")).toBeInTheDocument();
     expect(keys).toHaveLength(2);
     expect(keys[1]).not.toBe(keys[0]);
   });
@@ -880,7 +1027,8 @@ describe("ChangeListScreen", () => {
     wrap(<ChangeListScreen ctx={ctx()} />, await storeWithOneEntry(me));
 
     expect(await screen.findByText("Only EDP staff can mark entries applied.")).toBeInTheDocument();
-    expect(screen.getByText("Pending")).toBeInTheDocument();
+    expect(screen.getByText("Requested")).toBeInTheDocument();
+    expect(screen.queryByText("Pending")).toBeNull();
     expect(screen.queryByRole("button", { name: /Mark .* applied/ })).toBeNull();
   });
 

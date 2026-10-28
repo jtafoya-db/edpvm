@@ -22,7 +22,7 @@ const PILOT = {
       name: "Pilot refunds",
       domainTag: "individual-filing",
       datasetTag: "pilot_refunds",
-      owners: [{ principalId: "1234567890", displayName: "Pat Owner", email: "pat@example.test" }],
+      owners: [{ principalId: "1234567890", displayName: "Pat Owner", email: "pat@example.gov" }],
     },
     {
       id: "ds-pilot-business",
@@ -126,7 +126,7 @@ describe("the pilot configuration", () => {
       {
         dataset_id: "ds-pilot-refunds",
         person_display: "Pat Owner",
-        person_email: "pat@example.test",
+        person_email: "pat@example.gov",
         person_principal_id: "1234567890",
         source: "configuration",
       },
@@ -195,7 +195,7 @@ describe("the pilot configuration", () => {
       {
         ...PILOT,
         datasets: [
-          { ...PILOT.datasets[0]!, owners: [{ displayName: "Pat", email: "pat@example.test" }] },
+          { ...PILOT.datasets[0]!, owners: [{ displayName: "Pat", email: "pat@example.gov" }] },
         ],
       },
       /owners\.0\.principalId/,
@@ -233,6 +233,20 @@ describe("the pilot configuration", () => {
     expect(() => configuredSeed({ ...PRODUCTION, pilotConfigJson: raw })).toThrow(PilotConfigError);
     // A preview doesn't fall back to the sample either.
     expect(() => configuredSeed({ ...PREVIEW, pilotConfigJson: raw })).toThrow(PilotConfigError);
+  });
+
+  it("keeps Zod 3's exact operator-facing shape messages", () => {
+    expect(() => parsePilotConfig(JSON.stringify({ ...PILOT, extra: true }))).toThrow(
+      "EDP_PILOT_CONFIG_JSON is invalid: (top level): Unrecognized key(s) in object: 'extra'",
+    );
+    expect(() =>
+      parsePilotConfig(
+        JSON.stringify({ ...PILOT, initiative: { id: "INI-PILOT", name: "Pilot" } }),
+      ),
+    ).toThrow("EDP_PILOT_CONFIG_JSON is invalid: initiative.tenant: Required");
+    expect(() => parsePilotConfig(JSON.stringify({ ...PILOT, initiative: 3 }))).toThrow(
+      "EDP_PILOT_CONFIG_JSON is invalid: initiative: Expected object, received number",
+    );
   });
 
   it.each(BAD_TAGS)("refuses a dataset tag with %s", (_label, tag, message) => {
@@ -288,6 +302,113 @@ describe("the Delta API with an invalid pilot configuration", () => {
       });
     }
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("sample identities in the configuration (#312)", () => {
+  const withOwner = (owner: { principalId: string; displayName: string; email?: string }) =>
+    JSON.stringify({
+      ...PILOT,
+      datasets: [{ ...PILOT.datasets[0]!, owners: [owner] }, PILOT.datasets[1]!],
+    });
+  const SAMPLES = [
+    ["a sample principal ID", { principalId: "seed-priya-natarajan", displayName: "Priya" }],
+    [
+      "a sample email",
+      { principalId: "1234567890", displayName: "Tom", email: "tom.becker@example.gov" },
+    ],
+    [
+      "a +tag alias of a sample email, in mixed case",
+      {
+        principalId: "1234567890",
+        displayName: "Priya",
+        email: "Priya.Natarajan+pilot@Example.gov",
+      },
+    ],
+  ] as const;
+
+  it.each(SAMPLES)("refuses %s in production's pilot configuration", (_label, owner) => {
+    expect(() => configuredSeed({ ...PRODUCTION, pilotConfigJson: withOwner(owner) })).toThrow(
+      PilotConfigError,
+    );
+    expect(() => configuredSeed({ ...PRODUCTION, pilotConfigJson: withOwner(owner) })).toThrow(
+      /sample/,
+    );
+  });
+
+  it("refuses one on a preview too, unless sample mode is on there", () => {
+    const pilotConfigJson = withOwner(SAMPLES[0][1]);
+    expect(() => configuredSeed({ ...PREVIEW, pilotConfigJson })).toThrow(PilotConfigError);
+    expect(() =>
+      configuredSeed({ ...PREVIEW, pilotConfigJson, sampleAccessRequests: " true" }),
+    ).toThrow(PilotConfigError);
+    expect(() =>
+      configuredSeed({ ...PRODUCTION, pilotConfigJson, sampleAccessRequests: "true" }),
+    ).toThrow(PilotConfigError);
+    expect(
+      configuredSeed({ ...PREVIEW, pilotConfigJson, sampleAccessRequests: "true" }).source,
+    ).toBe("pilot-config");
+  });
+
+  it("refuses a sample principal as a preview's seed owner outside sample mode", () => {
+    expect(() =>
+      configuredSeed({ ...PREVIEW, pilotConfigJson: undefined, seedOwnerIds: "seed-tom-becker" }),
+    ).toThrow(PilotConfigError);
+  });
+
+  it("the loader refuses one too, and writes nothing", async () => {
+    const warehouse = createSqliteWarehouse();
+    const names = createStoreNames("edp_test", "");
+    const runner = createTransactionRunner({
+      client: warehouse.client,
+      names,
+      sleep: async () => undefined,
+    });
+    const seed = parsePilotConfig(withOwner(SAMPLES[2][1]));
+    const run = configuredDatasetsLoader(() => seed, { runner, names, source: "pilot-config" });
+
+    await expect(run()).rejects.toThrow(/sample/);
+    for (const table of [
+      "initiatives__initiatives",
+      "initiatives__datasets",
+      "teams__dataset_owners",
+      "teams__dataset_members",
+    ]) {
+      expect(count(warehouse, table), table).toBe(0);
+    }
+  });
+
+  it("fails the Delta API closed, before any SQL", async () => {
+    vi.resetModules();
+    for (const [name, value] of Object.entries({
+      DATABRICKS_HOST: "https://example.test",
+      DATABRICKS_WAREHOUSE_ID: "wh",
+      EDP_STORE_CATALOG: "edp_test",
+      DATABRICKS_CLIENT_ID: "id",
+      DATABRICKS_CLIENT_SECRET: "secret",
+      EDP_PILOT_CONFIG_JSON: withOwner(SAMPLES[1][1]),
+    })) {
+      vi.stubEnv(name, value);
+    }
+    const fetchSpy = vi.fn(async () => new Response("unexpected", { status: 500 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { handleDeltaApi } = await import("../config.ts");
+
+    const response = await handleDeltaApi(
+      new Request("http://edp.test/api/reads/initiatives/datasets"),
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      error: { code: "backend-not-configured", message: expect.stringMatching(/sample/) },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.resetModules();
   });
 });
 

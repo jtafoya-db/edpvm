@@ -16,6 +16,8 @@
  * workspace call.
  */
 
+import { GOVDEV_SENTINELS, isGovdevSentinel, PRODUCTION_APP_NAME } from "./govdevSentinels.ts";
+
 export type PreflightSeverity = "error" | "warning";
 
 export interface PreflightProblem {
@@ -190,16 +192,24 @@ export function resolvePreflight(
     );
   }
 
+  // --- govdev: an isolated, explicitly named Delta-backed development deploy ---
+  // The target and its workspace carry the environment identity, so names are
+  // free-form; they must be supplied, though, never the committed sentinels.
   if (options.target === "govdev") {
-    const required = ["app_name", "store_schema_prefix", "eir_volume_name", "edp_admin_group_id"];
-    for (const name of required) {
-      if (!supplied(vars, name)) {
+    for (const name of Object.keys(GOVDEV_SENTINELS)) {
+      const value = supplied(vars, name);
+      if (!value) {
         error(name, `govdev requires ${name}; pass --var ${name}=<isolated development value>.`);
+      } else if (isGovdevSentinel(value)) {
+        error(
+          name,
+          `govdev ${name} "${value}" is a committed sentinel; pass --var ${name}=<isolated development value>.`,
+        );
       }
     }
 
-    if (supplied(vars, "app_name") === "edp-vending-machine") {
-      error("app_name", "govdev must not use the production app name edp-vending-machine.");
+    if (supplied(vars, "app_name") === PRODUCTION_APP_NAME) {
+      error("app_name", `govdev must not use the production app name ${PRODUCTION_APP_NAME}.`);
     }
 
     const backend = supplied(vars, "data_backend");

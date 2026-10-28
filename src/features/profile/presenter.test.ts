@@ -11,7 +11,7 @@ function realUser(overrides: Partial<UserProfile> = {}): UserProfile {
     initials: "JV",
     title: "EDP User",
     tenant: "IRS Enterprise Data Platform",
-    email: "jordan.vega@example.test",
+    email: "jordan.vega@example.gov",
     isOnboardingLead: false,
     isAdmin: false,
     ...overrides,
@@ -27,11 +27,11 @@ describe("presentProfile — resolved identity (the only real data)", () => {
 
   it("maps the real forwarded identity straight through", () => {
     const vm = presentProfile({
-      user: realUser({ name: "Jordan Vega", email: "jordan.vega@example.test" }),
+      user: realUser({ name: "Jordan Vega", email: "jordan.vega@example.gov" }),
     });
 
     expect(vm.identity.displayName).toBe("Jordan Vega");
-    expect(vm.identity.email).toBe("jordan.vega@example.test");
+    expect(vm.identity.email).toBe("jordan.vega@example.gov");
     expect(vm.identity.principalId).toBe("4830123456789012");
     expect(vm.identity.isDevFallback).toBe(false);
     expect(vm.identity.source).toBe("databricks-forwarded");
@@ -39,22 +39,46 @@ describe("presentProfile — resolved identity (the only real data)", () => {
   });
 });
 
+describe("presentProfile — no person name on file (GovCloud)", () => {
+  it.each(["email", "username", "none"] as const)(
+    "never presents the %s fallback as the display name",
+    (nameSource) => {
+      const vm = presentProfile({
+        user: realUser({ name: "jordan.vega@example.gov", initials: "", nameSource }),
+      });
+      expect(vm.identity.displayName).toBe("No name on file");
+      expect(vm.identity.hasPersonName).toBe(false);
+      expect(vm.identity.email).toBe("jordan.vega@example.gov");
+    },
+  );
+
+  it.each(["scim-display", "scim-parts", "header", undefined] as const)(
+    "presents a %s name as the display name",
+    (nameSource) => {
+      const vm = presentProfile({ user: realUser(nameSource ? { nameSource } : {}) });
+      expect(vm.identity.displayName).toBe("Jordan Vega");
+      expect(vm.identity.hasPersonName).toBe(true);
+    },
+  );
+});
+
 describe("presentProfile — admin derivation label", () => {
-  it("labels an admin as derived from EDP-admin group membership", () => {
+  it("labels an admin as derived from direct EDP admin group membership", () => {
     const vm = presentProfile({ user: realUser({ isAdmin: true }) });
 
     expect(vm.admin.isAdmin).toBe(true);
     expect(vm.admin.roleLabel).toBe("Administrator");
-    expect(vm.admin.derivation).toMatch(/EDP-admin group/i);
-    expect(vm.admin.derivation).toMatch(/member/i);
+    expect(vm.admin.derivation).toBe(
+      "Server-derived from direct membership in the EDP admin group.",
+    );
   });
 
-  it("labels a non-admin as not a member of the EDP-admin group", () => {
+  it("labels a non-admin as not a direct member of the EDP admin group", () => {
     const vm = presentProfile({ user: realUser({ isAdmin: false }) });
 
     expect(vm.admin.isAdmin).toBe(false);
     expect(vm.admin.roleLabel).toBe("Standard user");
-    expect(vm.admin.derivation).toMatch(/not a member/i);
+    expect(vm.admin.derivation).toBe("Server-derived: not a direct member of the EDP admin group.");
   });
 });
 

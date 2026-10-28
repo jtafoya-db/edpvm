@@ -17,6 +17,7 @@ import type { AccessRequest, RequestStatus, WaiverAttestation } from "../types";
 import type { CatalogStore, DataStore, RequestStore, StatusStore } from "../store";
 import { fetchSessionProfile } from "../session";
 import { createMemoryEirRepository, type EirClock, type EirRepository } from "../eir/repository";
+import type { EirApprovalConfig } from "../eir/approval-mode";
 import {
   createMemoryEirDefinitionRepository,
   eirDefinitionsForCurrentUser,
@@ -44,6 +45,12 @@ export interface MemoryStoreOptions extends AccessStoreOptions {
   /** EIR definitions (#201): on the server in the app, like EIRs; in memory otherwise. */
   eirDefinitions?: EirDefinitionRepository;
   eirForms?: EirFormSource;
+  /**
+   * The in-memory EIR rules' approval settings (#204), for tests and local
+   * previews; `manual-validator` when unset. The app's EIRs are on the
+   * server, which reads its own deploy-time settings.
+   */
+  eirApproval?: EirApprovalConfig;
   privacyAcknowledgmentRepository?: PrivacyAcknowledgmentRepository;
 }
 
@@ -155,7 +162,7 @@ export function createMemoryStore(
 
   if (options.currentUser) catalog.getUser = options.currentUser;
 
-  const access = createDefaultAccessStores(catalog.getUser, options);
+  const { onboardUserEntries, ...access } = createDefaultAccessStores(catalog.getUser, options);
   const definitions = createMemoryEirDefinitionRepository(
     options.clock ? { clock: options.clock } : {},
   );
@@ -164,6 +171,7 @@ export function createMemoryStore(
     createMemoryEirRepository({
       ...(options.clock ? { clock: options.clock } : {}),
       definitions: definitions.definitions,
+      ...(options.eirApproval ? { approval: options.eirApproval } : {}),
       ...(options.slaConfig
         ? {
             validityDays: options.slaConfig.eirValidityDays,
@@ -202,6 +210,8 @@ export function createMemoryStore(
     currentUser: catalog.getUser,
     now: options.now ?? (() => new Date()),
     ...(options.slaConfig ? { slaConfig: options.slaConfig } : {}),
+    // One change list: onboard-user entries go where EDP staff mark them applied (#103).
+    onboardUserEntries,
   });
 
   const currentPerson = async () => {
@@ -210,14 +220,17 @@ export function createMemoryStore(
   };
   const eirDefinitions =
     options.eirDefinitions ?? eirDefinitionsForCurrentUser(definitions, currentPerson);
-  const eirForms = options.eirForms ?? memoryEirFormSource(definitions.forms);
+  const eirForms =
+    options.eirForms ?? memoryEirFormSource(definitions.forms, definitions.definitions);
 
   return {
-    groupMemberships: createMemoryGroupMembershipReader([], async () =>
-      (await catalog.getUser()).isAdmin
-        ? { edpStaff: true }
-        : { edpStaff: false, domains: [], datasetTags: [] },
-    ),
+    groupMemberships:
+      options.groupMembershipReader ??
+      createMemoryGroupMembershipReader([], async () =>
+        (await catalog.getUser()).isAdmin
+          ? { edpStaff: true }
+          : { edpStaff: false, domains: [], datasetTags: [] },
+      ),
     catalog,
     requests: requestStore,
     status,

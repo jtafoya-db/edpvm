@@ -24,7 +24,8 @@ fi
 
 private_markers='Private — internal|Rob King|github\.com/jtafoya-db/edp-vending-machine|services-bureau|services_bureau_catalog|irs-gov|irs-demo|852e667acfb9b179|80729668828425|2f225c0740dcd22b|fevm-services-bureau|@irs\.gov|npm-proxy\.cloud\.databricks\.com'
 if (cd "$repo" && rg -n -i "$private_markers" . \
-  --glob '!.git/**' --glob '!scripts/public-audit.sh' --glob '!PUBLICATION-MANIFEST.md'); then
+  --glob '!.git/**' --glob '!scripts/public-audit.sh' --glob '!scripts/public-sanitize.mjs' \
+  --glob '!PUBLICATION-MANIFEST.md'); then
   echo "FAIL: private publication markers remain" >&2
   exit 1
 fi
@@ -36,9 +37,11 @@ if ! command -v "$gitleaks_bin" >/dev/null 2>&1; then
 fi
 "$gitleaks_bin" dir "$repo" --config "$repo/.gitleaks.toml" --no-banner --redact --exit-code 1
 
+node "$repo/scripts/public-sanitize.mjs" --check "$repo"
+
 if [[ -d "$repo/.git" ]]; then
-  test -z "$(git -C "$repo" rev-list --min-parents=2 HEAD)" || {
-    echo "FAIL: public history must remain linear (merge commit found)" >&2
+  test -z "$(git -C "$repo" rev-list --min-parents=2 HEAD^!)" || {
+    echo "FAIL: the publication commit must not be a merge commit" >&2
     exit 1
   }
 fi

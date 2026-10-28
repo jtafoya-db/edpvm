@@ -5,13 +5,7 @@ import { ownerKey } from "@/data/datasets/ownership";
 import type { RoleDescriptions } from "@/data/datasets/role-descriptions";
 import { ownerRecord, removeOwnerSave } from "@/data/datasets/team-queries";
 import { useSave, useSavesUnder } from "@/data/optimistic-save";
-import {
-  accountIdLabel,
-  type Dataset,
-  type DatasetMember,
-  type DatasetOwner,
-} from "@/data/datasets/types";
-import { AddPersonForm, type AddDraft } from "./AddPersonForm";
+import { accountIdLabel, type Dataset, type DatasetOwner } from "@/data/datasets/types";
 import { GrantList, Notice, Timestamp } from "./chrome";
 import { actorName } from "./entryText";
 import type { DatasetAccessChrome } from "./resolveChrome";
@@ -32,9 +26,6 @@ export function OwnersPanel({
   roles,
   canManage,
   isStaff,
-  members = [],
-  viewerId = "",
-  canAdd = true,
   chrome,
 }: {
   dataset: Dataset;
@@ -42,15 +33,6 @@ export function OwnersPanel({
   /** Owners, or EDP staff. */
   canManage: boolean;
   isStaff: boolean;
-  /** The dataset's members, so the add form can warn when someone already holds a role. */
-  members?: DatasetMember[];
-  viewerId?: string;
-  /**
-   * Show the add-owner form under the list. The team page turns it off: there,
-   * owners are added from the Add team member panel (UAT round 2, PR #234).
-   * EDP Admin's owner reassignment keeps it.
-   */
-  canAdd?: boolean;
   chrome: DatasetAccessChrome;
 }) {
   const { Panel, SectionHead, Icon } = chrome;
@@ -84,8 +66,7 @@ export function OwnersPanel({
       <div style={s.stack}>
         {isStaff && dataset.owners.length === 0 ? (
           <Notice kind="warning" chrome={chrome} title="This dataset has no owner">
-            As EDP staff, you can reassign ownership:{" "}
-            {canAdd ? "add an owner below." : "add one with Add team member."}
+            As EDP staff, you can reassign ownership: add one with Add team member.
           </Notice>
         ) : null}
         <Panel pad={0} style={{ overflow: "hidden" }}>
@@ -204,53 +185,7 @@ export function OwnersPanel({
             </section>
           </Panel>
         ) : null}
-        {canManage && canAdd ? (
-          <AddOwnerForm
-            dataset={dataset}
-            roles={roles}
-            members={members}
-            viewerId={viewerId}
-            chrome={chrome}
-          />
-        ) : null}
       </div>
     </div>
-  );
-}
-
-/**
- * The Owners section's add form: the team page's one add form (AddPersonForm)
- * with Owner its only choice, so there's one add-owner, not two.
- */
-function AddOwnerForm({
-  dataset,
-  roles,
-  members,
-  viewerId,
-  chrome,
-}: {
-  dataset: Dataset;
-  roles: RoleDescriptions;
-  members: DatasetMember[];
-  viewerId: string;
-  chrome: DatasetAccessChrome;
-}) {
-  const { Panel, SectionHead } = chrome;
-  const [draft, setDraft] = useState<AddDraft>({ name: "", email: "", choice: "owner" });
-  return (
-    <Panel pad={24}>
-      <SectionHead eyebrow="Owner action" title="Add an owner" />
-      <AddPersonForm
-        dataset={dataset}
-        roles={roles}
-        members={members}
-        choices={["owner"]}
-        idPrefix="owner"
-        viewerId={viewerId}
-        draft={draft}
-        onDraft={setDraft}
-        chrome={chrome}
-      />
-    </Panel>
   );
 }

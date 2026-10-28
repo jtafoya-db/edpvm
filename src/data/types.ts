@@ -16,6 +16,14 @@ import type { EffectiveSlaConfig } from "./sla-config";
 // ---- Session / identity ----------------------------------------------------
 
 /**
+ * Where the server took a user's display name from (`/api/session`), so an
+ * operator can see why a name looks wrong without server logs. Only
+ * `scim-display` and `scim-parts` are a person's real name; `none` means no
+ * usable value, so the display name is a placeholder.
+ */
+export type NameSource = "scim-display" | "scim-parts" | "header" | "email" | "username" | "none";
+
+/**
  * The current user (identity + tenant + role flags). Delta: `access.current_user`.
  *
  * `principalId` is the STABLE account SCIM id resolved server-side from the
@@ -30,6 +38,8 @@ export interface UserProfile {
   /** SCIM `/Me` name parts, when the workspace has them (EIR form pre-fill). */
   givenName?: string;
   familyName?: string;
+  /** Where `name` came from (server-resolved). Absent for seed users. */
+  nameSource?: NameSource;
   initials: string;
   title: string;
   tenant: string;
@@ -43,6 +53,12 @@ export interface UserProfile {
    * validator may decide their own EIR. Present only when it's on.
    */
   eirSelfDecisionTestMode?: true;
+  /**
+   * A PR preview's sample access requests are on
+   * (`src/server/sample-access-requests.ts`): the Delta store seeds them.
+   * Present only when it's on; production never has it (#312).
+   */
+  sampleAccessRequests?: true;
   /** Onboarding reviewer roles held, derived server-side (#86): both for an EDP admin group member (#226). Absent ⇒ none. */
   onboardingReviewerRoles?: OnboardingReviewerRole[];
   /** Effective deploy-time SLA settings, read server-side and returned by /api/session. */

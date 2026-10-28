@@ -24,6 +24,7 @@ export {
   useSaveEirDraft,
   useEvaluateEirDraft,
   useGenerateEirPdf,
+  usePrepareEirPdf,
   useStartEir,
   useSubmitEirFile,
   useRespondEir,
@@ -55,6 +56,7 @@ export {
   formForNextSave,
 } from "./eir/repository";
 export { eirFormsFrom } from "./eir/definition/repository";
+export { preflightDefinitionFor, preflightEir } from "./eir/preflight";
 export { definitionLabel, eirFormName } from "./eir/definition/identity";
 export { eirErrorStatus, isEirReadRefusal } from "./eir/errors";
 export { canAuthorEirDefinitions, canReadEirDefinitions } from "./eir/definition/access";

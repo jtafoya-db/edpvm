@@ -118,6 +118,7 @@ export function translate(sql: string): string {
     .replace(/\b(\w+)\._metadata\.row_id\b/g, "$1.rowid")
     .replace(/\b_metadata\.row_id\b/g, "rowid");
   out = out.replace(/from_json\((:\w+), 'ARRAY<STRING>'\)/g, "$1");
+  out = out.replace(/CAST\(NULL AS ARRAY<STRING>\)/g, "NULL");
   out = rewriteCall(out, "named_struct", (args) => `json_object(${args})`);
   out = rewriteCall(out, "collect_list", (args) => `json_group_array(${args})`);
   // Arrays are stored as JSON text already, and json_group_array/json_object return text.

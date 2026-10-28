@@ -1,6 +1,14 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  configure,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACTIVE_PRIVACY_NOTICE, createMemoryStore, StoreProvider } from "@/data";
@@ -17,6 +25,8 @@ import type { EirDefinition } from "@/data/eir/definition/types";
 import { createMemoryPrivacyAcknowledgmentRepository } from "@/data/privacy/repository";
 import { EirScreen } from "./EirScreen";
 import { EirValidatorSection } from "./EirValidatorSection";
+
+configure({ asyncUtilTimeout: 5_000 });
 
 afterEach(() => {
   cleanup();
@@ -86,6 +96,13 @@ function renderScreen(store: ReturnType<typeof createAcknowledgedMemoryStore>) {
 }
 
 const field = (name: RegExp) => screen.getByRole("textbox", { name });
+const downloadButton = () => screen.getByRole("button", { name: "Download PDF to sign" });
+const discardButton = () => screen.getByRole("button", { name: "Discard unsaved changes" });
+
+/** The saved EIR read is complete once the form's actions are enabled. */
+async function waitForEirLoaded() {
+  await waitFor(() => expect(downloadButton()).toBeEnabled());
+}
 
 const BOOTSTRAP_1_YAML = readBootstrapEirSource("bootstrap")!;
 const loaded = loadDefinition(BOOTSTRAP_1_YAML, "bootstrap");
@@ -118,9 +135,10 @@ async function downloadBlocked(changed: Record<string, string>) {
   const store = storeFor({ principalId: "person-1", name: "Test Person" });
   await store.eir.saveDraft("person-1", { ...EIR_VALUES, ...changed });
   renderScreen(store);
+  await waitForEirLoaded();
   // The saved draft has loaded once its answers show.
   await waitFor(() => expect(field(/^Team or project/)).toHaveValue(EIR_VALUES["team"]));
-  fireEvent.click(await screen.findByRole("button", { name: "Download PDF to sign" }));
+  fireEvent.click(downloadButton());
   return { store, alert: await screen.findByRole("alert") };
 }
 
@@ -167,9 +185,14 @@ describe("EIR form 1.3 on screen", () => {
         `#eir-field-${id}`,
       );
       expect(screen.queryByText(/PDF generated/)).not.toBeInTheDocument();
-      expect(await store.eir.get("person-1")).toMatchObject({
-        evaluation: { outcome: "blocking", definitionVersion: "bootstrap-2" },
-      });
+      // #235: the browser blocked it on bootstrap-2's rules, so nothing was sent:
+      // the saved draft is as it was, unevaluated. The server's own refusal of
+      // the same answers (recorded, on bootstrap-2) is the repository contract's
+      // (`eir-prepare-pdf-contract`, `eir-blocking-contract`).
+      const after = await store.eir.get("person-1");
+      expect(after.draftVersion).toBe(1);
+      expect(after.evaluation).toBeUndefined();
+      expect(after.recordId).toBeUndefined();
     },
   );
 
@@ -184,7 +207,8 @@ describe("EIR form 1.3 on screen", () => {
     );
     renderScreen(store);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Download PDF to sign" }));
+    await waitForEirLoaded();
+    fireEvent.click(downloadButton());
     expect(await screen.findByText("Warnings do not prevent PDF generation.")).toBeInTheDocument();
     expect(screen.getByText("Before the MBI or staff-like access start date")).toBeInTheDocument();
     expect(await screen.findByText(/PDF generated with pre-check warnings/)).toBeInTheDocument();
@@ -217,9 +241,10 @@ describe("EIR form 1.3 on screen", () => {
     expect(active?.form.version).toBe("bootstrap-2");
     renderScreen(store);
 
+    await waitForEirLoaded();
     expect(await screen.findByText("bootstrap (version 0)")).toBeInTheDocument();
     expect(screen.queryByText("bootstrap-2 (version 0)")).toBeNull();
-    fireEvent.click(await screen.findByRole("button", { name: "Download PDF to sign" }));
+    fireEvent.click(downloadButton());
     expect(
       await screen.findByText(/PDF generated for manual Safeguards handling/),
     ).toBeInTheDocument();
@@ -290,6 +315,7 @@ describe("EIR form 1.3 on screen", () => {
         familyName: "Person",
       }),
     );
+    await waitForEirLoaded();
     expect(await screen.findByRole("textbox", { name: /^Work email/ })).toHaveValue(
       "test.person@example.gov",
     );
@@ -307,7 +333,8 @@ describe("EIR form 1.3 on screen", () => {
   it("announces what's missing, focuses the summary, links each answer, and saves nothing", async () => {
     const store = storeFor({ principalId: "person-1", name: "Test Person" });
     renderScreen(store);
-    fireEvent.click(await screen.findByRole("button", { name: "Download PDF to sign" }));
+    await waitForEirLoaded();
+    fireEvent.click(downloadButton());
 
     const summary = await screen.findByRole("region", { name: /Check \d+ answers/ });
     await waitFor(() => expect(summary).toHaveFocus());
@@ -330,7 +357,8 @@ describe("EIR form 1.3 on screen", () => {
   it("keeps focus and every keystroke in a field fixed after a failed download, and refocuses the summary on each failed attempt (#179)", async () => {
     const user = userEvent.setup();
     renderScreen(storeFor({ principalId: "person-1", name: "Test Person" }));
-    await user.click(await screen.findByRole("button", { name: "Download PDF to sign" }));
+    await waitForEirLoaded();
+    await user.click(downloadButton());
     const summary = await screen.findByRole("region", { name: /Check \d+ answers/ });
     await waitFor(() => expect(summary).toHaveFocus());
     expect(summary).toHaveAttribute("aria-live", "polite");
@@ -358,6 +386,7 @@ describe("EIR form 1.3 on screen", () => {
   it("keeps focus in the manager's email, a date and a Yes/No answer edited after a failed download (#179)", async () => {
     const user = userEvent.setup();
     renderScreen(storeFor({ principalId: "person-1", name: "Test Person" }));
+    await waitForEirLoaded();
     const email = await screen.findByRole("textbox", { name: /^Manager's work email/ });
     await user.type(email, "test.managerexample.gov");
     await user.click(screen.getByRole("button", { name: "Download PDF to sign" }));
@@ -404,7 +433,8 @@ describe("EIR form 1.3 on screen", () => {
 
   it("clears an answer's error as it's fixed", async () => {
     renderScreen(storeFor({ principalId: "person-1", name: "Test Person" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Download PDF to sign" }));
+    await waitForEirLoaded();
+    fireEvent.click(downloadButton());
     await waitFor(() => expect(document.getElementById("eir-field-userId-error")).not.toBeNull());
     fireEvent.change(field(/^User ID/), { target: { value: "A1B2C" } });
     expect(document.getElementById("eir-field-userId-error")).toBeNull();
@@ -412,10 +442,11 @@ describe("EIR form 1.3 on screen", () => {
     expect(field(/^User ID/)).not.toHaveAttribute("aria-invalid");
   });
 
-  it("keeps every answer of a saved draft across a reload, and Cancel request discards unsaved edits", async () => {
+  it("keeps every answer of a saved draft across a reload, and Discard unsaved changes discards unsaved edits", async () => {
     const store = storeFor({ principalId: "person-1", name: "Test Person" });
     renderScreen(store);
-    fireEvent.change(await screen.findByRole("textbox", { name: /^User ID/ }), {
+    await waitForEirLoaded();
+    fireEvent.change(field(/^User ID/), {
       target: { value: "A1B2C" },
     });
     fireEvent.change(field(/^Manager's work email/), {
@@ -435,7 +466,8 @@ describe("EIR form 1.3 on screen", () => {
 
     cleanup();
     renderScreen(store);
-    expect(await screen.findByRole("textbox", { name: /^User ID/ })).toHaveValue("A1B2C");
+    await waitForEirLoaded();
+    await waitFor(() => expect(field(/^User ID/)).toHaveValue("A1B2C"));
     expect(field(/^Manager's work email/)).toHaveValue("test.manager@example.gov");
     expect(screen.getByLabelText(/^Privacy training date/)).toHaveValue("2026-06-02");
     const nda = screen.getByRole("radiogroup", { name: /IRS non-disclosure/ });
@@ -444,10 +476,112 @@ describe("EIR form 1.3 on screen", () => {
     expect(screen.getByRole("checkbox", { name: /I agree/ })).toBeChecked();
 
     fireEvent.change(field(/^User ID/), { target: { value: "Z9Z9Z" } });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel request" }));
+    fireEvent.click(discardButton());
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard changes" }),
+    );
     expect(field(/^User ID/)).toHaveValue("A1B2C");
-    expect(await screen.findByText("Changes discarded. Nothing was saved.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Unsaved changes discarded. Your saved answers are kept."),
+    ).toBeInTheDocument();
     expect((await store.eir.get("person-1")).draftValues?.["userId"]).toBe("A1B2C");
+  });
+
+  describe("Discard unsaved changes (#273)", () => {
+    /** A saved draft on screen, with one answer edited since it was saved. */
+    async function editedSavedDraft() {
+      const store = storeFor({ principalId: "person-1", name: "Test Person" });
+      await store.eir.saveDraft("person-1", EIR_VALUES);
+      renderScreen(store);
+      await waitForEirLoaded();
+      await waitFor(() => expect(field(/^User ID/)).toHaveValue(EIR_VALUES["userId"]));
+      // Every EIR call from here on: discarding must make none.
+      const calls = Object.keys(store.eir).map((name) =>
+        vi.spyOn(store.eir, name as keyof typeof store.eir),
+      );
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      fireEvent.change(field(/^User ID/), { target: { value: "Z9Z9Z" } });
+      return { store, calls, fetchSpy };
+    }
+
+    it("is named for what it does, and is unavailable while nothing is unsaved", async () => {
+      const store = storeFor({ principalId: "person-1", name: "Test Person" });
+      await store.eir.saveDraft("person-1", EIR_VALUES);
+      renderScreen(store);
+      await waitForEirLoaded();
+      await waitFor(() => expect(field(/^User ID/)).toHaveValue(EIR_VALUES["userId"]));
+      expect(screen.queryByRole("button", { name: "Cancel request" })).not.toBeInTheDocument();
+      expect(discardButton()).toBeDisabled();
+
+      fireEvent.change(field(/^User ID/), { target: { value: "Z9Z9Z" } });
+      expect(discardButton()).toBeEnabled();
+      // Typed back to what's saved: nothing is unsaved again.
+      fireEvent.change(field(/^User ID/), { target: { value: EIR_VALUES["userId"] } });
+      expect(discardButton()).toBeDisabled();
+    });
+
+    it("asks first, says saved answers are kept, and moves focus into the question", async () => {
+      await editedSavedDraft();
+      const button = discardButton();
+      button.focus();
+      fireEvent.click(button);
+
+      const dialog = await screen.findByRole("alertdialog", {
+        name: "Discard unsaved changes?",
+      });
+      expect(dialog).toHaveAccessibleDescription(/Your saved answers are kept/);
+      expect(dialog).toContainElement(document.activeElement as HTMLElement);
+      // The page behind is hidden from assistive technology while the question is open.
+      expect(screen.getByRole("textbox", { name: /^User ID/, hidden: true })).toHaveValue("Z9Z9Z");
+    });
+
+    it("Keep editing and Escape both leave the edits untouched and return focus to the button", async () => {
+      const { store } = await editedSavedDraft();
+      const user = userEvent.setup();
+
+      await user.click(discardButton());
+      await user.click(
+        within(screen.getByRole("alertdialog")).getByRole("button", { name: "Keep editing" }),
+      );
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(field(/^User ID/)).toHaveValue("Z9Z9Z");
+      await waitFor(() => expect(discardButton()).toHaveFocus());
+
+      await user.click(discardButton());
+      expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(field(/^User ID/)).toHaveValue("Z9Z9Z");
+      await waitFor(() => expect(discardButton()).toHaveFocus());
+      expect((await store.eir.get("person-1")).draftValues?.["userId"]).toBe(EIR_VALUES["userId"]);
+    });
+
+    it("Discard changes restores the last saved answers, sends nothing and changes no saved draft", async () => {
+      const { store, calls, fetchSpy } = await editedSavedDraft();
+      const before = await store.eir.get("person-1");
+      for (const call of calls) call.mockClear();
+
+      fireEvent.click(discardButton());
+      fireEvent.click(
+        within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard changes" }),
+      );
+
+      expect(field(/^User ID/)).toHaveValue(EIR_VALUES["userId"]);
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(
+        await screen.findByText("Unsaved changes discarded. Your saved answers are kept."),
+      ).toBeInTheDocument();
+      expect(discardButton()).toBeDisabled();
+      // Nothing is left to discard, so focus goes to what happened, not the disabled button.
+      await waitFor(() =>
+        expect(
+          screen.getByText("Unsaved changes discarded. Your saved answers are kept."),
+        ).toHaveFocus(),
+      );
+      for (const call of calls) expect(call).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(await store.eir.get("person-1")).toEqual(before);
+    });
   });
 
   it("shows the validator every answer, with each flag highlighted, and never blocks the submission", async () => {
@@ -529,6 +663,7 @@ describe("EIR form 1.3 on screen", () => {
 
   it("marks Contracting company optional and every compliance item required", async () => {
     renderScreen(storeFor({ principalId: "person-1", name: "Test Person" }));
+    await waitForEirLoaded();
     const company = await screen.findByRole("textbox", { name: /^Contracting company/ });
     expect(company).not.toHaveAttribute("aria-required");
     expect(screen.getByText("Contracting company").closest("label")).toHaveTextContent(
@@ -562,7 +697,8 @@ describe("EIR form 1.3 on screen", () => {
   it("refuses an unanswered yes/no on screen: announced, linked, focused, URL unchanged", async () => {
     const store = storeFor({ principalId: "person-1", name: "Test Person" });
     renderScreen(store);
-    fireEvent.click(await screen.findByRole("button", { name: "Download PDF to sign" }));
+    await waitForEirLoaded();
+    fireEvent.click(downloadButton());
     const summary = await screen.findByRole("region", { name: /Check \d+ answers/ });
     const nda = screen.getByRole("radiogroup", { name: /IRS non-disclosure/ });
     expect(nda).toHaveAttribute("aria-invalid", "true");

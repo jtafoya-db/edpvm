@@ -19,8 +19,12 @@ A tenant bringing its own data onto the EDP. Everything the EDP needs to know ab
 _Avoid_: Data owner, publisher, source
 
 **Dataset owner**:
-A person accountable for one dataset and named for it at intake, usually someone leading the tenant's work. A dataset owner holds the dataset's manager role and decides who gets a dataset role.
+A person accountable for one dataset and named for it at intake, usually someone leading the tenant's work. A dataset owner holds the dataset's Maintainer role and decides who gets a dataset role: only owners, with EDP staff, add or remove people on a dataset's team.
 _Avoid_: Tenant lead, tenant manager, data manager, tag owner, steward
+
+**Initiative point of contact**:
+The person accountable for the initiative who shepherds the request, named as Myself or someone else. Being named gives no dataset role: the initiative point of contact isn't a dataset owner unless also named as one, and standup doesn't add them to any dataset's team.
+_Avoid_: Initiative owner, Dataset owner, sponsor, steward
 
 **Domain owner**:
 The person who approves a domain's entitlement in BEARS, against criteria they define. A domain owner works outside the app.
@@ -199,7 +203,7 @@ A Databricks group, managed in the app, that gives its members one dataset role 
 _Avoid_: Dataset entitlement
 
 **Dataset role**:
-Access to one dataset beyond a data consumer's read, given by a dataset owner: tester, developer, or manager. Each role grants a fixed set of access; there are no per-member access levels on top of it.
+Access to one dataset beyond a data consumer's read, given by a dataset owner: tester, developer, or Maintainer. Each role grants a fixed set of access; there are no per-member access levels on top of it.
 _Avoid_: Entitlement, permission set
 
 **Tester**:
@@ -210,9 +214,9 @@ _Avoid_: Consumer, reader
 The dataset role with read and write access to a dataset's data.
 _Avoid_: Engineer, contributor
 
-**Manager**:
-The elevated dataset role: everything a developer has, plus managing jobs and the permissions on what the dataset publishes in prod. Only dataset owners decide who's on the team.
-_Avoid_: Admin, data manager
+**Maintainer**:
+The elevated dataset role, for a senior engineer who operates the dataset in prod: everything a developer has, plus it runs the dataset's jobs and manages permissions on what the dataset publishes in prod. Stored as `manager`. A Maintainer who isn't a dataset owner can't add or remove people on the team.
+_Avoid_: Manager, admin, data manager, prod maintainer
 
 **Sensitive environment**:
 A higher environment where FTI data exists, such as preprod, prod, or analytics prod. Entering one requires a valid EIR.
@@ -249,6 +253,10 @@ _Avoid_: Tag policy, sync job
 **Change list**:
 The app's list of changes to make in Databricks, each with what needs to happen and why, for EDP staff to apply.
 _Avoid_: Fulfillment queue, ticket, provisioning job
+
+**Owner match**:
+EDP staff recording which Databricks principal an onboarding request's owner is, by entering the principal ID they found by hand, while the request is at review. It is shown as entered by staff and not verified, and it binds no email. An owner who isn't a Databricks user yet gets an onboard-user entry on the change list instead.
+_Avoid_: User lookup, verification, email binding
 
 **Display code**:
 The short label a person quotes to EDP staff for an EIR, onboarding request or access request: its prefix and six letters and digits, such as `ONB-7K3QFD`. Unique, not sequential. An EIR's display code is its **Record ID**, printed on the signed PDF. Records made before display codes keep their number (`EIR-1042`). Change-list entries keep sequential numbers (`CL-0042`).

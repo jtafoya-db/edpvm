@@ -30,7 +30,29 @@ const ctx: OnboardingIntakeCtx = {
 };
 
 function domainSelect(): HTMLSelectElement {
-  return screen.getByLabelText(/Target domain/) as HTMLSelectElement;
+  return screen.getByRole("combobox", { name: /Dataset 1 domain/ }) as HTMLSelectElement;
+}
+
+function reachDatasets() {
+  const change = (label: string | RegExp, value: string) => {
+    const field = screen.getAllByLabelText(label).find((element) => element.tagName !== "BUTTON");
+    if (!field) throw new Error(`No form control found for ${String(label)}`);
+    fireEvent.change(field, { target: { value } });
+  };
+  const next = () => fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+  change(/initiative name/i, "Domain option test");
+  fireEvent.click(screen.getByRole("radio", { name: /myself/i }));
+  change(/data sensitivity/i, "SBU");
+  next();
+  fireEvent.click(screen.getByRole("button", { name: /All within Databricks/i }));
+  next();
+  fireEvent.click(screen.getByRole("button", { name: /We have our own resources/i }));
+  next();
+  change(/business justification/i, "Validate all available dataset domain choices.");
+  fireEvent.click(screen.getByRole("button", { name: /Reduce fraud and improper payments/i }));
+  change(/primary mission outcome/i, "fraud");
+  change(/estimated annual benefit/i, "100000");
+  next();
 }
 
 describe("Target domain options", () => {
@@ -46,9 +68,10 @@ describe("Target domain options", () => {
     render(<OnboardingIntakeScreen ctx={ctx} domains={DOMAINS} />, {
       wrapper: onboardingStore().Wrapper,
     });
+    reachDatasets();
     const options = [...domainSelect().options].map((o) => o.textContent);
     expect(options).toEqual(expect.arrayContaining(DOMAINS.map((d) => d.name)));
-    expect(screen.queryByText(/Target domains couldn't be loaded/)).toBeNull();
+    expect(screen.queryByText(/Data domains couldn't be loaded/)).toBeNull();
   });
 
   it("when empty, the wizard announces it instead of showing a silently empty required list", () => {
@@ -57,7 +80,7 @@ describe("Target domain options", () => {
     });
     const alert = screen
       .getAllByRole("alert")
-      .find((el) => el.textContent?.includes("Target domains couldn't be loaded"));
+      .find((el) => el.textContent?.includes("Data domains couldn't be loaded"));
     expect(alert).toBeDefined();
     expect(alert!.textContent).toContain("can't be submitted yet");
     expect(alert!.textContent).toContain("Reload the page");

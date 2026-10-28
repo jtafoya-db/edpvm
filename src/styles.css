@@ -142,3 +142,18 @@
     color: var(--color-foreground);
   }
 }
+/* Reflow the dataset editor at desktop zoom: 1280px at 200% exposes 640 CSS px. */
+.intake-dataset-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 45rem) {
+  .intake-dataset-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .intake-form-actions {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+}

@@ -23,6 +23,7 @@ import {
 } from "yaml";
 import { z } from "zod";
 
+import { ZOD3_PARSE_OPTIONS, zod3IssueMessage } from "../../../zod-compat.ts";
 import type { EirFieldConfig, EirFieldRule, EirFormConfig, EirSectionConfig } from "../config.ts";
 import { UNPUBLISHED_DEFINITION_ID } from "./identity.ts";
 import type {
@@ -264,9 +265,12 @@ const isServerAssigned = (path: Path): boolean =>
 function shapeDiagnostics(error: z.ZodError, lineAt: (path: Path) => number | undefined) {
   const diagnostics: EirDefinitionDiagnostic[] = [];
   for (const issue of error.issues) {
+    const issuePath = issue.path.filter(
+      (part): part is string | number => typeof part === "string" || typeof part === "number",
+    );
     if (issue.code === "unrecognized_keys") {
       for (const key of issue.keys) {
-        const path = [...issue.path, key];
+        const path = [...issuePath, key];
         const line = lineAt(path);
         if (isServerAssigned(path)) {
           diagnostics.push({
@@ -279,18 +283,18 @@ function shapeDiagnostics(error: z.ZodError, lineAt: (path: Path) => number | un
         }
         diagnostics.push({
           code: "unknown-key",
-          message: `Unknown key "${key}"${issue.path.length ? ` in ${issue.path.join(".")}` : ""}.`,
+          message: `Unknown key "${key}"${issuePath.length ? ` in ${issuePath.join(".")}` : ""}.`,
           path,
           ...(line ? { line } : {}),
         });
       }
       continue;
     }
-    const line = lineAt(issue.path);
+    const line = lineAt(issuePath);
     diagnostics.push({
       code: "invalid-value",
-      message: `${issue.path.join(".") || "The definition"}: ${issue.message}`,
-      path: issue.path,
+      message: `${issuePath.join(".") || "The definition"}: ${zod3IssueMessage(issue)}`,
+      path: issuePath,
       ...(line ? { line } : {}),
     });
   }
@@ -708,7 +712,7 @@ export function loadDefinition(
   const lineOf = (offset: number) => lineAt(yamlText, offset);
   const parsed = parseData(yamlText, lineOf);
   if (parsed.diagnostics.length) return { ok: false, diagnostics: parsed.diagnostics };
-  const shaped = EIR_DEFINITION_SCHEMA.safeParse(parsed.data);
+  const shaped = EIR_DEFINITION_SCHEMA.safeParse(parsed.data, ZOD3_PARSE_OPTIONS);
   if (!shaped.success) {
     return {
       ok: false,

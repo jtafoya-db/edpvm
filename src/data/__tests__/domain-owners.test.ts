@@ -21,7 +21,7 @@ function user(overrides: Partial<UserProfile> = {}): UserProfile {
     initials: "ML",
     title: "Domain Steward",
     tenant: "RAAS",
-    email: "marcus.liu@example.test",
+    email: "marcus.liu@example.gov",
     isOnboardingLead: false,
     isAdmin: false,
     ...overrides,
@@ -44,16 +44,16 @@ describe("isDomainOwner", () => {
   });
 
   it("matches membership case-insensitively", () => {
-    expect(isDomainOwner(user({ email: "MARCUS.LIU@example.test" }), SEEDED_DOMAIN)).toBe(true);
+    expect(isDomainOwner(user({ email: "MARCUS.LIU@example.gov" }), SEEDED_DOMAIN)).toBe(true);
   });
 
   it("accepts a bare identifier string", () => {
-    expect(isDomainOwner("individual-returns-council@example.test", SEEDED_DOMAIN)).toBe(true);
+    expect(isDomainOwner("individual-returns-council@example.gov", SEEDED_DOMAIN)).toBe(true);
   });
 
   it("is false when the user is not a member", () => {
     expect(
-      isDomainOwner(user({ email: "stranger@example.test", name: "Stranger" }), SEEDED_DOMAIN),
+      isDomainOwner(user({ email: "stranger@example.gov", name: "Stranger" }), SEEDED_DOMAIN),
     ).toBe(false);
   });
 
@@ -92,7 +92,7 @@ describe("unroutedReason", () => {
 
 describe("getDomainOwnerMembers", () => {
   it("returns members for a mapped domain", () => {
-    expect(getDomainOwnerMembers(SEEDED_DOMAIN)).toContain("marcus.liu@example.test");
+    expect(getDomainOwnerMembers(SEEDED_DOMAIN)).toContain("marcus.liu@example.gov");
   });
 
   it("returns an empty list for an unmapped domain", () => {

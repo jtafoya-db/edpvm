@@ -20,14 +20,14 @@ import { createSqliteWarehouse, type SqliteWarehouse } from "./sqlite-warehouse.
 const PROVIDER: SessionUser = {
   principalId: "scim-provider",
   displayName: "Pat Provider",
-  email: "Pat.Provider@example.test",
+  email: "Pat.Provider@example.gov",
   isAdmin: false,
   onboardingReviewerRoles: [],
 };
 const BUSINESS_OFFICE: SessionUser = {
   principalId: "scim-bo",
   displayName: "Bea Office",
-  email: "bea.office@example.test",
+  email: "bea.office@example.gov",
   isAdmin: false,
   onboardingReviewerRoles: ["business-office"],
 };
@@ -40,11 +40,13 @@ const INTAKE: OnboardingIntake = {
   datasets: [
     {
       name: "Case signals",
+      sourceSystem: "IMF / Individual Master File",
       domain: "individual-filing",
+      ingestionMethod: "eftu",
       datasetTag: "case_signals",
       owners: [
         { self: true, name: "", email: "" },
-        { name: "Olive Owner", email: "Olive.Owner@example.test" },
+        { name: "Olive Owner", email: "Olive.Owner@example.gov" },
       ],
     },
   ],
@@ -103,7 +105,9 @@ const ownerRows = () =>
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-28T09:00:00.000Z"));
-  warehouse = createSqliteWarehouse({ files: ["store-admin.sql", "store-onboarding.sql"] });
+  warehouse = createSqliteWarehouse({
+    files: ["store-admin.sql", "store-teams.sql", "store-onboarding.sql"],
+  });
   deps = {
     registry: createAppRegistry(),
     runner: createTransactionRunner({ client: warehouse.client, names, sleep: async () => {} }),
@@ -126,19 +130,19 @@ describe("Myself stores the session's identity, not the browser's", () => {
       {
         initiative_owner_kind: "self",
         initiative_owner_display: "Pat Provider",
-        initiative_owner_email: "pat.provider@example.test",
+        initiative_owner_email: "pat.provider@example.gov",
         initiative_owner_principal_id: "scim-provider",
       },
     ]);
     expect(ownerRows().map(({ id: _id, ...row }) => row)).toEqual([
       {
         person_display: "Pat Provider",
-        person_email: "pat.provider@example.test",
+        person_email: "pat.provider@example.gov",
         person_principal_id: "scim-provider",
       },
       {
         person_display: "Olive Owner",
-        person_email: "olive.owner@example.test",
+        person_email: "olive.owner@example.gov",
         person_principal_id: null,
       },
     ]);
@@ -148,7 +152,7 @@ describe("Myself stores the session's identity, not the browser's", () => {
       expect(request.initiativeOwner).toEqual({
         kind: "self",
         name: "Pat Provider",
-        email: "pat.provider@example.test",
+        email: "pat.provider@example.gov",
         principalId: "scim-provider",
         verification: "verified",
       });
@@ -175,7 +179,7 @@ describe("Myself stores the session's identity, not the browser's", () => {
         datasets: [
           {
             ...INTAKE.datasets[0]!,
-            owners: [{ name: "Boss", email: "boss@example.test", principalId: "scim-boss" }],
+            owners: [{ name: "Boss", email: "boss@example.gov", principalId: "scim-boss" }],
           },
         ],
       },
@@ -219,13 +223,13 @@ describe("Someone else and a resubmission", () => {
         answer: "Sam owns it.",
         intake: {
           ...sentBack.intake,
-          initiativeOwner: { kind: "someone-else", name: " Sam Else ", email: "Sam.Else@example.test" },
+          initiativeOwner: { kind: "someone-else", name: " Sam Else ", email: "Sam.Else@example.gov" },
           datasets: [
             {
               ...dataset,
               owners: dataset.owners.map((owner, i) =>
                 i === 0
-                  ? { id: owner.id, name: "Sam Else", email: "sam.else@example.test" }
+                  ? { id: owner.id, name: "Sam Else", email: "sam.else@example.gov" }
                   : { id: owner.id, name: owner.name, email: owner.email },
               ),
             },
@@ -238,7 +242,7 @@ describe("Someone else and a resubmission", () => {
       {
         initiative_owner_kind: "someone-else",
         initiative_owner_display: "Sam Else",
-        initiative_owner_email: "sam.else@example.test",
+        initiative_owner_email: "sam.else@example.gov",
         initiative_owner_principal_id: null,
       },
     ]);
@@ -247,13 +251,13 @@ describe("Someone else and a resubmission", () => {
       {
         id: ownerIds[0],
         person_display: "Sam Else",
-        person_email: "sam.else@example.test",
+        person_email: "sam.else@example.gov",
         person_principal_id: null,
       },
       {
         id: ownerIds[1],
         person_display: "Olive Owner",
-        person_email: "olive.owner@example.test",
+        person_email: "olive.owner@example.gov",
         person_principal_id: null,
       },
     ]);
@@ -261,7 +265,7 @@ describe("Someone else and a resubmission", () => {
     expect((await readRequest(created.id)).initiativeOwner).toEqual({
       kind: "someone-else",
       name: "Sam Else",
-      email: "sam.else@example.test",
+      email: "sam.else@example.gov",
       principalId: null,
       verification: "not-verified",
     });

@@ -13,6 +13,8 @@
  *   optional Statement API async wait tuning. The client deadline stays 45 s.
  * - `EDP_PILOT_CONFIG_JSON`: the pilot initiative, datasets and owners to load
  *   (src/server/pilot-config.ts). Invalid, and the API refuses every request.
+ * - `EDP_ACCESS_MATRIX_JSON`: a complete dataset-access policy replacement;
+ *   `none` loads the approved repo default. It is parsed only by matrix reads.
  * - `DATABRICKS_TOKEN`: local development only, instead of the client
  *   credentials; ignored when `NODE_ENV=production`.
  */
@@ -28,6 +30,7 @@ import { createDeltaSnapshotCache } from "./snapshot-cache.ts";
 import { createTransactionRunner } from "./transaction.ts";
 import { privacyAcknowledgmentGuard } from "../privacy-enforcement";
 import { ACTIVE_PRIVACY_NOTICE } from "../../data/privacy/notice";
+import { loadAccessMatrix } from "../access-matrix.ts";
 
 function envValue(env: unknown, name: string): string | undefined {
   const proc = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process;
@@ -107,10 +110,18 @@ export function deltaApiFromEnv(env: unknown): DeltaApiDeps {
   console.info(
     `[delta-config] membership snapshot=${membershipCatalog}.${membershipSchema} (server-only app-SP reads)`,
   );
-  const registry = createAppRegistry(notice, {
-    catalog: membershipCatalog,
-    schema: membershipSchema,
-  });
+  const registry = createAppRegistry(
+    notice,
+    {
+      catalog: membershipCatalog,
+      schema: membershipSchema,
+    },
+    () =>
+      loadAccessMatrix({
+        accessMatrixJson: envValue(env, "EDP_ACCESS_MATRIX_JSON"),
+        allowDraft: envValue(env, "EDP_ACCESS_MATRIX_ALLOW_DRAFT"),
+      }),
+  );
   const runner = createTransactionRunner({
     client,
     names,
@@ -141,6 +152,7 @@ export function configuredSeedFromEnv(env: unknown): ConfiguredSeed {
       pilotConfigJson: envValue(env, "EDP_PILOT_CONFIG_JSON"),
       schemaPrefix: envValue(env, "EDP_STORE_SCHEMA_PREFIX"),
       seedOwnerIds: envValue(env, "EDP_SEED_DATASET_OWNER_IDS"),
+      sampleAccessRequests: envValue(env, "EDP_SAMPLE_ACCESS_REQUESTS"),
     });
   } catch (error) {
     if (error instanceof PilotConfigError) throw new DeltaConfigError(error.message);

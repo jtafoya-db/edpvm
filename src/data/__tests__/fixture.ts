@@ -9,7 +9,7 @@ export function makeSnapshot(): AppDataSnapshot {
       initials: "TA",
       title: "Tenant Data Analyst",
       tenant: "RAAS",
-      email: "test.analyst@example.test",
+      email: "test.analyst@example.gov",
       isOnboardingLead: true,
       isAdmin: true,
     },

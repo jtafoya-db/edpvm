@@ -13,7 +13,7 @@
  * reassignment all reuse it. From then on rights follow the bound SCIM id,
  * and the same email under another SCIM id is refused and flagged. Rebinding
  * an email isn't supported (ADR-0006). Actions are always attributed to the
- * SCIM id. A member's dataset role, even manager, never makes someone an owner.
+ * SCIM id. A member's dataset role, even Maintainer, never makes someone an owner.
  *
  * Reads don't bind. Screens use the pure {@link isDatasetOwner} only to decide
  * what to show; the store decides what's allowed.

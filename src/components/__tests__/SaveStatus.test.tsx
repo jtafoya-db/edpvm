@@ -81,7 +81,7 @@ async function addTess() {
   // The add form is in the Add team member panel (#114).
   fireEvent.click(screen.getByRole("button", { name: "Add team member" }));
   fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "Tess Tester" } });
-  fireEvent.change(screen.getByLabelText(/^Email/), { target: { value: "tess.tester@example.test" } });
+  fireEvent.change(screen.getByLabelText(/^Email/), { target: { value: "tess.tester@example.gov" } });
   fireEvent.click(screen.getByRole("button", { name: /Review add/ }));
   fireEvent.click(screen.getByRole("button", { name: /Confirm add/ }));
 }
@@ -107,7 +107,7 @@ describe("saves across navigation (ADR-0009 phase 1)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Back to the team" }));
     const members = await screen.findByRole("table", { name: "Members" });
-    const row = within(members).getByText("tess.tester@example.test").closest("tr")!;
+    const row = within(members).getByText("tess.tester@example.gov").closest("tr")!;
     expect(row).toHaveTextContent("Saving…");
 
     await finish();

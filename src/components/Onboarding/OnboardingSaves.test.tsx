@@ -59,6 +59,10 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+function formControl(label: string | RegExp): HTMLElement {
+  return screen.getAllByLabelText(label).find((element) => element.tagName !== "BUTTON")!;
+}
+
 const BASE_USER = makeSnapshot().user;
 const PROVIDER: UserProfile = { ...BASE_USER, principalId: "scim-provider", name: "Pat Provider" };
 const BUSINESS_OFFICE: UserProfile = {
@@ -66,12 +70,15 @@ const BUSINESS_OFFICE: UserProfile = {
   principalId: "scim-bo",
   name: "Bea Office",
   onboardingReviewerRoles: ["business-office"],
+  // A per-role reviewer, not EDP staff: staff owner matching (#103) is off this inbox for them.
+  isAdmin: false,
 };
 const CCB: UserProfile = {
   ...BASE_USER,
   principalId: "scim-ccb",
   name: "Cal Board",
   onboardingReviewerRoles: ["ccb"],
+  isAdmin: false,
 };
 
 const INTAKE: OnboardingIntake = {
@@ -82,9 +89,11 @@ const INTAKE: OnboardingIntake = {
   datasets: [
     {
       name: "Case signals",
+      sourceSystem: "IMF / Individual Master File",
       domain: "individual-filing",
+      ingestionMethod: "eftu",
       datasetTag: "case_signals",
-      owners: [{ name: "Olive Owner", email: "olive.owner@example.test" }],
+      owners: [{ name: "Olive Owner", email: "olive.owner@example.gov" }],
     },
   ],
   workspaceNeeds: { isolation: "Not sure", teamSize: 6 },
@@ -168,22 +177,32 @@ const next = () => fireEvent.click(screen.getByRole("button", { name: /continue/
 /** Walk the intake wizard to its review step with a valid intake. */
 function toReview() {
   vi.useFakeTimers();
-  fireEvent.change(screen.getByLabelText(/initiative name/i), {
+  fireEvent.change(formControl(/initiative name/i), {
     target: { value: "Collections case signals" },
   });
   fireEvent.click(screen.getByRole("radio", { name: /myself/i }));
+  fireEvent.change(formControl(/data sensitivity/i), { target: { value: "SBU" } });
   next();
+  fireEvent.click(screen.getByRole("button", { name: /All within Databricks/i }));
   next();
+  fireEvent.click(screen.getByRole("button", { name: /We have our own resources/i }));
   next();
-  fireEvent.change(screen.getByLabelText(/business justification/i), {
+  fireEvent.change(formControl(/business justification/i), {
     target: { value: "Prioritize balance-due cases across streams." },
   });
+  fireEvent.click(screen.getByRole("button", { name: /Reduce fraud and improper payments/i }));
+  fireEvent.change(formControl(/primary mission outcome/i), { target: { value: "fraud" } });
+  fireEvent.change(formControl(/estimated annual benefit/i), { target: { value: "100000" } });
   next();
-  fireEvent.change(screen.getByLabelText("Dataset 1 name"), { target: { value: "Signals" } });
-  fireEvent.change(screen.getByLabelText("Dataset 1 domain"), {
+  fireEvent.change(formControl("Dataset 1 name"), { target: { value: "Signals" } });
+  fireEvent.change(formControl("Dataset 1 source system"), {
+    target: { value: "IMF / Individual Master File" },
+  });
+  fireEvent.change(formControl("Dataset 1 domain"), {
     target: { value: "individual-filing" },
   });
-  fireEvent.change(screen.getByLabelText("Dataset 1 tag"), { target: { value: "signals" } });
+  fireEvent.change(formControl("Dataset 1 ingestion method"), { target: { value: "eftu" } });
+  fireEvent.change(formControl("Dataset 1 tag"), { target: { value: "signals" } });
   fireEvent.click(
     within(screen.getByRole("group", { name: "Dataset 1 owner 1" })).getByRole("radio", {
       name: /someone else/i,
@@ -200,16 +219,22 @@ function toReview() {
       "Owner's email",
     ),
     {
-      target: { value: "olive.owner@example.test" },
+      target: { value: "olive.owner@example.gov" },
     },
   );
   next();
-  fireEvent.change(screen.getByLabelText(/isolated from other tenants/i), {
-    target: { value: "Not sure" },
+  fireEvent.change(formControl(/code or work products/i), {
+    target: { value: "Not sure — ask EDP staff to assess" },
   });
-  fireEvent.change(screen.getByLabelText(/how many people/i), { target: { value: "6" } });
+  fireEvent.change(formControl(/how many people/i), { target: { value: "6" } });
   next();
-  fireEvent.click(screen.getByRole("button", { name: /run ai sizing/i }));
+  fireEvent.change(formControl(/data volume/i), { target: { value: "500" } });
+  fireEvent.change(formControl(/load frequency/i), { target: { value: "Daily" } });
+  fireEvent.change(formControl(/transformation complexity/i), {
+    target: { value: "Moderate — joins and recurring business rules" },
+  });
+  fireEvent.change(formControl(/business users needing to query/i), { target: { value: "40" } });
+  fireEvent.click(screen.getByRole("button", { name: /run preliminary estimate/i }));
   act(() => vi.advanceTimersByTime(900));
   next();
   vi.useRealTimers();

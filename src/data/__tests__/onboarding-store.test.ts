@@ -58,9 +58,11 @@ function intake(overrides: Partial<OnboardingIntake> = {}): OnboardingIntake {
     datasets: [
       {
         name: "Case signals (curated)",
+        sourceSystem: "IMF / Individual Master File",
         domain: "individual-filing",
+        ingestionMethod: "eftu",
         datasetTag: "case_signals",
-        owners: [{ name: "Olive Owner", email: "olive.owner@example.test" }],
+        owners: [{ name: "Olive Owner", email: "olive.owner@example.gov" }],
       },
     ],
     workspaceNeeds: { isolation: "shared", teamSize: 6 },
@@ -88,7 +90,7 @@ function profileFor(actor: OnboardingActor): UserProfile {
     principalId: actor.principalId,
     name: actor.name,
     // As SCIM `/Me` gives it: not lower-cased.
-    email: `${actor.name.replace(" ", ".")}@example.test`,
+    email: `${actor.name.replace(" ", ".")}@example.gov`,
     onboardingReviewerRoles: [...actor.reviewerRoles],
   };
 }
@@ -209,7 +211,7 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
       expect(created.stage).toBe("business-roi-review");
       expect(created.providerId).toBe("scim-provider-1");
       expect(created.submittedAt).toBe(SUBMITTED_AT.toISOString());
-      expect(created.intake.datasets[0]?.owners[0]?.email).toBe("olive.owner@example.test");
+      expect(created.intake.datasets[0]?.owners[0]?.email).toBe("olive.owner@example.gov");
       expect(created.decisions.map((d) => [d.kind, d.from, d.to, d.actorId, d.at])).toEqual([
         ["submit", null, "submitted", "scim-provider-1", SUBMITTED_AT.toISOString()],
         ["forward", "submitted", "business-roi-review", "system", SUBMITTED_AT.toISOString()],
@@ -283,12 +285,11 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
         { businessCase: "too short" },
         /business justification needs more than 10/i,
       ],
-      ["annual benefit", { annualBenefit: 0 }, /estimated annual benefit.*must be more than 0/i],
       ["ROI lever", { levers: [] }, /mission value levers: select at least 1/i],
       [
         "isolation answer",
         { workspaceNeeds: { isolation: "", teamSize: 6 } },
-        /answer whether this work needs to be isolated/i,
+        /code or work products must be hidden/i,
       ],
       [
         "positive team size",
@@ -303,14 +304,47 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
       },
     );
 
+    it("refuses an annual benefit of zero", async () => {
+      await expect(as(provider).submit(intake({ annualBenefit: 0 }))).rejects.toThrow(
+        /annual benefit.*more than 0/i,
+      );
+      expect(await as(provider).listMine()).toEqual([]);
+    });
+
     it("refuses a dataset missing its domain, dataset tag or owner", async () => {
       const incomplete = intake({
-        datasets: [{ name: "Case signals", domain: "", datasetTag: " ", owners: [] }],
+        datasets: [
+          {
+            name: "Case signals",
+            sourceSystem: "IMF / Individual Master File",
+            domain: "",
+            ingestionMethod: "eftu",
+            datasetTag: " ",
+            owners: [],
+          },
+        ],
       });
       const attempt = as(provider).submit(incomplete);
       await expect(attempt).rejects.toThrow(/domain/i);
       await expect(as(provider).submit(incomplete)).rejects.toThrow(/dataset tag/i);
       await expect(as(provider).submit(incomplete)).rejects.toThrow(/owner/i);
+    });
+
+    it.each([
+      ["ingestionMethod", "zzz"],
+      ["domain", "not-a-domain"],
+    ] as const)("refuses a dataset with an unknown %s", async (field, value) => {
+      const base = intake();
+      await expect(
+        as(provider).submit({
+          ...base,
+          datasets: [{ ...base.datasets[0]!, [field]: value }],
+        }),
+      ).rejects.toMatchObject({
+        code: "invalid-intake",
+        message: expect.stringMatching(new RegExp(`unknown ${field}: ${value}`)),
+      });
+      expect(await as(provider).listMine()).toEqual([]);
     });
 
     it("accepts 'other' as a dataset domain", async () => {
@@ -319,9 +353,11 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
           datasets: [
             {
               name: "Misc",
+              sourceSystem: "IMF / Individual Master File",
               domain: "other",
+              ingestionMethod: "eftu",
               datasetTag: "misc",
-              owners: [{ name: "Olive", email: "olive@example.test" }],
+              owners: [{ name: "Olive", email: "olive@example.gov" }],
             },
           ],
         }),
@@ -365,12 +401,12 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
       expect(ccbInbox[0]?.sla).toMatchObject({ stage: "ccb", target: 5, state: "on-track" });
     });
 
-    it("refuses an inbox to anyone outside the configured group", async () => {
+    it("refuses an inbox to anyone outside the EDP admin group", async () => {
       await expect(as(businessOffice).listInbox("ccb")).rejects.toThrow(
-        /not a member of the configured CCB group/i,
+        "Bea Office is not a direct member of the EDP admin group.",
       );
       await expect(as(provider).listInbox("business-office")).rejects.toThrow(
-        /business office group/i,
+        "Pat Provider is not a direct member of the EDP admin group.",
       );
     });
 
@@ -744,7 +780,7 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
           answer: "Updated.",
           intake: edited(created, { workspaceNeeds: { isolation: "", teamSize: 0 } }),
         }),
-      ).rejects.toThrow(/work needs to be isolated/i);
+      ).rejects.toThrow(/code or work products must be hidden/i);
       await expect(as(provider).get(created.id)).resolves.toMatchObject({
         stage: "submitted",
         intake: { workspaceNeeds: { isolation: "shared", teamSize: 6 } },
@@ -778,10 +814,12 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
         {
           id: dataset!.id,
           name: "Case signals gold",
+          sourceSystem: "IMF / Individual Master File",
           domain: "other",
+          ingestionMethod: "eftu",
           datasetTag: "case_signals_gold",
           owners: [
-            { id: dataset!.owners[0]!.id, name: "Olive Owner", email: "olive.owner@example.test" },
+            { id: dataset!.owners[0]!.id, name: "Olive Owner", email: "olive.owner@example.gov" },
           ],
         },
       ]);
@@ -797,15 +835,19 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
           datasets: [
             {
               name: "Case signals",
+              sourceSystem: "IMF / Individual Master File",
               domain: "individual-filing",
+              ingestionMethod: "eftu",
               datasetTag: "case_signals",
-              owners: [{ name: "Olive Owner", email: "olive.owner@example.test" }],
+              owners: [{ name: "Olive Owner", email: "olive.owner@example.gov" }],
             },
             {
               name: "Case indicators",
+              sourceSystem: "BMF / Business Master File",
               domain: "individual-filing",
+              ingestionMethod: "informatica",
               datasetTag: "case_indicators",
-              owners: [{ name: "Oscar Owner", email: "oscar.owner@example.test" }],
+              owners: [{ name: "Oscar Owner", email: "oscar.owner@example.gov" }],
             },
           ],
         }),
@@ -842,18 +884,22 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
           datasets: [
             {
               name: "Case signals",
+              sourceSystem: "IMF / Individual Master File",
               domain: "individual-filing",
+              ingestionMethod: "eftu",
               datasetTag: "case_signals",
               owners: [
-                { name: "Olive Owner", email: "olive.owner@example.test" },
-                { name: "Otto Second", email: "otto.second@example.test" },
+                { name: "Olive Owner", email: "olive.owner@example.gov" },
+                { name: "Otto Second", email: "otto.second@example.gov" },
               ],
             },
             {
               name: "Case indicators",
+              sourceSystem: "BMF / Business Master File",
               domain: "individual-filing",
+              ingestionMethod: "informatica",
               datasetTag: "case_indicators",
-              owners: [{ name: "Oscar Owner", email: "oscar.owner@example.test" }],
+              owners: [{ name: "Oscar Owner", email: "oscar.owner@example.gov" }],
             },
           ],
         }),
@@ -875,6 +921,26 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
       expect(new Set(ids).size).toBe(5);
     });
 
+    it("keeps each source, domain, and ingestion method with its stable dataset ID when datasets reorder or are removed", async () => {
+      const created = await sentBackWithTwoDatasets();
+      const [first, second] = created.intake.datasets;
+      const kept = await as(provider).resubmit(created.id, {
+        answer: "Moved the second dataset first and removed the other dataset.",
+        intake: edited(created, {
+          datasets: [{ ...second!, ingestionMethod: "informatica" }],
+        }),
+      });
+      expect(kept.intake.datasets).toMatchObject([
+        {
+          id: second!.id,
+          sourceSystem: "BMF / Business Master File",
+          domain: "individual-filing",
+          ingestionMethod: "informatica",
+        },
+      ]);
+      expect(kept.intake.datasets[0]?.id).not.toBe(first!.id);
+    });
+
     it("edits any intake answer, adds and removes datasets and owners, and keeps the request's ID", async () => {
       const created = await sentBackWithTwoDatasets();
       const [first] = created.intake.datasets;
@@ -883,17 +949,20 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
         intake: edited(created, {
           initiativeName: "Collections case signals v2",
           annualBenefit: 2_000_000,
-          answers: { ...created.intake.answers, sourceSystem: "IDRS", priority: "High" },
+          answers: { ...created.intake.answers, access: "tableau" },
           datasets: [
             {
               ...first!,
-              owners: [first!.owners[0]!, { name: "Nia New", email: "Nia.New@example.test" }],
+              sourceSystem: "IDRS case extract",
+              owners: [first!.owners[0]!, { name: "Nia New", email: "Nia.New@example.gov" }],
             },
             {
               name: "Collections ledger",
+              sourceSystem: "BMF / Business Master File",
               domain: "enforcement-collections",
+              ingestionMethod: "eftu",
               datasetTag: "collections_ledger",
-              owners: [{ name: "Lee Ledger", email: "lee.ledger@example.test" }],
+              owners: [{ name: "Lee Ledger", email: "lee.ledger@example.gov" }],
             },
           ],
         }),
@@ -906,13 +975,13 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
       expect(resubmitted.intake).toMatchObject({
         initiativeName: "Collections case signals v2",
         annualBenefit: 2_000_000,
-        answers: { sourceSystem: "IDRS", priority: "High" },
+        answers: { access: "tableau" },
       });
       const [kept, added] = resubmitted.intake.datasets;
       // The kept dataset and owner keep their IDs; new ones get IDs at resubmit.
       expect(kept?.id).toBe(first!.id);
       expect(kept?.owners.map((o) => o.id)).toEqual([first!.owners[0]!.id, expect.any(String)]);
-      expect(kept?.owners[1]).toMatchObject({ name: "Nia New", email: "nia.new@example.test" });
+      expect(kept?.owners[1]).toMatchObject({ name: "Nia New", email: "nia.new@example.gov" });
       expect(added?.id).toEqual(expect.any(String));
       const knownIds = created.intake.datasets.flatMap((d) => [d.id, ...d.owners.map((o) => o.id)]);
       expect(knownIds).not.toContain(added!.id);
@@ -925,56 +994,112 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
           before: "Collections case signals",
           after: "Collections case signals v2",
         },
-        { field: "Source system", before: "IMF / Individual Master File", after: "IDRS" },
-        { field: "Mission priority", before: "Mission-critical", after: "High" },
+        {
+          field: "How will your team access this data?",
+          before: "All within Databricks",
+          after: "Tableau",
+        },
         { field: "Estimated annual benefit (USD)", before: "$1,250,000", after: "$2,000,000" },
+        {
+          field: "Dataset 1 source system",
+          before: "IMF / Individual Master File",
+          after: "IDRS case extract",
+        },
         {
           field: "Dataset 1 owner 2 added",
           before: "",
-          after: "Nia New (nia.new@example.test)",
+          after: "Nia New (nia.new@example.gov)",
           kind: "added",
         },
         {
           field: "Dataset 1 owner 2 removed",
-          before: "Otto Second (otto.second@example.test)",
+          before: "Otto Second (otto.second@example.gov)",
           after: "",
           kind: "removed",
         },
         {
           field: "Dataset 2 added",
           before: "",
-          after: "Collections ledger (collections_ledger); owners: Lee Ledger (lee.ledger@example.test)",
+          after: "Collections ledger (collections_ledger); owners: Lee Ledger (lee.ledger@example.gov)",
           kind: "added",
         },
         {
           field: "Dataset 2 removed",
-          before: "Case indicators (case_indicators); owners: Oscar Owner (oscar.owner@example.test)",
+          before: "Case indicators (case_indicators); owners: Oscar Owner (oscar.owner@example.gov)",
           after: "",
           kind: "removed",
         },
       ]);
       // Removals are in the decision log, not only the change record.
       expect(decision.note).toBe(
-        "Restated the ROI; dropped the indicators, added the ledger. Removed owner from Case signals: Otto Second (otto.second@example.test). Removed dataset: Case indicators (case_indicators).",
+        "Restated the ROI; dropped the indicators, added the ledger. Removed owner from Case signals: Otto Second (otto.second@example.gov). Removed dataset: Case indicators (case_indicators).",
       );
     });
 
     it("re-validates the whole intake on resubmit and changes nothing when it fails", async () => {
       const created = await sentBackWithTwoDatasets();
-      await expect(
-        as(provider).resubmit(created.id, {
-          answer: "Cleared the domain and the delivery model.",
+      const failure = await as(provider)
+        .resubmit(created.id, {
+          answer: "Cleared required initiative answers.",
           intake: edited(created, {
+            datasets: created.intake.datasets.map((dataset, index) =>
+              index === 0 ? { ...dataset, domain: "" } : dataset,
+            ),
             answers: { ...created.intake.answers, domain: "", engModel: "" },
           }),
-        }),
-      ).rejects.toMatchObject({
+        })
+        .then(
+          () => null,
+          (error: unknown) => error,
+        );
+      expect(failure).toMatchObject({
         code: "invalid-intake",
-        message: expect.stringMatching(/Target domain is required.*delivery model is required/i),
+        message: expect.stringMatching(/delivery model is required.*Dataset 1.*domain/i),
       });
-      await expect(as(provider).get(created.id)).resolves.toMatchObject({
-        stage: "submitted",
-        intake: { answers: { domain: "individual-filing", engModel: "self" } },
+      const unchanged = await as(provider).get(created.id);
+      expect(unchanged).toMatchObject({ stage: "submitted" });
+      expect(unchanged?.intake.answers).toEqual(created.intake.answers);
+    });
+
+    it.each([
+      ["ingestionMethod", "zzz"],
+      ["domain", "not-a-domain"],
+    ] as const)(
+      "refuses a resubmitted dataset with an unknown %s and changes nothing",
+      async (field, value) => {
+        const created = await sentBackWithTwoDatasets();
+        await expect(
+          as(provider).resubmit(created.id, {
+            answer: "Changed the first dataset.",
+            intake: edited(created, {
+              datasets: created.intake.datasets.map((dataset, index) =>
+                index === 0 ? { ...dataset, [field]: value } : dataset,
+              ),
+            }),
+          }),
+        ).rejects.toMatchObject({
+          code: "invalid-intake",
+          message: expect.stringMatching(new RegExp(`Dataset 1.*unknown ${field}: ${value}`)),
+        });
+        const unchanged = await as(provider).get(created.id);
+        expect(unchanged).toMatchObject({ stage: "submitted" });
+        expect(unchanged?.intake.datasets).toEqual(created.intake.datasets);
+      },
+    );
+
+    it("accepts 'other' as a resubmitted dataset's domain and ingestion method", async () => {
+      const created = await sentBackWithTwoDatasets();
+      const resubmitted = await as(provider).resubmit(created.id, {
+        answer: "Neither fits.",
+        intake: edited(created, {
+          datasets: created.intake.datasets.map((dataset, index) =>
+            index === 0 ? { ...dataset, domain: "other", ingestionMethod: "other" } : dataset,
+          ),
+        }),
+      });
+      expect(resubmitted.intake.datasets[0]).toMatchObject({
+        domain: "other",
+        ingestionMethod: "other",
       });
     });
 
@@ -995,7 +1120,7 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
         name: "Copy",
         domain: "individual-filing",
         datasetTag: "case_signals",
-        owners: [{ name: "Cy Copy", email: "cy.copy@example.test" }],
+        owners: [{ name: "Cy Copy", email: "cy.copy@example.gov" }],
       };
       await expect(
         as(provider).resubmit(created.id, {
@@ -1242,7 +1367,7 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
   });
 
   describe("the initiative owner and dataset owners (#103)", () => {
-    const someoneElse = { kind: "someone-else", name: "  Sam Else ", email: " Sam.Else@example.test " };
+    const someoneElse = { kind: "someone-else", name: "  Sam Else ", email: " Sam.Else@example.gov " };
 
     it("stores Myself as the signed-in session's identity, verified", async () => {
       const created = await as(provider).submit(intake({ initiativeOwner: { kind: "self" } }));
@@ -1251,7 +1376,7 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
       expect(created.initiativeOwner).toEqual({
         kind: "self",
         name: "Pat Provider",
-        email: "pat.provider@example.test",
+        email: "pat.provider@example.gov",
         principalId: "scim-provider-1",
         verification: "verified",
       });
@@ -1264,7 +1389,7 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
       const smuggled = {
         kind: "self",
         name: "Someone Important",
-        email: "boss@example.test",
+        email: "boss@example.gov",
         principalId: "scim-boss",
       };
       // The memory adapter ignores the extra fields; the server's strict payload refuses them.
@@ -1285,12 +1410,12 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
       expect(created.intake.initiativeOwner).toEqual({
         kind: "someone-else",
         name: "Sam Else",
-        email: "sam.else@example.test",
+        email: "sam.else@example.gov",
       });
       expect(created.initiativeOwner).toEqual({
         kind: "someone-else",
         name: "Sam Else",
-        email: "sam.else@example.test",
+        email: "sam.else@example.gov",
         principalId: null,
         verification: "not-verified",
       });
@@ -1305,7 +1430,7 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
         as(provider).submit(
           intake({ initiativeOwner: { kind: "someone-else", name: "Sam Else", email: "sam" } }),
         ),
-      ).rejects.toThrow(/valid email address for the initiative owner/);
+      ).rejects.toThrow(/valid email address for the initiative point of contact/);
       expect(await as(provider).listMine()).toEqual([]);
     });
 
@@ -1317,7 +1442,7 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
               ...intake().datasets[0]!,
               owners: [
                 { self: true, name: "", email: "" },
-                { name: "Olive Owner", email: "olive.owner@example.test" },
+                { name: "Olive Owner", email: "olive.owner@example.gov" },
               ],
             },
           ],
@@ -1328,7 +1453,7 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
       expect(mine).toMatchObject({
         self: true,
         name: "Pat Provider",
-        email: "pat.provider@example.test",
+        email: "pat.provider@example.gov",
       });
       expect(olive).not.toHaveProperty("self");
       expect(created.ownerVerification).toEqual({
@@ -1440,7 +1565,7 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
           datasets: [
             {
               ...stored,
-              owners: [{ id: stored.owners[0]!.id, name: "Sam Else", email: "sam.else@example.test" }],
+              owners: [{ id: stored.owners[0]!.id, name: "Sam Else", email: "sam.else@example.gov" }],
             },
           ],
         }),
@@ -1457,9 +1582,9 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
       expect(owner).not.toHaveProperty("self");
       expect(resubmitted.ownerVerification).toEqual({ [owner.id!]: "not-verified" });
       expect(resubmitted.decisions.at(-1)?.resubmission?.changes).toContainEqual({
-        field: "Initiative owner",
-        before: "Myself (Pat Provider, pat.provider@example.test)",
-        after: "Sam Else (sam.else@example.test)",
+        field: "Initiative point of contact",
+        before: "Myself (Pat Provider, pat.provider@example.gov)",
+        after: "Sam Else (sam.else@example.gov)",
       });
 
       // And back again: Myself is the session's identity, never the typed one.
@@ -1499,7 +1624,7 @@ describe.each(ADAPTERS)("onboarding request contract ($label adapter)", ({ make 
       await as(provider).submit(intake());
       const listInbox = as(provider).listInbox as unknown as Smuggling;
       await expect(listInbox("business-office", businessOffice)).rejects.toThrow(
-        /Pat Provider is not a member of the configured EDP business office group/,
+        "Pat Provider is not a direct member of the EDP admin group.",
       );
     });
 

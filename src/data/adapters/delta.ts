@@ -43,7 +43,9 @@ import type {
   OnboardingReviewDecision,
   OnboardingReviewerRole,
   OnboardingWriteIntent,
+  OwnerMatchInput,
 } from "../onboarding/types";
+import { OnboardingRefusal } from "../onboarding/store";
 import { createDeltaEirRepository } from "../eir/delta-repository";
 import {
   createDeltaEirDefinitionRepository,
@@ -299,7 +301,15 @@ export interface DeltaStoreConfig {
    * in-memory access requests (see the end of {@link createDeltaStore}).
    * Tests inject these.
    */
-  accessStores?: AccessStoreOptions & { currentUser?: () => Promise<UserProfile> };
+  accessStores?: AccessStoreOptions & {
+    currentUser?: () => Promise<UserProfile>;
+    /**
+     * Seed the sample access requests: a PR preview's test data, on only when
+     * `/api/session` says so (`src/server/sample-access-requests.ts`, #312).
+     * Off unless exactly `true`: approving a sample writes a real member.
+     */
+    sampleAccessRequests?: boolean;
+  };
 }
 
 /**
@@ -504,6 +514,8 @@ export function createDeltaStore(config: DeltaStoreConfig = {}): DataStore {
   // Delta (#123). Access requests (#91) aren't yet: they stay in this tab's
   // memory (`access-request-persistence`, stub), on top of the Delta stores,
   // so an approval adds the member in Delta exactly as a direct add does.
+  // That's why the samples are a preview's only (#312): a sample's approval
+  // would add a real member to a real dataset with the samples' ID.
   const actionCurrentUser = config.accessStores?.currentUser ?? currentUser;
   const now = config.accessStores?.now ?? (() => new Date());
   const slaConfig = cloneEffectiveSlaConfig(
@@ -524,7 +536,7 @@ export function createDeltaStore(config: DeltaStoreConfig = {}): DataStore {
         config.accessStores?.accessRequestConfig ??
         accessRequestConfigFromSla(DEFAULT_ACCESS_REQUEST_CONFIG, slaConfig),
       holidays: slaConfig.holidays,
-      seed: config.accessStores?.datasetSeed ? [] : sampleAccessRequests(now()),
+      seed: config.accessStores?.sampleAccessRequests === true ? sampleAccessRequests(now()) : [],
     }),
   };
 
@@ -547,7 +559,7 @@ export function createDeltaStore(config: DeltaStoreConfig = {}): DataStore {
 
   const currentVersion = async (id: string): Promise<number> => {
     const current = await api.read<OnboardingRequest | null>("onboarding", "request", { id });
-    if (!current) throw new Error("Onboarding request not found.");
+    if (!current) throw new OnboardingRefusal("not-found", "Onboarding request not found.");
     return current.version;
   };
 
@@ -600,6 +612,24 @@ export function createDeltaStore(config: DeltaStoreConfig = {}): DataStore {
       input: { note?: string | undefined } = {},
       intent?: OnboardingWriteIntent,
     ) => recordCommand("withdraw", id, { requestId: id, note: input.note }, intent),
+    matchOwner: (id: string, match: OwnerMatchInput, intent?: OnboardingWriteIntent) =>
+      recordCommand(
+        "match-owner",
+        id,
+        { requestId: id, ownerId: match.ownerId, principalId: match.principalId },
+        intent,
+      ),
+    requestOwnerOnboarding: (
+      id: string,
+      owner: { ownerId: string },
+      intent?: OnboardingWriteIntent,
+    ) =>
+      recordCommand(
+        "request-owner-onboarding",
+        id,
+        { requestId: id, ownerId: owner.ownerId },
+        intent,
+      ),
   };
 
   // EIRs are on Delta (#126): `eir/*` commands and reads, PDFs on the volume.

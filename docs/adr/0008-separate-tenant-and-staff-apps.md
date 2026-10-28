@@ -1,7 +1,7 @@
 # ADR-0008 — Separate tenant and EDP staff apps
 
 - **Status:** Accepted (2026-10-06). Amends ADR-0007's change-list area and action columns as described in decisions 4 and 5. Amended 2026-10-18 for the MVP: one EDP admin group holds every staff role (see [Notes](#notes)).
-- **Related:** ADR-0005 (domain access model), ADR-0007 (MVP Delta data model), [`GLOSSARY.md`](../../GLOSSARY.md), [`docs/production-checklist.md`](../production-checklist.md)
+- **Related:** ADR-0005 (domain access model), ADR-0007 (MVP Delta data model), [`GLOSSARY.md`](../../GLOSSARY.md), `docs/production-checklist.md` (private source document; not published)
 
 ## Context
 
@@ -157,8 +157,13 @@ That answers "who used the staff app's service principal to do what". It's also 
 ## Notes
 
 - **2026-10-18: one EDP admin group holds every staff role in the MVP (#226, #148 decision 2).** Decision 2's four staff groups are one group for the MVP: the **EDP admin group** (`EDP_ADMIN_GROUP_ID`). Its members hold every staff role: EDP staff, Safeguards validator, EDP business office and CCB. Anyone outside it holds none.
+  - **Membership is direct (#226 decision, 2026-10-19).** Add each staff member directly to the EDP admin group. Membership through a nested group, including the workspace `admins` group, grants no EDP staff role. Widening this rule requires a later explicit decision.
   - **The staff app's `CAN_USE`** goes to the EDP admin group only.
   - **In-app role checks stay a second layer, role by role.** The server still checks each role, not just "is staff". Each role is derived from membership in the one group (`src/server/identity.ts`, `deriveStaffRoles`).
   - **Splitting a role out later** is a change to that one function plus deploy configuration. The bundle keeps `safeguards_validator_group_id`, `business_office_group_id` and `ccb_group_id` as variables reserved for that split. The app ignores them, and the deploy preflight warns if one is supplied.
   - **Decisions 1, 3, 4 and 5 are unchanged.** That includes the tenant/staff app split and the Apply boundary.
   - **Actor separation isn't decided here.** One member may act at every stage today. The rules for no self-validation and validation independence belong to #148. The existing rule that a validator can't decide their own EIR still applies.
+
+## Terminology amendment (#260)
+
+_The human's decision (2026-10-18, #141)._ The dataset role stored as `manager` is called **Maintainer** wherever people read it: everything a developer has, plus running the dataset's jobs and managing permissions on what the dataset publishes in prod. Only dataset owners, with EDP staff, decide who is on a dataset's team; a Maintainer who isn't an owner can't add or remove people. The stored value is still `manager` (`DatasetRoleName`, `teams.dataset_members.role`, action payloads, group-name suffixes), so no data or group was renamed. This ADR doesn't name that role. The "group manager" in decision 3 is Databricks' own group manager role on a group, which the Apply job's principal holds; it isn't the dataset role.

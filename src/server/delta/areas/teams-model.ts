@@ -14,7 +14,9 @@ import type {
   ChangeListEntry,
   AddMemberEntry,
   DatasetRoleAddedReason,
+  OnboardUserEntry,
 } from "../../../data/change-list/types";
+import { parseOnboardUserPayload } from "../../../data/change-list/onboard-user";
 import type {
   DatasetOwnerAddedReason,
   DatasetOwnerRemovedReason,
@@ -140,16 +142,23 @@ export interface MemberRow {
 export interface EntryRow {
   id: string;
   display_number: number;
-  kind: "add-member" | "remove-member";
+  kind: "add-member" | "remove-member" | "onboard-user";
   reason: string;
-  dataset_id: string;
-  group_name: string;
-  role: DatasetRoleName;
+  /**
+   * Membership entries only: null on an onboard-user entry (or absent from an
+   * aggregated row), as are `group_name`, `role` and `grants`. The
+   * `change_list_entries_shape` CHECK requires all four on every membership row.
+   */
+  dataset_id: string | null;
+  group_name: string | null;
+  role: DatasetRoleName | null;
+  /** JSON: the onboard-user target (#103); null on membership entries. */
+  target_payload?: string | null;
   person_display: string;
   person_email: string | null;
   person_principal_id: string | null;
-  /** JSON text (`to_json` of the array), so both the warehouse and the fake give the same shape. */
-  grants: string | string[];
+  /** JSON text (`to_json` of the array), so both the warehouse and the fake give the same shape. Membership only. */
+  grants: string | string[] | null;
   version: number;
   created_at: string;
   created_by_principal_id: string;
@@ -211,6 +220,7 @@ const ENTRY_FIELDS = [
   "person_display",
   "person_email",
   "person_principal_id",
+  "target_payload",
   "version",
   "created_at",
   "created_by_principal_id",
@@ -329,17 +339,54 @@ export function toMember(row: MemberRow): WireMember {
 
 export const entryLabel = (displayNumber: number) => `CL-${String(displayNumber).padStart(4, "0")}`;
 
+/** A membership row's dataset, group and role; the shape CHECK makes them non-null, and a row without them is refused loudly. */
+function membershipFields(row: EntryRow): {
+  datasetId: string;
+  group: string;
+  role: DatasetRoleName;
+} {
+  if (!row.dataset_id || !row.group_name || !row.role) {
+    throw new Error(`Change-list entry ${row.id} (${row.kind}) has no dataset, group or role.`);
+  }
+  return { datasetId: row.dataset_id, group: row.group_name, role: row.role };
+}
+
 export function toEntry(row: EntryRow, change?: { from: string; to: string }): WireEntry {
   const by = row.created_by_principal_id;
   const at = iso(row.created_at)!;
-  const datasetId = row.dataset_id;
+  const applied = row.applied_at
+    ? { by: row.applied_by_principal_id ?? "", at: iso(row.applied_at)! }
+    : null;
+  if (row.kind === "onboard-user") {
+    const target = parseOnboardUserPayload(row.target_payload);
+    const entry: OnboardUserEntry = {
+      id: entryLabel(Number(row.display_number)),
+      kind: "onboard-user",
+      target,
+      reason: {
+        kind: "owner-not-a-databricks-user",
+        onboardingRequestId: target.initiative.onboardingRequestId,
+        requestedBy: by,
+        requestedAt: at,
+      },
+      createdBy: by,
+      createdAt: at,
+      applied,
+    };
+    return {
+      ...entry,
+      target: { person: target.person, initiative: target.initiative },
+      ref: { id: row.id, version: Number(row.version) },
+    };
+  }
+  const { datasetId, group, role } = membershipFields(row);
   const from = (change?.from ?? row.from_role) as DatasetRoleName;
   const to = (change?.to ?? row.to_role) as DatasetRoleName;
   const reasons = {
     "dataset-role-added": {
       kind: "dataset-role-added",
       datasetId,
-      role: row.role,
+      role,
       addedBy: by,
       addedAt: at,
     } satisfies DatasetRoleAddedReason,
@@ -354,13 +401,14 @@ export function toEntry(row: EntryRow, change?: { from: string; to: string }): W
     "dataset-owner-added": {
       kind: "dataset-owner-added",
       datasetId,
+      ...(from ? { replacedRole: from } : {}),
       addedBy: by,
       addedAt: at,
     } satisfies DatasetOwnerAddedReason,
     "dataset-role-removed": {
       kind: "dataset-role-removed",
       datasetId,
-      role: row.role,
+      role,
       removedBy: by,
       removedAt: at,
     } satisfies DatasetRoleRemovedReason,
@@ -373,13 +421,11 @@ export function toEntry(row: EntryRow, change?: { from: string; to: string }): W
   } as const;
   const base = {
     id: entryLabel(Number(row.display_number)),
-    target: { group: row.group_name, person: personOf(row), datasetId, role: row.role },
+    target: { group, person: personOf(row), datasetId, role },
     grants: parseJson<string[]>(row.grants),
     createdBy: by,
     createdAt: at,
-    applied: row.applied_at
-      ? { by: row.applied_by_principal_id ?? "", at: iso(row.applied_at)! }
-      : null,
+    applied,
   };
   const reason = reasons[row.reason as keyof typeof reasons];
   const entry: ChangeListEntry =

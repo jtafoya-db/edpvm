@@ -8,6 +8,7 @@
  */
 import { findDatasetTagProblem, loadSchema, readNumber, validateStep } from "../../schema/index.ts";
 import type { FieldDef, IntakeSchema } from "../../schema/types.ts";
+import { routedDomainIds } from "../domain-owners.ts";
 import { intakeAnswers, withoutIds } from "./intake.ts";
 import { initiativeOwnerText, normalizeInitiativeOwner } from "./owners.ts";
 import type {
@@ -25,7 +26,15 @@ import type {
 /** The change-record name of a dataset's own field, or of the whole dataset: "Dataset 1 dataset tag", "Dataset 3 added". */
 export function datasetChangeField(
   index: number,
-  part: "name" | "domain" | "dataset tag" | "added" | "removed",
+  part:
+    | "name"
+    | "source system"
+    | "domain"
+    | "ingestion method"
+    | "ingestion details"
+    | "dataset tag"
+    | "added"
+    | "removed",
 ): string {
   return `Dataset ${index + 1} ${part}`;
 }
@@ -75,7 +84,14 @@ export function normalizeIntake(intake: OnboardingIntake): OnboardingIntake {
     datasets: intake.datasets.map((dataset) => ({
       ...(dataset.id ? { id: dataset.id } : {}),
       name: trim(dataset.name),
+      sourceSystem: trim(dataset.sourceSystem),
       domain: trim(dataset.domain),
+      ...(dataset.ingestionMethod !== undefined
+        ? { ingestionMethod: trim(dataset.ingestionMethod) }
+        : {}),
+      ...(dataset.ingestionDetails !== undefined
+        ? { ingestionDetails: trim(dataset.ingestionDetails) }
+        : {}),
       datasetTag: trim(dataset.datasetTag),
       owners: dataset.owners.map((owner) => ({
         ...(owner.id ? { id: owner.id } : {}),
@@ -102,7 +118,7 @@ export function normalizeIntake(intake: OnboardingIntake): OnboardingIntake {
  * own, read-only, and the browser can neither set one nor change it. The
  * accountable data steward went when the initiative owner came in.
  */
-export const RETIRED_ANSWERS: readonly string[] = ["steward"];
+export const RETIRED_ANSWERS: readonly string[] = ["steward", "priority"];
 
 /** A new request's answers, without any retired answer the browser sent. */
 export function submittedAnswers(answers: Record<string, unknown>): Record<string, unknown> {
@@ -179,6 +195,35 @@ export function findResubmittedIdProblem(
 }
 
 /**
+ * A dataset whose ingestion method or domain isn't one the app knows, which
+ * only a client bypassing the wizard can send. Submit and resubmit refuse it
+ * the same way in both backends, so no stored request names an id the
+ * screens can't draw. "other" is a known choice for both; a blank answer
+ * is left to the required-answer rules.
+ */
+export function findDatasetOptionIdProblem(
+  intake: Pick<OnboardingIntake, "datasets">,
+  schema: IntakeSchema = loadSchema(),
+): IntakeProblem | null {
+  const ingestionMethods = new Set(schema.optionLists.ingestPatterns.map(({ id }) => id));
+  const domains = new Set([...routedDomainIds(), "other"]);
+  for (const [index, dataset] of intake.datasets.entries()) {
+    const ingestionMethod = dataset.ingestionMethod ?? "";
+    if (ingestionMethod && !ingestionMethods.has(ingestionMethod))
+      return {
+        code: "invalid-intake",
+        message: `Dataset ${index + 1} has an unknown ingestionMethod: ${ingestionMethod}`,
+      };
+    if (dataset.domain && !domains.has(dataset.domain))
+      return {
+        code: "invalid-intake",
+        message: `Dataset ${index + 1} has an unknown domain: ${dataset.domain}`,
+      };
+  }
+  return null;
+}
+
+/**
  * What's wrong with a whole intake against the intake schema: the dataset
  * tag rule first (#131, its own refusal code), then every step's rules over
  * every answer, as the wizard checks them before it lets the provider submit.
@@ -197,6 +242,8 @@ export function wholeIntakeProblem(
 ): IntakeProblem | null {
   const tagProblem = findDatasetTagProblem(intake.datasets);
   if (tagProblem) return tagProblem;
+  const idProblem = findDatasetOptionIdProblem(intake, schema);
+  if (idProblem) return idProblem;
   const state = intakeAnswers(intake);
   const fields = new Set(
     schema.fields
@@ -285,7 +332,7 @@ export function resubmissionChanges(
   for (const step of schema.steps) {
     for (const field of schema.fields.filter((f) => f.step === step.id)) {
       if (field.type === "dataset-list") {
-        datasetChanges(before.datasets, after.datasets, changes);
+        datasetChanges(before.datasets, after.datasets, changes, schema);
         continue;
       }
       if (field.type === "initiative-owner") {
@@ -310,6 +357,7 @@ function datasetChanges(
   before: readonly IntakeDataset[],
   after: readonly IntakeDataset[],
   changes: OnboardingIntakeChange[],
+  schema: IntakeSchema,
 ): void {
   const compare = (field: string, was: string, now: string) => {
     if (was !== now) changes.push({ field, before: was, after: now });
@@ -327,6 +375,23 @@ function datasetChanges(
     }
     compare(datasetChangeField(i, "name"), trim(old.name), trim(dataset.name));
     compare(datasetChangeField(i, "domain"), trim(old.domain), trim(dataset.domain));
+    compare(
+      datasetChangeField(i, "source system"),
+      trim(old.sourceSystem),
+      trim(dataset.sourceSystem),
+    );
+    compare(
+      datasetChangeField(i, "ingestion method"),
+      schema.optionLists.ingestPatterns.find(({ id }) => id === trim(old.ingestionMethod))?.name ??
+        trim(old.ingestionMethod),
+      schema.optionLists.ingestPatterns.find(({ id }) => id === trim(dataset.ingestionMethod))
+        ?.name ?? trim(dataset.ingestionMethod),
+    );
+    compare(
+      datasetChangeField(i, "ingestion details"),
+      trim(old.ingestionDetails),
+      trim(dataset.ingestionDetails),
+    );
     compare(datasetChangeField(i, "dataset tag"), trim(old.datasetTag), trim(dataset.datasetTag));
     dataset.owners.forEach((owner, j) => {
       const was = owner.id === undefined ? undefined : old.owners.find((o) => o.id === owner.id);

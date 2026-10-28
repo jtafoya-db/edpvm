@@ -14,14 +14,22 @@
  *   `EDP_SEED_DATASET_OWNER_IDS`, so preview UAT has datasets to work on.
  * - Unset in production (no schema prefix): nothing.
  *
+ * Either way, a sample requester (src/data/access-requests/seed.ts) as an
+ * owner refuses the whole configuration, unless sample mode is on
+ * (src/server/sample-access-requests.ts, #312): production must never load
+ * sample people into its teams.
+ *
  * The shape, with an example, is in docs/delta-backend.md.
  */
 import { z } from "zod";
 
+import { ZOD3_PARSE_OPTIONS, zod3IssueMessage } from "../zod-compat";
 import { DEFAULT_DATASET_SEED, withConfiguredOwners } from "../data/datasets/seed";
 import { isValidEmail, type DatasetSeed } from "../data/datasets/types";
 import { datasetTagError } from "../schema/dataset-tag";
 import { parseOwnerIds } from "./seed-config";
+import { isSampleRequester } from "../data/access-requests/seed";
+import { sampleAccessRequestsAllowed } from "./sample-access-requests.ts";
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/, "letters, digits, - and _ only");
 const required = z.string().trim().min(1, "required");
@@ -96,10 +104,10 @@ export function parsePilotConfig(raw: string): DatasetSeed {
   } catch (error) {
     throw new PilotConfigError(`EDP_PILOT_CONFIG_JSON isn't JSON: ${(error as Error).message}`);
   }
-  const parsed = pilotConfigSchema.safeParse(json);
+  const parsed = pilotConfigSchema.safeParse(json, ZOD3_PARSE_OPTIONS);
   if (!parsed.success) {
     const problems = parsed.error.issues.map(
-      (issue) => `${issue.path.join(".") || "(top level)"}: ${issue.message}`,
+      (issue) => `${issue.path.join(".") || "(top level)"}: ${zod3IssueMessage(issue)}`,
     );
     throw new PilotConfigError(`EDP_PILOT_CONFIG_JSON is invalid: ${problems.join("; ")}`);
   }
@@ -139,7 +147,20 @@ export function configuredSeed(env: {
   pilotConfigJson: string | undefined;
   schemaPrefix: string | undefined;
   seedOwnerIds: string | undefined;
+  /** `EDP_SAMPLE_ACCESS_REQUESTS`, raw. */
+  sampleAccessRequests?: string | undefined;
 }): ConfiguredSeed {
+  const configured = chooseSeed(env);
+  if (!sampleAccessRequestsAllowed(env.sampleAccessRequests, env.schemaPrefix)) {
+    refuseSampleOwners(
+      configured.seed,
+      configured.source === "pilot-config" ? "EDP_PILOT_CONFIG_JSON" : "EDP_SEED_DATASET_OWNER_IDS",
+    );
+  }
+  return configured;
+}
+
+function chooseSeed(env: Parameters<typeof configuredSeed>[0]): ConfiguredSeed {
   if (env.pilotConfigJson && env.pilotConfigJson.trim() !== NO_PILOT_CONFIG) {
     return { seed: parsePilotConfig(env.pilotConfigJson), source: "pilot-config" };
   }
@@ -150,4 +171,20 @@ export function configuredSeed(env: {
     };
   }
   return { seed: NOTHING, source: null };
+}
+
+/** The `<dataset> owner <name>` of every configured owner who's a sample requester (#312). */
+export function sampleOwners(seed: DatasetSeed): string[] {
+  return seed.datasets.flatMap((d) =>
+    d.owners.filter((o) => isSampleRequester(o)).map((o) => `${d.id} owner ${o.displayName}`),
+  );
+}
+
+function refuseSampleOwners(seed: DatasetSeed, setting: string): void {
+  const found = sampleOwners(seed);
+  if (found.length) {
+    throw new PilotConfigError(
+      `${setting} is invalid: ${found.join("; ")}: a sample identity, refused outside a PR preview's sample mode (#312).`,
+    );
+  }
 }

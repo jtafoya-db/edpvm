@@ -148,7 +148,7 @@ describe("injected EIR file-storage seam", () => {
         JSON.stringify({
           id: "validator-1",
           displayName: "Val",
-          groups: [{ value: "validators" }],
+          groups: [{ value: "validators", type: "direct" }],
         }),
         { status: 200 },
       ),
@@ -181,7 +181,11 @@ describe("injected EIR file-storage seam", () => {
     vi.stubEnv("EIR_VOLUME_NAME", "eir");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
-        JSON.stringify({ id: "person-2", displayName: "Other", groups: [{ value: "validators" }] }),
+        JSON.stringify({
+          id: "person-2",
+          displayName: "Other",
+          groups: [{ value: "validators", type: "direct" }],
+        }),
         { status: 200 },
       ),
     );
@@ -239,7 +243,7 @@ describe("injected EIR file-storage seam", () => {
         JSON.stringify({
           id: "validator-1",
           displayName: "Val",
-          groups: [{ value: "validators" }],
+          groups: [{ value: "validators", type: "direct" }],
         }),
         { status: 200 },
       ),

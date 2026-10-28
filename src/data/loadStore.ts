@@ -28,7 +28,9 @@ let singleton: Promise<DataStore> | null = null;
  * The Delta adapter needs no warehouse, catalog or credentials in the
  * browser: the server holds them (`src/server/delta/config.ts`). The cart's
  * stage labels and the business domain list come from the prototype seed,
- * as in memory mode: they're configuration, not records.
+ * as in memory mode: they're configuration, not records. Sample access
+ * requests only when the session says, exactly, that this preview has them
+ * (#312); anything else, none.
  */
 function readDeltaConfig(profile: UserProfile | null): DeltaStoreConfig {
   return {
@@ -37,6 +39,7 @@ function readDeltaConfig(profile: UserProfile | null): DeltaStoreConfig {
     accessStores: {
       ...(profile ? { currentUser: async () => profile } : {}),
       ...(profile?.slaConfig ? { slaConfig: profile.slaConfig } : {}),
+      ...(profile?.sampleAccessRequests === true ? { sampleAccessRequests: true } : {}),
     },
   };
 }

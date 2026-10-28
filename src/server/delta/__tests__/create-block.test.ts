@@ -25,7 +25,7 @@ import { committed, fakeSqlClient, insertedValue } from "./fake-sql-client.ts";
 const STAFF: SessionUser = {
   principalId: "4055694201057157",
   displayName: "Sam Staff",
-  email: "sam.staff@example.test",
+  email: "sam.staff@example.gov",
   isAdmin: true,
   onboardingReviewerRoles: [],
 };

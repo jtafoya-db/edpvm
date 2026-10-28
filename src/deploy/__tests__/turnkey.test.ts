@@ -27,7 +27,7 @@ const ROOT = process.cwd();
 const FILE_PATH = "/Workspace/Users/me/.bundle/edp-vending-machine/edp-vm-pr1/files";
 
 /** A `bundle validate -o json` shape with what deploy.sh and bundle-config read. */
-function resolved(target: "preview" | "prod", appName?: string) {
+function resolved(target: "preview" | "prod", appName?: string, membershipCatalog?: string) {
   const prod = target === "prod";
   const catalog = prod ? "edp_prod" : "example_catalog";
   const env = [
@@ -37,8 +37,9 @@ function resolved(target: "preview" | "prod", appName?: string) {
     { name: "EIR_VOLUME_NAME", value: prod ? "eir" : "eir_pr1" },
     { name: "EDP_ADMIN_GROUP_ID", value: prod ? "2" : "11111111111111" },
     { name: "VITE_DATA_BACKEND", value: prod ? "delta" : "memory" },
+    { name: "EDP_CLIENT_MINIFIED", value: "false" },
     { name: "EDP_STORE_CATALOG", value: catalog },
-    { name: "EDP_MEMBERSHIP_CATALOG", value: catalog },
+    { name: "EDP_MEMBERSHIP_CATALOG", value: membershipCatalog ?? catalog },
     { name: "EDP_MEMBERSHIP_SCHEMA", value: "membership" },
     { name: "DATABRICKS_WAREHOUSE_ID", value_from: "sql-warehouse" },
     ...(prod ? [] : [{ name: "EDP_STORE_SCHEMA_PREFIX", value: "edp_vm_pr1_" }]),
@@ -49,7 +50,10 @@ function resolved(target: "preview" | "prod", appName?: string) {
   return {
     bundle: { target, mode: prod ? "production" : "development" },
     workspace: { file_path: FILE_PATH },
-    variables: { data_backend: { value: prod ? "delta" : "memory" } },
+    variables: {
+      data_backend: { value: prod ? "delta" : "memory" },
+      minify_client: { value: "false" },
+    },
     resources: {
       apps: {
         edp_vending_machine: {
@@ -119,6 +123,8 @@ interface TurnkeyOptions {
   app?: "present" | "absent" | "no-sp";
   /** The app name `bundle validate` resolves, if not the target's usual one. */
   resolvedAppName?: string;
+  /** The membership catalog `bundle validate` resolves, if separate from the store catalog. */
+  resolvedMembershipCatalog?: string;
 }
 
 function turnkey(opts: TurnkeyOptions = {}) {
@@ -126,13 +132,26 @@ function turnkey(opts: TurnkeyOptions = {}) {
   for (const path of ["scripts", "src/deploy", "resources", "databricks-app"]) {
     cpSync(join(ROOT, path), join(dir, path), { recursive: true });
   }
+  cpSync(join(ROOT, "databricks.yml"), join(dir, "databricks.yml"));
+  if (opts.target === "prod") {
+    const git = (...args: string[]) =>
+      spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], {
+        cwd: dir,
+        encoding: "utf8",
+      });
+    git("init", "-q");
+    git("add", "databricks.yml");
+    git("commit", "-q", "-m", "fixture policy");
+  }
   const tools = mkdtempSync(join(tmpdir(), "edp-turnkey-tools-"));
   const bin = join(tools, "bin");
   mkdirSync(bin);
   const log = join(tools, "calls.log");
   writeFileSync(
     join(tools, "validate.json"),
-    JSON.stringify(resolved(opts.target ?? "preview", opts.resolvedAppName)),
+    JSON.stringify(
+      resolved(opts.target ?? "preview", opts.resolvedAppName, opts.resolvedMembershipCatalog),
+    ),
   );
   writeFileSync(join(tools, "plan.json"), JSON.stringify(opts.plan ?? { plan: {} }));
   const catalogs = (opts.catalogs ?? ["example_catalog", "edp_prod"]).join(" ");
@@ -187,7 +206,11 @@ echo ok > .output/public/robots.txt`,
     [join(dir, "scripts/deploy-turnkey.sh"), ...(opts.args ?? PREVIEW_ARGS)],
     {
       cwd: dir,
-      env: { ...env, PATH: `${bin}:${process.env["PATH"]}` },
+      env: {
+        ...env,
+        NODE_PATH: join(ROOT, "node_modules"),
+        PATH: `${bin}:${process.env["PATH"]}`,
+      },
       encoding: "utf8",
     },
   );
@@ -331,24 +354,28 @@ describe("scripts/deploy-turnkey.sh — one deploy path", SPAWNS, () => {
   describe("--grants-only (recovery)", () => {
     const grants = (calls: string[]) => sql(calls).filter((s) => s.startsWith("GRANT"));
 
-    it("applies exactly the full run's grants and skips build, deploy, run and provisioning", () => {
-      const full = turnkey({ args: [...PREVIEW_ARGS, "--grant-validator-volume-read"] });
-      expect(full.run.status, full.run.stderr).toBe(0);
-      const { run, calls } = turnkey({
-        args: [...PREVIEW_ARGS, "--grant-validator-volume-read", "--grants-only"],
-      });
-      expect(run.status, run.stderr).toBe(0);
-      expect(grants(calls)).toEqual(grants(full.calls));
-      // Only grants: no CREATE, no build, no bundle deploy/run/plan.
-      expect(sql(calls).every((s) => s.startsWith("GRANT"))).toBe(true);
-      expect(indexOf(calls, "npm")).toBe(-1);
-      for (const skipped of ["bundle plan", "bundle deploy", "bundle run"]) {
-        expect(indexOf(calls, `databricks ${skipped}`), calls.join("\n")).toBe(-1);
-      }
-      // Still resolves and gates the same bundle config first.
-      expect(indexOf(calls, "databricks catalogs get example_catalog")).toBe(0);
-      expect(indexOf(calls, "databricks bundle validate")).toBeGreaterThan(0);
-    });
+    it.each([false, true])(
+      "applies exactly the full run's grants and skips deployment (validator volume read: %s)",
+      (validatorVolumeRead) => {
+        const validatorArgs = validatorVolumeRead ? ["--grant-validator-volume-read"] : [];
+        const full = turnkey({ args: [...PREVIEW_ARGS, ...validatorArgs] });
+        expect(full.run.status, full.run.stderr).toBe(0);
+        const { run, calls } = turnkey({
+          args: [...PREVIEW_ARGS, ...validatorArgs, "--grants-only"],
+        });
+        expect(run.status, run.stderr).toBe(0);
+        expect(grants(calls)).toEqual(grants(full.calls));
+        // Only grants: no CREATE, no build, no bundle deploy/run/plan.
+        expect(sql(calls).every((s) => s.startsWith("GRANT"))).toBe(true);
+        expect(indexOf(calls, "npm")).toBe(-1);
+        for (const skipped of ["bundle plan", "bundle deploy", "bundle run"]) {
+          expect(indexOf(calls, `databricks ${skipped}`), calls.join("\n")).toBe(-1);
+        }
+        // Still resolves and gates the same bundle config first.
+        expect(indexOf(calls, "databricks catalogs get example_catalog")).toBe(0);
+        expect(indexOf(calls, "databricks bundle validate")).toBeGreaterThan(0);
+      },
+    );
 
     it("fails loudly, applying no grant, when an object it would grant on is missing", () => {
       const { run, calls } = turnkey({
@@ -359,9 +386,56 @@ describe("scripts/deploy-turnkey.sh — one deploy path", SPAWNS, () => {
         ],
       });
       expect(run.status).not.toBe(0);
-      expect(run.stderr).toContain("VOLUME example_catalog.edp_vm_preview.eir_pr1");
+      expect(run.stderr).toContain(
+        "VOLUME example_catalog.edp_vm_preview.eir_pr1: Error: 'example_catalog.edp_vm_preview.eir_pr1' does not exist.",
+      );
       expect(run.stderr).toContain("TABLE example_catalog.membership.snapshot_runs");
       expect(grants(calls)).toEqual([]);
+    });
+
+    it("reports a missing membership catalog from the grants-only object check", () => {
+      const { run, calls } = turnkey({
+        args: [...PREVIEW_ARGS, "--grants-only"],
+        resolvedMembershipCatalog: "missing_membership_catalog",
+      });
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toContain("--grants-only applied no grant");
+      expect(run.stderr).toContain(
+        "CATALOG missing_membership_catalog: Error: Catalog 'missing_membership_catalog' does not exist.",
+      );
+      expect(indexOf(calls, "databricks bundle validate")).toBeGreaterThan(0);
+      expect(grants(calls)).toEqual([]);
+    });
+
+    it("reports a missing schema and applies no grant", () => {
+      const { run, calls } = turnkey({
+        args: [...PREVIEW_ARGS, "--grants-only"],
+        missing: ["example_catalog.edp_vm_preview"],
+      });
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toContain("SCHEMA example_catalog.edp_vm_preview:");
+      expect(run.stderr).toContain("does not exist");
+      expect(grants(calls)).toEqual([]);
+    });
+
+    it("requires an explicit app_name for non-prod recovery before touching the workspace", () => {
+      const args = [...PREVIEW_ARGS];
+      const appNameIndex = args.indexOf("app_name=edp-vm-pr1");
+      args.splice(appNameIndex - 1, 2);
+      const { run, calls } = turnkey({ args: [...args, "--grants-only"] });
+      expect(run.status).toBe(2);
+      expect(run.stderr).toMatch(/explicit --var app_name/);
+      expect(calls).toEqual([]);
+    });
+
+    it("exits non-zero when a GRANT fails partway through", () => {
+      const { run, calls } = turnkey({
+        args: [...PREVIEW_ARGS, "--grants-only"],
+        membershipGrantFails: true,
+      });
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toContain("membership table missing");
+      expect(grants(calls).length).toBeGreaterThan(1);
     });
 
     it("refuses --skip-grants with it, before touching the workspace", () => {

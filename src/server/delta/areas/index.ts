@@ -12,11 +12,14 @@ import { registerReferenceArea } from "./reference.ts";
 import { registerRequestsArea } from "./requests.ts";
 import { registerTeamsArea } from "./teams.ts";
 import { registerMembershipArea, type MembershipAreaConfig } from "./membership.ts";
+import { registerConfigurationArea } from "./configuration.ts";
 import { ACTIVE_PRIVACY_NOTICE, type PrivacyNotice } from "../../../data/privacy/notice";
+import type { LoadedAccessMatrix } from "../../access-matrix.ts";
 
 export function createAppRegistry(
   notice: PrivacyNotice = ACTIVE_PRIVACY_NOTICE,
   membership?: MembershipAreaConfig,
+  accessMatrix?: () => LoadedAccessMatrix,
 ): Registry {
   const registry = createRegistry();
   registerAdminArea(registry);
@@ -26,7 +29,8 @@ export function createAppRegistry(
   registerPrivacyArea(registry, notice);
   registerReferenceArea(registry);
   registerRequestsArea(registry);
-  registerTeamsArea(registry);
+  registerTeamsArea(registry, membership ? { membership } : {});
   if (membership) registerMembershipArea(registry, membership);
+  if (accessMatrix) registerConfigurationArea(registry, accessMatrix);
   return registry;
 }

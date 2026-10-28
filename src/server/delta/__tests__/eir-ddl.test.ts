@@ -38,6 +38,8 @@ function createdColumns(text: string): Record<string, string[]> {
 const ADDED_SINCE: Record<string, string[]> = {
   // #177: the Record ID became a display code (ADR-0007 decision 2, amended 2026-10-10).
   "eir.eirs": ["display_code"],
+  // #204: a durable order for a draft's evaluations.
+  "eir.eir_evaluations": ["evaluation_sequence"],
 };
 
 describe("EIR tables' first shipped shape", () => {

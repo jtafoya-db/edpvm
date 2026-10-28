@@ -10,6 +10,7 @@
  *   dropped connection replays it rather than writing it twice.
  */
 import type { DeltaApiTransport } from "../../adapters/delta";
+import { checkedPreflightRules } from "./preflight-rules";
 import { readApiResponse, requestFailed } from "../../api-response";
 import type { EirDefinitionCheck } from "./check";
 import type {
@@ -24,12 +25,15 @@ import type {
 /** The employee's forms over the tenant app's `eir-definitions/forms` read. */
 export function createDeltaEirFormSource(options: { transport: DeltaApiTransport }): EirFormSource {
   return {
-    forms: (versions) =>
-      options.transport.read<EirFormsAnswer>(
+    forms: async (versions) => {
+      const answer = await options.transport.read<EirFormsAnswer>(
         "eir-definitions",
         "forms",
         versions.length ? { versions: versions.join(",") } : {},
-      ),
+      );
+      // Preflight only (#235): an entry that doesn't check out is dropped, never trusted.
+      return { ...answer, rules: checkedPreflightRules(answer.rules) };
+    },
   };
 }
 

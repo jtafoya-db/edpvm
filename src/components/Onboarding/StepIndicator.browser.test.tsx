@@ -30,6 +30,12 @@ const STEPS = loadSchema().steps;
 const LABELS = STEPS.map((s) => s.label);
 const titleOf = (label: string) => STEPS.find((s) => s.label === label)!.title;
 
+function formControl(scope: HTMLElement, label: string | RegExp): HTMLElement {
+  return within(scope)
+    .getAllByLabelText(label)
+    .find((element) => element.tagName !== "BUTTON")!;
+}
+
 let signedIn: UserProfile;
 
 async function renderRoute(hash: string, prepare?: (store: DataStore) => Promise<void>) {
@@ -265,31 +271,54 @@ async function showsStep(scope: HTMLElement, label: string) {
 /** Fill the rest of the new intake's required fields, through to Review. */
 async function walkIntakeToReview(scope: HTMLElement) {
   const next = () => fireEvent.click(button(scope, /^continue/i));
-  next();
-  next();
-  next();
-  fireEvent.change(within(scope).getByLabelText(/business justification/i), {
+  await continueTo(scope, "Business case");
+  fireEvent.change(formControl(scope, /business justification/i), {
     target: { value: "Prioritize balance-due cases across streams." },
   });
+  fireEvent.click(button(scope, /Reduce fraud and improper payments/i));
+  fireEvent.change(formControl(scope, /primary mission outcome/i), {
+    target: { value: "fraud" },
+  });
+  fireEvent.change(formControl(scope, /estimated annual benefit/i), {
+    target: { value: "100000" },
+  });
   next();
-  fireEvent.change(within(scope).getByLabelText("Dataset 1 name"), {
+  fireEvent.change(formControl(scope, "Dataset 1 name"), {
     target: { value: "Signals" },
   });
-  fireEvent.change(within(scope).getByLabelText("Dataset 1 domain"), {
+  fireEvent.change(formControl(scope, "Dataset 1 source system"), {
+    target: { value: "IMF / Individual Master File" },
+  });
+  fireEvent.change(formControl(scope, "Dataset 1 domain"), {
     target: { value: "individual-filing" },
   });
-  fireEvent.change(within(scope).getByLabelText("Dataset 1 tag"), {
+  fireEvent.change(formControl(scope, "Dataset 1 ingestion method"), {
+    target: { value: "eftu" },
+  });
+  fireEvent.change(formControl(scope, "Dataset 1 tag"), {
     target: { value: "signals" },
   });
-  fillDatasetOwner(scope, 1, 1, { name: "Olive Owner", email: "olive.owner@example.test" });
+  fillDatasetOwner(scope, 1, 1, { name: "Olive Owner", email: "olive.owner@example.gov" });
   next();
-  fireEvent.change(within(scope).getByLabelText(/isolated from other tenants/i), {
-    target: { value: "Not sure" },
+  fireEvent.change(formControl(scope, /code or work products/i), {
+    target: { value: "Not sure — ask EDP staff to assess" },
   });
-  fireEvent.change(within(scope).getByLabelText(/how many people/i), { target: { value: "6" } });
+  fireEvent.change(formControl(scope, /how many people/i), { target: { value: "6" } });
   next();
-  fireEvent.click(button(scope, /run ai sizing/i));
-  await within(scope).findByRole("button", { name: /re-run ai sizing/i }, { timeout: 5000 });
+  fireEvent.change(formControl(scope, /data volume/i), { target: { value: "500" } });
+  fireEvent.change(formControl(scope, /load frequency/i), { target: { value: "Daily" } });
+  fireEvent.change(formControl(scope, /transformation complexity/i), {
+    target: { value: "Moderate — joins and recurring business rules" },
+  });
+  fireEvent.change(formControl(scope, /business users needing to query/i), {
+    target: { value: "40" },
+  });
+  fireEvent.click(button(scope, /run preliminary estimate/i));
+  await within(scope).findByRole(
+    "button",
+    { name: /re-run preliminary estimate/i },
+    { timeout: 5000 },
+  );
   next();
   await showsStep(scope, "Review & submit");
 }
@@ -297,8 +326,21 @@ async function walkIntakeToReview(scope: HTMLElement) {
 /** Continue until the step labelled `label` shows (the resubmission is prefilled). */
 async function continueTo(scope: HTMLElement, label: string) {
   const heading = () => within(scope).queryByRole("heading", { name: titleOf(label) });
-  for (let i = 0; i < LABELS.length && !heading(); i++)
+  for (let i = 0; i < LABELS.length && !heading(); i++) {
+    if (within(scope).queryByRole("heading", { name: titleOf("Initiative") })) {
+      fireEvent.change(formControl(scope, /data sensitivity/i), {
+        target: { value: "SBU" },
+      });
+    }
+    if (within(scope).queryByRole("heading", { name: titleOf("Architecture") })) {
+      fireEvent.click(button(scope, /All within Databricks/i));
+    }
+    if (within(scope).queryByRole("heading", { name: titleOf("Delivery support") })) {
+      fireEvent.click(button(scope, /We have our own resources/i));
+    }
     fireEvent.click(button(scope, /^continue/i));
+    await new Promise(requestAnimationFrame);
+  }
   await showsStep(scope, label);
 }
 
@@ -351,6 +393,7 @@ describe.each(consumers)("the $name's step indicator at 390px", (consumer) => {
     await page.viewport(390, 900);
     const scope = await open();
     await continueTo(scope, "Architecture");
+    fireEvent.click(button(scope, /All within Databricks/i));
     expectReachable(button(scope, /^back/i), 390);
     expectReachable(button(scope, /^continue/i), 390);
 
@@ -372,6 +415,7 @@ describe.each(consumers)("the $name's step indicator at 390px", (consumer) => {
     await page.viewport(390, 900);
     const scope = await open();
     await continueTo(scope, "Architecture");
+    fireEvent.click(button(scope, /All within Databricks/i));
 
     expect(await tap(button(scope, /^continue/i))).toEqual(["touch"]);
     await showsStep(scope, "Delivery support");

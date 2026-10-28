@@ -18,6 +18,7 @@
  *   in a "not yet connected" state until their persistence backbone lands
  *   (#24 / #25 / #66). The presenter NEVER fabricates data for them.
  */
+import { isPersonNameSource } from "@/data/person-name";
 import type { UserProfile } from "@/data/types";
 
 /** Where the resolved identity came from. */
@@ -25,7 +26,10 @@ export type IdentitySource = "databricks-forwarded" | "local-dev-fallback";
 
 /** The presented identity block — the only part of the page that is real data. */
 export interface IdentityView {
+  /** The person's name, or {@link NO_NAME_LABEL} when the server only has an identifier. */
   displayName: string;
+  /** False when the session's name is only the email, username or a placeholder. */
+  hasPersonName: boolean;
   /** Shown as "username / email"; the sanitized UserProfile carries only email today. */
   email: string;
   /** Stable account SCIM principal id — the durable identity key (ADR-0004, decision 2). */
@@ -142,10 +146,15 @@ const SECTION_DEFS: ReadonlyArray<
 
 const NOT_CONNECTED_LABEL = "Not yet connected";
 
+/** Shown for the display name when the identity provider sent no name. */
+export const NO_NAME_LABEL = "No name on file";
+
 function presentIdentity(user: UserProfile): IdentityView {
   const isDevFallback = isDevFallbackPrincipal(user.principalId);
+  const hasPersonName = isPersonNameSource(user.nameSource);
   return {
-    displayName: user.name,
+    displayName: hasPersonName ? user.name : NO_NAME_LABEL,
+    hasPersonName,
     email: user.email,
     principalId: user.principalId,
     isDevFallback,
@@ -162,8 +171,8 @@ function presentAdmin(user: UserProfile): AdminView {
     isAdmin: user.isAdmin,
     roleLabel: user.isAdmin ? "Administrator" : "Standard user",
     derivation: user.isAdmin
-      ? "Server-derived from membership in the configured EDP-admin group."
-      : "Server-derived: not a member of the configured EDP-admin group.",
+      ? "Server-derived from direct membership in the EDP admin group."
+      : "Server-derived: not a direct member of the EDP admin group.",
   };
 }
 

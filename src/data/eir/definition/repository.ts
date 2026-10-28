@@ -34,6 +34,7 @@ import { BOOTSTRAP_EIR_FORMS, type EirForms } from "../repository.ts";
 import { bootstrapEirDefinition, builtInById, withId } from "./built-in.ts";
 import { FALLBACK_BUILT_IN_ID, publishedDefinitionId, publishedVersionNumber } from "./identity.ts";
 import { loadDefinition } from "./load.ts";
+import { preflightRulesFor, type EirPreflightRules } from "./preflight-rules.ts";
 import type { EirDefinition, EirDefinitionRefusalCode } from "./types.ts";
 
 export type EirDefinitionActorApp = "tenant" | "staff" | "job" | "system";
@@ -119,6 +120,12 @@ export interface EirDefinitionRepository {
 export interface EirFormsAnswer {
   active: EirFormConfig;
   forms: Record<string, EirFormConfig>;
+  /**
+   * For the instant pre-check only (#235): the published definitions' rules
+   * and timelines among the active one and those asked about, by identity.
+   * Never the built-ins': they ship with the app.
+   */
+  rules?: Record<string, EirPreflightRules>;
 }
 
 /** The employee's side of the EIR definitions (tenant app). */
@@ -137,7 +144,11 @@ export const eirFormsFrom = (answer: EirFormsAnswer): EirForms => ({
 });
 
 /** {@link EirFormSource} over the in-memory definitions. */
-export function memoryEirFormSource(forms: EirForms): EirFormSource {
+export function memoryEirFormSource(
+  forms: EirForms,
+  /** The typed definitions behind `forms`, so published ones' rules go with them (#235). */
+  definitions?: Pick<EirDefinitions, "byId">,
+): EirFormSource {
   return {
     async forms(versions) {
       const active = forms.active();
@@ -148,7 +159,13 @@ export function memoryEirFormSource(forms: EirForms): EirFormSource {
         if (form) known[version] = form;
       }
       if (!active) throw BOOTSTRAP_UNAVAILABLE;
-      return { active, forms: known };
+      if (!definitions) return { active, forms: known };
+      const rules = preflightRulesFor(
+        [active.version, ...versions],
+        (id) => definitions.byId(id),
+        (id) => publishedVersionNumber(id) !== undefined,
+      );
+      return { active, forms: known, rules };
     },
   };
 }

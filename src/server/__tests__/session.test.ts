@@ -33,10 +33,10 @@ describe("handleSessionRequest — server-side identity resolution", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       scimResponse({
         id: "scim-42",
-        userName: "real.user@example.test",
+        userName: "real.user@example.gov",
         displayName: "Real User",
-        emails: [{ value: "real.user@example.test", primary: true }],
-        groups: [{ value: "grp-admin" }],
+        emails: [{ value: "real.user@example.gov", primary: true }],
+        groups: [{ value: "grp-admin", type: "direct" }],
       }),
     );
 
@@ -55,6 +55,8 @@ describe("handleSessionRequest — server-side identity resolution", () => {
     expect(profile.isSafeguardsValidator).toBe(true);
     expect(profile.slaConfig.stages["eir-validation"]).toBe(3);
     expect(profile).not.toHaveProperty("accessToken");
+    expect(profile.nameSource).toBe("scim-display");
+    expect(profile.initials).toBe("RU");
 
     // SCIM /Me was called with the OBO token as the bearer credential.
     expect(fetchSpy).toHaveBeenCalledWith(
@@ -62,6 +64,58 @@ describe("handleSessionRequest — server-side identity resolution", () => {
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: `Bearer ${SECRET_TOKEN}` }),
       }),
+    );
+  });
+
+  it("shows the email, not the numeric X-Forwarded-User, when SCIM has no name (GovCloud)", async () => {
+    vi.stubEnv("DATABRICKS_HOST", "https://ws.example.databricks.com");
+    vi.stubEnv("EDP_IDENTITY_MODE", "production");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      scimResponse({
+        id: "scim-gov-1",
+        userName: "casey.rivera@example.gov",
+        emails: [{ value: "casey.rivera@example.gov", primary: true }],
+        groups: [],
+      }),
+    );
+
+    const response = await handleSessionRequest(
+      sessionRequest({
+        "x-forwarded-access-token": SECRET_TOKEN,
+        "x-forwarded-user": "1234567890123456@7890123456789012",
+        "x-forwarded-email": "casey.rivera@example.gov",
+      }),
+    );
+    const profile = await response.json();
+
+    expect(profile.name).toBe("casey.rivera@example.gov");
+    expect(profile.nameSource).toBe("email");
+    // No initials from an identifier: the avatar shows a neutral glyph instead.
+    expect(profile.initials).toBe("");
+    expect(JSON.stringify(profile)).not.toContain("1234567890123456");
+  });
+
+  it("names a GovCloud user with no email and a digit username 'Signed-in user', never an id", async () => {
+    vi.stubEnv("DATABRICKS_HOST", "https://ws.example.databricks.com");
+    vi.stubEnv("EDP_IDENTITY_MODE", "production");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      scimResponse({ id: "scim-gov-2", userName: "١٢٣٤ ٥٦٧٨", groups: [] }),
+    );
+
+    const response = await handleSessionRequest(
+      sessionRequest({
+        "x-forwarded-access-token": `${SECRET_TOKEN}-no-email`,
+        "x-forwarded-user": "1234567890123456@7890123456789012",
+      }),
+    );
+    const profile = await response.json();
+
+    // The name every client label reads (onboarding Myself, requester, My access).
+    expect(profile.name).toBe("Signed-in user");
+    expect(profile.nameSource).toBe("none");
+    expect(profile.initials).toBe("");
+    expect(JSON.stringify({ name: profile.name, initials: profile.initials })).not.toMatch(
+      /1234|١٢٣٤/,
     );
   });
 
@@ -156,12 +210,16 @@ describe("handleSessionRequest — server-side identity resolution", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("gives an EDP admin group member every staff role (#226)", async () => {
+  it("gives a direct EDP admin group member every staff role (#226)", async () => {
     vi.stubEnv("DATABRICKS_HOST", "https://ws.example.databricks.com");
     vi.stubEnv("EDP_IDENTITY_MODE", "production");
     vi.stubEnv("EDP_ADMIN_GROUP_ID", "grp-admin");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      scimResponse({ id: "scim-7", userName: "admin@example.test", groups: [{ value: "grp-admin" }] }),
+      scimResponse({
+        id: "scim-7",
+        userName: "admin@example.gov",
+        groups: [{ value: "grp-admin", type: "direct" }],
+      }),
     );
 
     const response = await handleSessionRequest(
@@ -176,6 +234,56 @@ describe("handleSessionRequest — server-side identity resolution", () => {
     });
   });
 
+  it("gives an indirect EDP admin group member no staff role (#226)", async () => {
+    vi.stubEnv("DATABRICKS_HOST", "https://ws.example.databricks.com");
+    vi.stubEnv("EDP_IDENTITY_MODE", "production");
+    vi.stubEnv("EDP_ADMIN_GROUP_ID", "grp-admin");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      scimResponse({
+        id: "scim-7",
+        userName: "nested@example.gov",
+        groups: [{ value: "grp-admin", type: "indirect" }],
+      }),
+    );
+
+    const response = await handleSessionRequest(
+      sessionRequest({ "x-forwarded-access-token": SECRET_TOKEN }),
+    );
+    const profile = JSON.parse(await response.text());
+
+    expect(profile).toMatchObject({
+      isAdmin: false,
+      isSafeguardsValidator: false,
+      onboardingReviewerRoles: [],
+    });
+  });
+
+  it.each([
+    ["missing", { value: "grp-admin" }],
+    ["unexpected", { value: "grp-admin", type: "Indirect" }],
+  ])(
+    "gives an EDP admin group entry with %s membership type no staff role",
+    async (_label, group) => {
+      vi.stubEnv("DATABRICKS_HOST", "https://ws.example.databricks.com");
+      vi.stubEnv("EDP_IDENTITY_MODE", "production");
+      vi.stubEnv("EDP_ADMIN_GROUP_ID", "grp-admin");
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        scimResponse({ id: "scim-7", userName: "untrusted@example.gov", groups: [group] }),
+      );
+
+      const response = await handleSessionRequest(
+        sessionRequest({ "x-forwarded-access-token": SECRET_TOKEN }),
+      );
+      const profile = JSON.parse(await response.text());
+
+      expect(profile).toMatchObject({
+        isAdmin: false,
+        isSafeguardsValidator: false,
+        onboardingReviewerRoles: [],
+      });
+    },
+  );
+
   it("grants nothing for the reserved per-role group vars (#226)", async () => {
     vi.stubEnv("DATABRICKS_HOST", "https://ws.example.databricks.com");
     vi.stubEnv("EDP_IDENTITY_MODE", "production");
@@ -186,7 +294,7 @@ describe("handleSessionRequest — server-side identity resolution", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       scimResponse({
         id: "scim-7",
-        userName: "bo@example.test",
+        userName: "bo@example.gov",
         groups: [{ value: "grp-validators" }, { value: "grp-bo" }, { value: "grp-ccb" }],
       }),
     );
@@ -208,7 +316,11 @@ describe("handleSessionRequest — server-side identity resolution", () => {
     vi.stubEnv("EDP_IDENTITY_MODE", "production");
     vi.stubEnv("EDP_ADMIN_GROUP_ID", "");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      scimResponse({ id: "scim-7", userName: "admin@example.test", groups: [{ value: "grp-admin" }] }),
+      scimResponse({
+        id: "scim-7",
+        userName: "admin@example.gov",
+        groups: [{ value: "grp-admin", type: "direct" }],
+      }),
     );
 
     const response = await handleSessionRequest(
@@ -289,7 +401,7 @@ describe("handleSessionRequest — server-side identity resolution", () => {
     vi.stubEnv("EDP_ADMIN_GROUP_ID", "grp-admin");
     vi.stubEnv("EDP_DEV_GROUP_IDS", "grp-admin");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      scimResponse({ id: "scim-8", userName: "x@example.test", groups: [] }),
+      scimResponse({ id: "scim-8", userName: "x@example.gov", groups: [] }),
     );
 
     const response = await handleSessionRequest(

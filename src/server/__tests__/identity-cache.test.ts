@@ -85,7 +85,7 @@ describe("identity cache — one SCIM /Me per token per TTL", () => {
   });
 
   it.each([
-    ["no id", { userName: "someone@example.test" }],
+    ["no id", { userName: "someone@example.gov" }],
     ["an empty id", { id: "" }],
     ["a blank id", { id: "   " }],
     ["a non-string id", { id: 42 }],
@@ -195,8 +195,8 @@ describe("resolveSessionIdentity — the cached seam", () => {
       return new Response(
         JSON.stringify({
           id: `scim-${token}`,
-          userName: `${token}@example.test`,
-          groups: token === TOKEN_A ? [{ value: "grp-admin" }] : [],
+          userName: `${token}@example.gov`,
+          groups: token === TOKEN_A ? [{ value: "grp-admin", type: "direct" }] : [],
         }),
         { status: 200 },
       );

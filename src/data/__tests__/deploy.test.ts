@@ -53,6 +53,32 @@ const app = () => bundle().resources.apps.edp_vending_machine;
 const appYaml = () => load(readFileSync(join(ROOT, APP_DIR, "app.yaml"), "utf8")) as AppConfig;
 
 describe("the deployed unit (databricks-app/)", () => {
+  it("commits unminified preview/govdev/prod and minified dev client policy in the bundle", () => {
+    const raw = load(readFileSync(join(ROOT, "databricks.yml"), "utf8")) as Bundle & {
+      targets: Record<string, { variables?: Record<string, string> }>;
+    };
+    expect(raw.variables["minify_client"]?.default).toBe("true");
+    expect(raw.targets["preview"]?.variables?.["minify_client"]).toBe("false");
+    expect(raw.targets["dev"]?.variables?.["minify_client"]).toBeUndefined();
+    expect(raw.targets["govdev"]?.variables?.["minify_client"]).toBe("false");
+    expect(raw.targets["prod"]?.variables?.["minify_client"]).toBe("false");
+  });
+
+  it("ships govdev as a Delta-backed development target with unusable name sentinels", () => {
+    const raw = load(readFileSync(join(ROOT, "databricks.yml"), "utf8")) as {
+      targets: Record<string, { mode?: string; variables?: Record<string, string> }>;
+    };
+    const govdev = raw.targets["govdev"];
+    expect(govdev?.mode).toBe("development");
+    expect(govdev?.variables).toMatchObject({
+      app_name: "edp-vm-govdev-unset",
+      data_backend: "delta",
+      store_schema_prefix: "edp_vm_govdev_unset_",
+      eir_volume_name: "eir_govdev_unset",
+      edp_admin_group_id: "configure-edp-admin-group-id",
+    });
+  });
+
   it("is the app's source, and has nothing that makes the platform install or build", () => {
     expect(app().source_code_path).toBe(`./${APP_DIR}`);
     // package.json triggers `npm install` + `npm run build`; requirements.txt
@@ -129,6 +155,10 @@ describe("the deployed unit (databricks-app/)", () => {
       name: "VITE_DATA_BACKEND",
       value: "${var.data_backend}",
     });
+    expect(app().config.env).toContainEqual({
+      name: "EDP_CLIENT_MINIFIED",
+      value: "${var.minify_client}",
+    });
   });
 });
 
@@ -136,6 +166,9 @@ const PREVIEW_ARGS = ["-p", "ws", "-t", "preview", "--var", "app_name=edp-vm-x"]
 
 interface DeployOptions {
   backend?: string;
+  minifyClient?: string;
+  omitMinifyClient?: boolean;
+  variableOverride?: string;
   args?: string[];
   env?: Record<string, string>;
   npmExit?: number;
@@ -145,6 +178,8 @@ interface DeployOptions {
   nodeVersion?: string;
   /** Make the checkout a git repo, committed, and optionally with an untracked file. */
   git?: "clean" | "dirty";
+  /** Edit prod's policy after committing the fixture, like an unreviewed local change. */
+  localProdMinify?: "true" | "false";
   /** What `bundle plan -o json` returns; no changes by default. */
   plan?: unknown;
   /** Run it as an operator would, without the marker scripts/deploy-turnkey.sh sets. */
@@ -160,10 +195,18 @@ function deployFixture(opts: DeployOptions = {}) {
   const dir = mkdtempSync(join(tmpdir(), "edp-deploy-"));
   mkdirSync(join(dir, "scripts"));
   cpSync(join(ROOT, "scripts/deploy.sh"), join(dir, "scripts/deploy.sh"));
+  cpSync(join(ROOT, "databricks.yml"), join(dir, "databricks.yml"));
   // The plan gate.
   cpSync(join(ROOT, "scripts/bundle-config.ts"), join(dir, "scripts/bundle-config.ts"));
   cpSync(join(ROOT, "src/deploy"), join(dir, "src/deploy"), { recursive: true });
   cpSync(join(ROOT, APP_DIR), join(dir, APP_DIR), { recursive: true });
+  if (opts.variableOverride !== undefined) {
+    mkdirSync(join(dir, ".databricks/bundle/preview"), { recursive: true });
+    writeFileSync(
+      join(dir, ".databricks/bundle/preview/variable-overrides.json"),
+      JSON.stringify({ minify_client: opts.variableOverride }),
+    );
+  }
   writeFileSync(
     join(dir, ".gitignore"),
     `.output\n${APP_DIR}/server\n${APP_DIR}/public\n${APP_DIR}/build-info.json\n`,
@@ -179,6 +222,17 @@ function deployFixture(opts: DeployOptions = {}) {
     git("add", "-A");
     git("commit", "-q", "-m", "fixture");
     sha = git("rev-parse", "--short", "HEAD");
+    if (opts.localProdMinify !== undefined) {
+      const path = join(dir, "databricks.yml");
+      const yaml = readFileSync(path, "utf8");
+      writeFileSync(
+        path,
+        yaml.replace(
+          /(  prod:\n(?:.|\n)*?      minify_client: ")[^"]+("\n)/,
+          `$1${opts.localProdMinify}$2`,
+        ),
+      );
+    }
     if (opts.git === "dirty") writeFileSync(join(dir, "uncommitted.txt"), "");
   }
   // A stale artifact from an earlier deploy.
@@ -204,11 +258,13 @@ if [ "$1 $2" = "bundle validate" ]; then
   # aliases), else DATABRICKS_BUNDLE_TARGET / DATABRICKS_BUNDLE_ENV, else dev.
   name=edp-vending-machine
   target="\${DATABRICKS_BUNDLE_TARGET:-\${DATABRICKS_BUNDLE_ENV:-dev}}"
+  minify_client="${opts.minifyClient ?? "__target_default__"}"
   prev=""
   for arg in "$@"; do
     case "$prev" in -t|--target|-e|--environment) target=$arg ;; esac
     case "$arg" in
       app_name=*|--var=app_name=*) name="\${arg#*app_name=}" ;;
+      minify_client=*|--var=minify_client=*) minify_client="\${arg#*minify_client=}" ;;
       -t=*|-e=*|--target=*|--environment=*) target="\${arg#*=}" ;;
       -t?*|-e?*) target="\${arg#-?}" ;;
     esac
@@ -219,7 +275,16 @@ if [ "$1 $2" = "bundle validate" ]; then
   mode=development
   [ "$target" != prod ] || mode=production
   mode="\${FAKE_RESOLVED_MODE:-$mode}"
-  printf '{"bundle":{"target":"%s","mode":"%s"},"variables":{"data_backend":{"value":"%s"}},"resources":{"apps":{"edp_vending_machine":{"name":"%s"}}}}\\n' "$target" "$mode" "${opts.backend ?? "memory"}" "$name"
+  [ "$minify_client" != __target_default__ ] || { [[ "$target" = prod || "$target" = preview ]] && minify_client=false || minify_client=true; }
+  if [ -f ".databricks/bundle/$target/variable-overrides.json" ]; then
+    minify_client=$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).minify_client)' ".databricks/bundle/$target/variable-overrides.json")
+  fi
+  [ -z "\${BUNDLE_VAR_minify_client+x}" ] || minify_client="$BUNDLE_VAR_minify_client"
+  if [ "${opts.omitMinifyClient ? "yes" : "no"}" = yes ]; then
+    printf '{"bundle":{"target":"%s","mode":"%s"},"variables":{"data_backend":{"value":"%s"}},"resources":{"apps":{"edp_vending_machine":{"name":"%s"}}}}\\n' "$target" "$mode" "${opts.backend ?? "memory"}" "$name"
+  else
+    printf '{"bundle":{"target":"%s","mode":"%s"},"variables":{"data_backend":{"value":"%s"},"minify_client":{"value":"%s"}},"resources":{"apps":{"edp_vending_machine":{"name":"%s"}}}}\\n' "$target" "$mode" "${opts.backend ?? "memory"}" "$minify_client" "$name"
+  fi
 fi
 if [ "$1 $2" = "bundle plan" ]; then
   echo '${JSON.stringify(opts.plan ?? { plan: {} })}'
@@ -228,6 +293,7 @@ fi`,
   fake(
     "npm",
     `echo "npm $* VITE_DATA_BACKEND=$VITE_DATA_BACKEND" >> "${log}"
+printf '%s' "$EDP_UNMINIFIED_BUILD" > "${tools}/npm-unminified.txt"
 exit_code=${opts.npmExit ?? 0}
 [ "$exit_code" = 0 ] || exit "$exit_code"
 mkdir -p .output/server .output/public
@@ -253,12 +319,16 @@ exec "${process.execPath}" "$@"`,
       ...env,
       ...(opts.direct ? {} : { EDP_DEPLOY_VIA_TURNKEY: "1" }),
       ...opts.env,
+      NODE_PATH: join(ROOT, "node_modules"),
       PATH: `${bin}:${process.env["PATH"]}`,
     },
     encoding: "utf8",
   });
   const calls = existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [];
-  return { dir, run, calls, sha, args: args.join(" ") };
+  const npmUnminified = existsSync(join(tools, "npm-unminified.txt"))
+    ? readFileSync(join(tools, "npm-unminified.txt"), "utf8")
+    : undefined;
+  return { dir, run, calls, sha, args: args.join(" "), npmUnminified };
 }
 
 // Each deploy test runs bash, git and node processes; under a full parallel
@@ -294,6 +364,7 @@ describe("scripts/deploy.sh — the deploy entry point", SPAWNS, () => {
     expect(existsSync(join(dir, APP_DIR, "server/stale.mjs"))).toBe(false);
     const info = JSON.parse(readFileSync(join(dir, APP_DIR, "build-info.json"), "utf8"));
     expect(info.dataBackend).toBe("delta");
+    expect(info.minified).toBe(false);
     expect(existsSync(join(dir, APP_DIR, "package.json"))).toBe(false);
   });
 
@@ -341,7 +412,12 @@ describe("scripts/deploy.sh — the deploy entry point", SPAWNS, () => {
     cpSync(join(ROOT, APP_DIR, "serve.mjs"), join(dir, "serve.mjs"));
     writeFileSync(
       join(dir, "build-info.json"),
-      JSON.stringify({ dataBackend: "memory", commit: "abc123", builtAt: "2026-10-08T00:00:00Z" }),
+      JSON.stringify({
+        dataBackend: "memory",
+        minified: true,
+        commit: "abc123",
+        builtAt: "2026-10-08T00:00:00Z",
+      }),
     );
     writeFileSync(
       join(dir, "server/index.mjs"),
@@ -353,6 +429,7 @@ describe("scripts/deploy.sh — the deploy entry point", SPAWNS, () => {
       env: {
         ...process.env,
         VITE_DATA_BACKEND: "memory",
+        EDP_CLIENT_MINIFIED: "true",
         EDP_SLA_CCB_BUSINESS_DAYS: "5",
       },
       encoding: "utf8",
@@ -369,13 +446,23 @@ describe("scripts/deploy.sh — the deploy entry point", SPAWNS, () => {
     cpSync(join(ROOT, APP_DIR, "serve.mjs"), join(dir, "serve.mjs"));
     writeFileSync(
       join(dir, "build-info.json"),
-      JSON.stringify({ dataBackend: "memory", commit: "abc123", builtAt: "2026-10-08T00:00:00Z" }),
+      JSON.stringify({
+        dataBackend: "memory",
+        minified: true,
+        commit: "abc123",
+        builtAt: "2026-10-08T00:00:00Z",
+      }),
     );
     writeFileSync(join(dir, "server/index.mjs"), "console.log('server imported');\n");
 
     const run = spawnSync(process.execPath, [join(dir, "serve.mjs")], {
       cwd: dir,
-      env: { ...process.env, VITE_DATA_BACKEND: "memory", EDP_SLA_CCB_BUSINESS_DAYS: "abc" },
+      env: {
+        ...process.env,
+        VITE_DATA_BACKEND: "memory",
+        EDP_CLIENT_MINIFIED: "true",
+        EDP_SLA_CCB_BUSINESS_DAYS: "abc",
+      },
       encoding: "utf8",
     });
 
@@ -427,6 +514,116 @@ describe("scripts/deploy.sh — internal to scripts/deploy-turnkey.sh", SPAWNS, 
 });
 
 describe("scripts/deploy.sh — production safety", SPAWNS, () => {
+  it.each([
+    {
+      source: "--var",
+      options: { args: [...PREVIEW_ARGS, "--var", "minify_client=true"] },
+    },
+    {
+      source: "BUNDLE_VAR_minify_client",
+      options: { env: { BUNDLE_VAR_minify_client: "true" } },
+    },
+    {
+      source: "variable-overrides.json",
+      options: { variableOverride: "true" },
+    },
+  ])("refuses a $source override that differs from committed target policy", ({ options }) => {
+    const { run, calls } = deployFixture(options);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain(
+      "resolved minify_client=true does not match committed preview policy false",
+    );
+    expect(calls.some((call) => call.startsWith("npm"))).toBe(false);
+    expect(deployed(calls)).toEqual([]);
+  });
+
+  it("refuses when bundle validate omits minify_client", () => {
+    const { run, calls } = deployFixture({ omitMinifyClient: true });
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain('minify_client must resolve to "true" or "false"');
+    expect(calls.some((call) => call.startsWith("npm"))).toBe(false);
+  });
+
+  it("builds prod unminified from committed target policy and records that artifact", () => {
+    const { dir, run, npmUnminified } = deployFixture({
+      args: ["-p", "ws", "-t", "prod", "--production"],
+      git: "clean",
+    });
+    expect(run.status, run.stderr).toBe(0);
+    expect(npmUnminified).toBe("1");
+    const info = JSON.parse(readFileSync(join(dir, APP_DIR, "build-info.json"), "utf8"));
+    expect(info.minified).toBe(false);
+  });
+
+  it("builds preview unminified from committed target policy and records that artifact", () => {
+    const { dir, run, npmUnminified } = deployFixture({
+      args: PREVIEW_ARGS,
+    });
+    expect(run.status, run.stderr).toBe(0);
+    expect(npmUnminified).toBe("1");
+    const info = JSON.parse(readFileSync(join(dir, APP_DIR, "build-info.json"), "utf8"));
+    expect(info.minified).toBe(false);
+  });
+
+  it("keeps dev minified from the committed default", () => {
+    const { dir, run, npmUnminified } = deployFixture({
+      args: ["-p", "ws", "-t", "dev", "--var", "app_name=edp-vm-x"],
+      env: { EDP_UNMINIFIED_BUILD: "1" },
+    });
+    expect(run.status, run.stderr).toBe(0);
+    expect(npmUnminified).toBe("");
+    const info = JSON.parse(readFileSync(join(dir, APP_DIR, "build-info.json"), "utf8"));
+    expect(info.minified).toBe(true);
+  });
+
+  it.each(["", "yes", "TRUE", "tru"])(
+    "refuses a non-boolean resolved minify_client value %j before building",
+    (minifyClient) => {
+      const { run, calls } = deployFixture({ minifyClient });
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toContain('minify_client must resolve to "true" or "false"');
+      expect(calls.some((call) => call.startsWith("npm"))).toBe(false);
+      expect(deployed(calls)).toEqual([]);
+    },
+  );
+
+  it("refuses production when the operator shell requests an unminified build", () => {
+    const { run, calls } = deployFixture({
+      args: ["-p", "ws", "-t", "prod", "--production"],
+      env: { EDP_UNMINIFIED_BUILD: "1" },
+      git: "clean",
+    });
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain(
+      "EDP_UNMINIFIED_BUILD cannot control deployed builds. Unset it before deploying prod.",
+    );
+    expect(calls.some((call) => call.startsWith("npm"))).toBe(false);
+    expect(deployed(calls)).toEqual([]);
+  });
+
+  it("refuses a locally edited production policy that differs from git HEAD", () => {
+    const { run, calls } = deployFixture({
+      args: ["-p", "ws", "-t", "prod", "--production"],
+      git: "clean",
+      localProdMinify: "true",
+      minifyClient: "true",
+    });
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain(
+      "resolved minify_client=true does not match committed prod policy false",
+    );
+    expect(calls.some((call) => call.startsWith("npm"))).toBe(false);
+    expect(deployed(calls)).toEqual([]);
+  });
+
+  it("ignores an inherited minified request and follows preview's unminified policy", () => {
+    const { dir, run, npmUnminified } = deployFixture({ env: { EDP_UNMINIFIED_BUILD: "0" } });
+    expect(run.status, run.stderr).toBe(0);
+    expect(npmUnminified).toBe("1");
+    const info = JSON.parse(readFileSync(join(dir, APP_DIR, "build-info.json"), "utf8"));
+    expect(info.minified).toBe(false);
+  });
+
   it("refuses to run without an explicit target, and prints usage", () => {
     const { run, calls } = deployFixture({ args: ["-p", "ws", "--var", "app_name=edp-vm-x"] });
     expect(run.status).not.toBe(0);
@@ -483,7 +680,10 @@ describe("scripts/deploy.sh — production safety", SPAWNS, () => {
   });
 
   it("deploys prod with --production, which it doesn't pass on to the CLI", () => {
-    const { run, calls } = deployFixture({ args: ["-p", "ws", "-t", "prod", "--production"] });
+    const { run, calls } = deployFixture({
+      args: ["-p", "ws", "-t", "prod", "--production"],
+      git: "clean",
+    });
     expect(run.status, run.stderr).toBe(0);
     expect(calls).toEqual([
       "databricks bundle validate -p ws -t prod -o json",
@@ -498,6 +698,7 @@ describe("scripts/deploy.sh — production safety", SPAWNS, () => {
     const { run, calls } = deployFixture({
       args: ["--target=prod"],
       env: { EDP_DEPLOY_PRODUCTION: "yes" },
+      git: "clean",
     });
     expect(run.status, run.stderr).toBe(0);
     expect(deployed(calls)).toEqual(["databricks bundle deploy --target=prod --auto-approve"]);
@@ -541,7 +742,10 @@ describe("scripts/deploy.sh — production safety", SPAWNS, () => {
       expect(refused.run.status, target).not.toBe(0);
       expect(refused.run.stderr).toMatch(/--production/);
       expect(refused.calls).toEqual([]);
-      const allowed = deployFixture({ args: ["-p", "ws", target, "--production"] });
+      const allowed = deployFixture({
+        args: ["-p", "ws", target, "--production"],
+        git: "clean",
+      });
       expect(allowed.run.status, allowed.run.stderr).toBe(0);
       expect(deployed(allowed.calls)).toEqual([
         `databricks bundle deploy -p ws ${target} --auto-approve`,
@@ -653,6 +857,7 @@ function serveFixture(opts: {
   built: string | null;
   runtime: string;
   info?: Record<string, unknown>;
+  clientMinified?: string | null;
 }) {
   const dir = mkdtempSync(join(tmpdir(), "edp-serve-"));
   cpSync(join(ROOT, APP_DIR, "serve.mjs"), join(dir, "serve.mjs"));
@@ -664,12 +869,19 @@ function serveFixture(opts: {
     );
     const info = opts.info ?? {
       dataBackend: opts.built,
+      minified: true,
       commit: "abc1234",
       builtAt: "2026-10-08T00:00:00.000Z",
     };
     writeFileSync(join(dir, "build-info.json"), JSON.stringify(info));
   }
-  const env = { ...process.env, DATABRICKS_APP_PORT: "8123", VITE_DATA_BACKEND: opts.runtime };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    DATABRICKS_APP_PORT: "8123",
+    VITE_DATA_BACKEND: opts.runtime,
+    EDP_CLIENT_MINIFIED: opts.clientMinified ?? String(opts.info?.["minified"] ?? true),
+  };
+  if (opts.clientMinified === null) delete env["EDP_CLIENT_MINIFIED"];
   const run = spawnSync(process.execPath, [join(dir, "serve.mjs")], { env, encoding: "utf8" });
   const port = existsSync(join(dir, "port")) ? readFileSync(join(dir, "port"), "utf8") : null;
   return { run, port };
@@ -689,6 +901,21 @@ describe("databricks-app/serve.mjs — the runtime command", () => {
     expect(run.stdout).toContain(`node ${process.version}`);
   });
 
+  it("logs whether the client artifact is minified", () => {
+    const { run } = serveFixture({
+      built: "memory",
+      runtime: "memory",
+      info: {
+        dataBackend: "memory",
+        minified: false,
+        commit: "abc1234",
+        builtAt: "2026-10-08T00:00:00.000Z",
+      },
+    });
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.stdout).toContain("minified=false");
+  });
+
   it("treats an unset backend as memory, as the data seam does", () => {
     const { run, port } = serveFixture({ built: "memory", runtime: "" });
     expect(run.status, run.stderr).toBe(0);
@@ -702,9 +929,47 @@ describe("databricks-app/serve.mjs — the runtime command", () => {
     expect(port).toBeNull();
   });
 
+  it("refuses a build whose minification differs from the target policy", () => {
+    const { run, port } = serveFixture({
+      built: "memory",
+      runtime: "memory",
+      clientMinified: "true",
+      info: {
+        dataBackend: "memory",
+        minified: false,
+        commit: "abc1234",
+        builtAt: "2026-10-08T00:00:00.000Z",
+      },
+    });
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toMatch(/built with minified=false.*target sets true/);
+    expect(port).toBeNull();
+  });
+
+  it.each([null, "FALSE"])(
+    "refuses a missing or invalid target minification policy %j",
+    (clientMinified) => {
+      const { run, port } = serveFixture({
+        built: "memory",
+        runtime: "memory",
+        clientMinified,
+        info: {
+          dataBackend: "memory",
+          minified: false,
+          commit: "abc1234",
+          builtAt: "2026-10-08T00:00:00.000Z",
+        },
+      });
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toContain('EDP_CLIENT_MINIFIED must be "true" or "false"');
+      expect(port).toBeNull();
+    },
+  );
+
   it("refuses a build-info.json that doesn't say how the server was built", () => {
     const complete = {
       dataBackend: "memory",
+      minified: true,
       commit: "abc1234",
       builtAt: "2026-10-08T00:00:00.000Z",
     };
@@ -712,6 +977,8 @@ describe("databricks-app/serve.mjs — the runtime command", () => {
       { commit: complete.commit, builtAt: complete.builtAt },
       { ...complete, dataBackend: "" },
       { ...complete, dataBackend: "lakebase" },
+      { ...complete, minified: "false" },
+      { dataBackend: complete.dataBackend, commit: complete.commit, builtAt: complete.builtAt },
       { dataBackend: complete.dataBackend, builtAt: complete.builtAt },
       { dataBackend: complete.dataBackend, commit: complete.commit },
     ]) {

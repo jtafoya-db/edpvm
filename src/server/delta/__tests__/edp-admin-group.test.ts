@@ -82,10 +82,10 @@ beforeAll(async () => {
     return new Response(
       JSON.stringify({
         id: me.id,
-        userName: `${me.id}@example.test`,
+        userName: `${me.id}@example.gov`,
         displayName: me.displayName,
-        emails: [{ value: `${me.id}@example.test`, primary: true }],
-        groups: me.groups.map((value) => ({ value })),
+        emails: [{ value: `${me.id}@example.gov`, primary: true }],
+        groups: me.groups.map((value) => ({ value, type: "direct" })),
       }),
       { status: 200 },
     );
@@ -139,9 +139,11 @@ describe("onboarding review", () => {
       datasets: [
         {
           name: `Dataset ${n}`,
+          sourceSystem: "IMF / Individual Master File",
           domain: "individual-filing",
+          ingestionMethod: "eftu",
           datasetTag: `dataset_${n}`,
-          owners: [{ name: "Olive Owner", email: "olive.owner@example.test" }],
+          owners: [{ name: "Olive Owner", email: "olive.owner@example.gov" }],
         },
       ],
     });
@@ -176,7 +178,9 @@ describe("onboarding review", () => {
   }
 
   beforeEach(() => {
-    warehouse = createSqliteWarehouse({ files: ["store-admin.sql", "store-onboarding.sql"] });
+    warehouse = createSqliteWarehouse({
+      files: ["store-admin.sql", "store-teams.sql", "store-onboarding.sql"],
+    });
     deps = {
       registry: createAppRegistry(),
       runner: createTransactionRunner({ client: warehouse.client, names, sleep: async () => {} }),
@@ -221,7 +225,18 @@ describe("onboarding review", () => {
     for (const role of ["business-office", "ccb"]) {
       const inbox = await api(NON_MEMBER.user, "GET", `reads/onboarding/inbox?role=${role}`);
       expect(inbox.status, role).toBe(403);
+      expect(inbox.body["error"], role).toMatchObject({
+        message: "Nell Nonmember is not a direct member of the EDP admin group.",
+      });
     }
+    const wrongRole = await api(
+      { ...NON_MEMBER.user, onboardingReviewerRoles: ["business-office"] },
+      "GET",
+      "reads/onboarding/inbox?role=ccb",
+    );
+    expect(wrongRole.body["error"]).toMatchObject({
+      message: "Nell Nonmember is not a direct member of the EDP admin group.",
+    });
     const decided = await decide(NON_MEMBER.user, request);
     expect(decided.status).toBe(404);
     expect(decided.body["error"]).toMatchObject({ code: "not-found" });
@@ -359,7 +374,7 @@ describe("EIR definitions", () => {
 // --- change list and owner reassignment --------------------------------------
 
 describe("change list and owner reassignment", () => {
-  const TESS = { datasetId: DATASET_ID, name: "Tess Tester", email: "tess.tester@example.test" };
+  const TESS = { datasetId: DATASET_ID, name: "Tess Tester", email: "tess.tester@example.gov" };
 
   function sessions() {
     const common = {
@@ -391,9 +406,9 @@ describe("change list and owner reassignment", () => {
     const reassigned = await member.datasetTeam.addOwner({
       datasetId: DATASET_ID,
       name: "Nora New",
-      email: "nora.new@example.test",
+      email: "nora.new@example.gov",
     });
-    expect(reassigned.dataset.owners.map((o) => o.email)).toContain("nora.new@example.test");
+    expect(reassigned.dataset.owners.map((o) => o.email)).toContain("nora.new@example.gov");
   });
 
   it("refuses a non-member marking applied and reassigning an owner, and lists them nothing", async () => {
@@ -409,7 +424,7 @@ describe("change list and owner reassignment", () => {
       outsider.datasetTeam.addOwner({
         datasetId: DATASET_ID,
         name: "Nora New",
-        email: "nora.new@example.test",
+        email: "nora.new@example.gov",
       }),
     ).rejects.toMatchObject({ code: "not-owner" });
   });

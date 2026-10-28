@@ -35,6 +35,21 @@ function check(yaml: unknown, user: SessionUser = SAFEGUARDS, serves: AppSurface
 }
 
 describe("POST /api/eir-definitions/check", () => {
+  it.each([
+    [5, "Expected string, received number"],
+    [null, "Expected string, received null"],
+  ])("keeps Zod 3's exact wrong-type refusal for sourceYaml=%s", async (sourceYaml, message) => {
+    const response = await check(sourceYaml);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "invalid-request",
+        message: "The request doesn't match what this endpoint accepts.",
+        issues: [{ path: "sourceYaml", message }],
+      },
+    });
+  });
+
   it("validate returns parse/schema/semantic diagnostics with locations", async () => {
     const parse = await (await check("form: [\n  title: x\n")).json();
     expect(parse).toMatchObject({ ok: false, publishable: false });

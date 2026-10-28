@@ -241,16 +241,17 @@ TBLPROPERTIES ('delta.feature.catalogManaged' = 'supported', 'delta.enableChange
 CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') (
   id STRING NOT NULL COMMENT 'UUID the server generated',
   display_number BIGINT NOT NULL COMMENT 'Shown as CL-<n>; never a key',
-  kind STRING NOT NULL COMMENT 'add-member or remove-member',
-  reason STRING NOT NULL COMMENT 'Why, as a kind: dataset-role-added, dataset-role-changed, dataset-role-removed, dataset-owner-added, dataset-owner-removed',
+  kind STRING NOT NULL COMMENT 'add-member, remove-member or onboard-user',
+  reason STRING NOT NULL COMMENT 'Why, as a kind: dataset-role-added, dataset-role-changed, dataset-role-removed, dataset-owner-added, dataset-owner-removed, owner-not-a-databricks-user',
   caused_by_action_id STRING NOT NULL COMMENT 'The action that listed it; who and when come from there',
-  dataset_id STRING NOT NULL,
-  group_name STRING NOT NULL COMMENT 'The dataset group, for membership entries',
-  role STRING NOT NULL COMMENT 'The dataset role, for membership entries',
+  dataset_id STRING COMMENT 'The dataset, for membership entries; null for an initiative-wide kind (onboard-user)',
+  group_name STRING COMMENT 'The dataset group, for membership entries',
+  role STRING COMMENT 'The dataset role, for membership entries',
   person_display STRING NOT NULL,
   person_email STRING COMMENT 'For EDP staff to find the person in Databricks; null for an owner known only by account ID',
   person_principal_id STRING COMMENT 'Their Databricks account ID, once known',
-  grants ARRAY<STRING> NOT NULL COMMENT 'What the role grants or the person loses, from configuration when listed',
+  grants ARRAY<STRING> COMMENT 'What the role grants or the person loses, from configuration when listed; membership entries only',
+  target_payload STRING COMMENT 'JSON: the versioned typed target of a kind that is not membership (onboard-user: the person and initiative); null for membership entries. Data, never instructions',
   version BIGINT NOT NULL COMMENT '1 when listed, plus one on every action',
   created_at TIMESTAMP NOT NULL,
   created_by_principal_id STRING NOT NULL,
@@ -261,6 +262,33 @@ CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog_name || '.' || :schema_prefix || 
 )
 COMMENT 'One row per change-list entry: one change for EDP staff to make in Databricks (ADR-0005, ADR-0008).'
 TBLPROPERTIES ('delta.feature.catalogManaged' = 'supported', 'delta.enableRowTracking' = 'true');
+
+-- Kinds that aren't dataset membership (onboard-user, #103) carry their
+-- target as a versioned JSON payload (#263 generalises this), so the
+-- membership-only columns are nullable; the change_list_entries_shape check
+-- below still requires them on every membership entry. Databricks SQL has no
+-- ADD COLUMN IF NOT EXISTS, so the column is added only when
+-- information_schema says it's missing, and DROP NOT NULL on a nullable
+-- column is a no-op: a re-run changes nothing. Forward-only: an older
+-- store-teams.sql re-adds the two-kind check, which fails once an
+-- onboard-user row exists (docs/delta-schema.md).
+DECLARE OR REPLACE VARIABLE edp_migrate_change_list_entries_target_payload STRING;
+SET VAR edp_migrate_change_list_entries_target_payload = (
+  SELECT CASE WHEN count(*) = 0
+    THEN 'ALTER TABLE `' || replace(:catalog_name, '`', '``') || '`.`' || replace(:schema_prefix, '`', '``') || 'change_list`.`change_list_entries` '
+      || 'ADD COLUMN target_payload STRING COMMENT \'JSON: the versioned typed target of a kind that is not membership (onboard-user: the person and initiative); null for membership entries. Data, never instructions\''
+    ELSE 'SELECT 1' END
+  FROM IDENTIFIER(:catalog_name || '.information_schema.columns')
+  WHERE table_catalog = :catalog_name
+    AND table_schema = :schema_prefix || 'change_list'
+    AND table_name = 'change_list_entries'
+    AND column_name = 'target_payload'
+);
+EXECUTE IMMEDIATE edp_migrate_change_list_entries_target_payload;
+ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') ALTER COLUMN dataset_id DROP NOT NULL;
+ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') ALTER COLUMN group_name DROP NOT NULL;
+ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') ALTER COLUMN role DROP NOT NULL;
+ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') ALTER COLUMN grants DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entry_actions') (
   action_id STRING NOT NULL COMMENT 'UUID',
@@ -354,11 +382,13 @@ ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'teams.email_bi
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'teams.email_binding_actions') DROP CONSTRAINT IF EXISTS email_binding_actions_actor_app;
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'teams.email_binding_actions') ADD CONSTRAINT email_binding_actions_actor_app CHECK (actor_app IN ('tenant', 'staff', 'job', 'system'));
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') DROP CONSTRAINT IF EXISTS change_list_entries_kind;
-ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') ADD CONSTRAINT change_list_entries_kind CHECK (kind IN ('add-member', 'remove-member'));
+ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') ADD CONSTRAINT change_list_entries_kind CHECK (kind IN ('add-member', 'remove-member', 'onboard-user'));
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') DROP CONSTRAINT IF EXISTS change_list_entries_reason;
-ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') ADD CONSTRAINT change_list_entries_reason CHECK (reason IN ('dataset-role-added', 'dataset-role-changed', 'dataset-role-removed', 'dataset-owner-added', 'dataset-owner-removed'));
+ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') ADD CONSTRAINT change_list_entries_reason CHECK (reason IN ('dataset-role-added', 'dataset-role-changed', 'dataset-role-removed', 'dataset-owner-added', 'dataset-owner-removed', 'owner-not-a-databricks-user'));
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') DROP CONSTRAINT IF EXISTS change_list_entries_role;
-ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') ADD CONSTRAINT change_list_entries_role CHECK (role IN ('tester', 'developer', 'manager'));
+ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') ADD CONSTRAINT change_list_entries_role CHECK (role IS NULL OR role IN ('tester', 'developer', 'manager'));
+ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') DROP CONSTRAINT IF EXISTS change_list_entries_shape;
+ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') ADD CONSTRAINT change_list_entries_shape CHECK ((kind IN ('add-member', 'remove-member') AND dataset_id IS NOT NULL AND group_name IS NOT NULL AND role IS NOT NULL AND grants IS NOT NULL) OR (kind = 'onboard-user' AND target_payload IS NOT NULL AND person_email IS NOT NULL AND dataset_id IS NULL));
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') DROP CONSTRAINT IF EXISTS change_list_entries_person;
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entries') ADD CONSTRAINT change_list_entries_person CHECK (person_email IS NOT NULL OR person_principal_id IS NOT NULL);
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'change_list.change_list_entry_actions') DROP CONSTRAINT IF EXISTS change_list_entry_actions_action;

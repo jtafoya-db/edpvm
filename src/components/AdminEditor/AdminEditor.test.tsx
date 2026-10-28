@@ -189,13 +189,13 @@ describe("AdminEditor — field label / required edits + live preview", () => {
   it("edits a field label and the SchemaForm preview renders the new label", () => {
     renderEditor();
     tab(/^fields$/i);
-    fireEvent.change(screen.getByLabelText(/label for field sourceSystem/i), {
-      target: { value: "Accountable owner" },
+    fireEvent.change(screen.getByLabelText(/label for field dataName/i), {
+      target: { value: "Initiative title" },
     });
-    // switch to the live preview (step 0 = source, where `sourceSystem` lives)
+    // Switch to the live preview, where the initiative field is on step 1.
     tab(/live preview/i);
     // SchemaForm renders the field with its (edited) label as the input aria-label
-    expect(screen.getByLabelText(/accountable owner/i)).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: /initiative title/i })).toBeTruthy();
   });
 
   it("toggles a required flag and the emitted diff reflects it", () => {

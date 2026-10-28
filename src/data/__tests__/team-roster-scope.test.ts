@@ -27,11 +27,11 @@ const OTHER_OWNER: UserProfile = {
   ...STRANGER,
   principalId: "scim-other-owner-1",
   name: "Otto Other",
-  email: "otto.other@example.test",
+  email: "otto.other@example.gov",
 };
-const TESS = { name: "Tess Tester", email: "tess.tester@example.test" };
-const DEV = { name: "Dana Developer", email: "dana.developer@example.test" };
-const MONA = { name: "Mona Manager", email: "mona.manager@example.test" };
+const TESS = { name: "Tess Tester", email: "tess.tester@example.gov" };
+const DEV = { name: "Dana Developer", email: "dana.developer@example.gov" };
+const MONA = { name: "Mona Maintainer", email: "mona.maintainer@example.gov" };
 /** Signed in as a person on the team, by their email. */
 const as = (contact: { name: string; email: string }, principalId: string): UserProfile => ({
   ...STRANGER,
@@ -113,7 +113,7 @@ describe.each(BACKENDS)("team roster reads on the %s backend", (backend) => {
 
   it.each([
     { label: "a tester", user: TESTER },
-    { label: "a manager who isn't an owner", user: MANAGER },
+    { label: "a Maintainer who isn't an owner", user: MANAGER },
   ])("$label reads only their own rows, with no one else's email or SCIM id", async ({ user }) => {
     const { store, actAs } = await setup();
     actAs(user);
@@ -152,7 +152,7 @@ describe.each(BACKENDS)("team roster reads on the %s backend", (backend) => {
 
   it.each([
     { label: "a tester", user: TESTER, viewerRoles: ["developer"] },
-    { label: "a manager who isn't an owner", user: MANAGER, viewerRoles: ["manager"] },
+    { label: "a Maintainer who isn't an owner", user: MANAGER, viewerRoles: ["manager"] },
     { label: "someone with no role", user: STRANGER, viewerRoles: [] },
   ])(
     "member counts are withheld from $label, who still sees their own roles",

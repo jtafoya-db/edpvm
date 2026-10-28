@@ -53,35 +53,35 @@ function ownerGroupHandle(domainId: string): string {
 export const DOMAIN_OWNER_GROUPS: Readonly<Record<string, DomainOwnerGroup>> = {
   "individual-filing": {
     ownerGroup: ownerGroupHandle("individual-filing"),
-    members: ["marcus.liu@example.test", "individual-returns-council@example.test"],
+    members: ["marcus.liu@example.gov", "individual-returns-council@example.gov"],
   },
   "business-filing": {
     ownerGroup: ownerGroupHandle("business-filing"),
-    members: ["priya.nadar@example.test", "business-returns-council@example.test"],
+    members: ["priya.nadar@example.gov", "business-returns-council@example.gov"],
   },
   "modernized-efile": {
     ownerGroup: ownerGroupHandle("modernized-efile"),
-    members: ["erin.coyle@example.test", "submission-processing-council@example.test"],
+    members: ["erin.coyle@example.gov", "submission-processing-council@example.gov"],
   },
   "preparer-practitioner": {
     ownerGroup: ownerGroupHandle("preparer-practitioner"),
-    members: ["janet.osei@example.test", "return-preparer-office@example.test"],
+    members: ["janet.osei@example.gov", "return-preparer-office@example.gov"],
   },
   "enforcement-collections": {
     ownerGroup: ownerGroupHandle("enforcement-collections"),
-    members: ["carlos.reyes@example.test", "collection-strategy-council@example.test"],
+    members: ["carlos.reyes@example.gov", "collection-strategy-council@example.gov"],
   },
   "compliance-exam": {
     ownerGroup: ownerGroupHandle("compliance-exam"),
-    members: ["helen.park@example.test", "examination-data-council@example.test"],
+    members: ["helen.park@example.gov", "examination-data-council@example.gov"],
   },
   "taxpayer-identity": {
     ownerGroup: ownerGroupHandle("taxpayer-identity"),
-    members: ["sam.whitfield@example.test", "identity-assurance-council@example.test"],
+    members: ["sam.whitfield@example.gov", "identity-assurance-council@example.gov"],
   },
   "information-returns": {
     ownerGroup: ownerGroupHandle("information-returns"),
-    members: ["lena.brooks@example.test", "information-reporting-council@example.test"],
+    members: ["lena.brooks@example.gov", "information-reporting-council@example.gov"],
   },
 };
 
