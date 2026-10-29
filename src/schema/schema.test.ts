@@ -98,14 +98,13 @@ function oracleFmtUsd(n: number): string {
 
 function oracleCanNext(step: number, s: IntakeState): boolean {
   const dataName = String(s["dataName"] ?? "");
-  const steward = String(s["steward"] ?? "");
   const useCase = String(s["useCase"] ?? "");
   const levers = (s["levers"] as string[]) ?? [];
   return Boolean(
     step === 0
-      ? dataName.trim() && steward.trim() && !!s["domain"]
+      ? dataName.trim() && !!s["initiativeOwner"] && !!s["domain"]
       : step === 1
-        ? !!s["pattern"] && !!s["access"]
+        ? !!s["access"]
         : step === 2
           ? !!s["engModel"]
           : step === 3
@@ -124,28 +123,28 @@ const schema = loadSchema();
 const ORIG_INGEST: PatternOption[] = [
   {
     id: "eftu",
-    name: "EFTU secure file transfer",
-    desc: "Scheduled file drops from the source system via EFTU into EDP.",
+    name: "Enterprise File Transfer Utility (EFTU)",
+    desc: "Scheduled, secure file drops from an IRS source system into EDP.",
     approved: true,
     box: "EFTU",
   },
   {
     id: "informatica",
-    name: "Informatica ETL",
+    name: "Informatica data transfer",
     desc: "Informatica extracts and loads the source into EDP bronze tables.",
     approved: true,
     box: "Informatica",
   },
   {
     id: "epz",
-    name: "EPZ bucket landing zone",
+    name: "Secure cloud storage landing area",
     desc: "Source writes objects to the EPZ landing bucket; EDP ingests from there.",
     approved: true,
     box: "EPZ landing zone",
   },
   {
     id: "other",
-    name: "Something else (needs consultation)",
+    name: "I don’t know or need something else — consultation required",
     desc: "Direct DB links, APIs, streaming or custom connectors require an EDP architecture consultation.",
     approved: false,
     box: "Custom path",
@@ -176,7 +175,7 @@ const ORIG_ACCESS: PatternOption[] = [
   },
   {
     id: "other-access",
-    name: "Other tool / data extract (needs consultation)",
+    name: "I’m not sure or need another tool — consult EDP staff",
     desc: "Extracts to other platforms or custom apps require an EDP architecture consultation.",
     approved: false,
     box: "Other consumer",
@@ -250,11 +249,13 @@ const ORIG_LEVERS: LeverOption[] = [
 ];
 
 function oracleLaunch(values: IntakeState, domainName: string, num: number) {
-  const find = (list: PatternOption[], id: unknown) => list.find((p) => p.id === id) ?? list[0]!;
+  const find = (list: PatternOption[], id: unknown) => list.find((p) => p.id === id)!;
   const patternDef = find(ORIG_INGEST, values["pattern"]);
   const accessDef = find(ORIG_ACCESS, values["access"]);
   const engDef = find(ORIG_ENG, values["engModel"]);
-  const outcomeDef = ORIG_LEVERS.find((l) => l.id === values["outcome"]) ?? ORIG_LEVERS[0]!;
+  const outcomeDef = ORIG_LEVERS.find((l) => l.id === values["outcome"]);
+  const outcomeName = outcomeDef?.name ?? "not chosen";
+  const outcomeSummary = outcomeDef?.name ?? "Primary outcome: not chosen";
   const leverArr = (values["levers"] as string[]) ?? [];
   const leverLabels = ORIG_LEVERS.filter((l) => leverArr.includes(l.id)).map((l) => l.name);
   const needsConsult = !patternDef.approved || !accessDef.approved;
@@ -277,9 +278,13 @@ function oracleLaunch(values: IntakeState, domainName: string, num: number) {
     submittedAt: "Jun 5, 2026",
     status: "In progress",
     overall: "Submitted — pending EDP business and ROI review",
-    purpose: `Onboard ${dataName} from ${sourceSystem} into the ${domainName} domain via ${patternDef.name}, consumed through ${accessDef.name}. ${useCase} Mission value: ${leverLabels.join(", ")} (primary: ${outcomeDef.name}). Sizing: ${sizing.tier} (${sizeGb} GB, ${freq} loads, ${complexity} transforms, ${users} query users) · est. ${oracleFmtUsd(sizing.annualCost)}/yr vs. ${oracleFmtUsd(annualBenefit)} annual benefit (ROI ${roi.ratio}x).`,
+    purpose: `Onboard ${dataName} from ${sourceSystem} into the ${domainName} domain via ${patternDef.name}, consumed through ${accessDef.name}. ${useCase} Mission value: ${leverLabels.join(", ")} (primary: ${outcomeName}). Sizing: ${sizing.tier} (${sizeGb} GB, ${freq} loads, ${complexity} transforms, ${users} query users) · est. ${oracleFmtUsd(sizing.annualCost)}/yr vs. ${oracleFmtUsd(annualBenefit)} annual benefit (ROI ${roi.ratio}x).`,
     items: [
-      { kind: "Onboarding", label: dataName, sub: `${domainName} · ${sizing.tier}` },
+      {
+        kind: "Onboarding",
+        label: dataName,
+        sub: `Target: the ${domainName} domain · ${sizing.tier}`,
+      },
       {
         kind: "Onboarding",
         label: `Ingestion — ${patternDef.name}`,
@@ -293,7 +298,7 @@ function oracleLaunch(values: IntakeState, domainName: string, num: number) {
       },
       {
         kind: "Onboarding",
-        label: `Mission value — ${outcomeDef.name}`,
+        label: `Mission value — ${outcomeSummary}`,
         sub: leverLabels.join(" · "),
       },
       {
@@ -326,12 +331,12 @@ function oracleLaunch(values: IntakeState, domainName: string, num: number) {
       {
         system: "EDP business and ROI review",
         status: needsConsult ? "pending" : "active",
-        detail: `${outcomeDef.name} · ${oracleFmtUsd(sizing.annualCost)}/yr est. cost · ROI ${roi.ratio}x`,
+        detail: `${outcomeSummary} · ${oracleFmtUsd(sizing.annualCost)}/yr est. cost · ROI ${roi.ratio}x`,
       },
       {
         system: "EDP intake CCB",
         status: "pending",
-        detail: `${domainName} intake change control board`,
+        detail: `Intake change control board for the ${domainName} domain`,
       },
       {
         system: "BEARS entitlement creation",
@@ -353,7 +358,7 @@ function oracleLaunch(values: IntakeState, domainName: string, num: number) {
 describe("loadSchema", () => {
   it("returns the original wizard steps, extended with datasets and workspace needs (#86)", () => {
     expect(schema.steps.map((s) => s.label)).toEqual([
-      "Source profile",
+      "Initiative",
       "Architecture",
       "Delivery support",
       "Business case",
@@ -368,21 +373,20 @@ describe("loadSchema", () => {
     expect(loadSchema()).toBe(loadSchema());
   });
 
-  it("carries the original field defaults", () => {
-    expect(getField(schema, "sourceSystem")?.default).toBe("IMF / Individual Master File");
-    expect(getField(schema, "sensitivity")?.default).toBe("SBU (FTI)");
-    expect(getField(schema, "pattern")?.default).toBe("eftu");
-    expect(getField(schema, "access")?.default).toBe("dbx");
-    expect(getField(schema, "engModel")?.default).toBe("self");
-    expect(getField(schema, "outcome")?.default).toBe("fraud");
-    expect(getField(schema, "levers")?.default).toEqual(["fraud"]);
-    expect(getField(schema, "annualBenefit")?.default).toBe(750000);
-    expect(getField(schema, "hoursSaved")?.default).toBe(1200);
-    expect(getField(schema, "priority")?.default).toBe("Mission-critical");
-    expect(getField(schema, "sizeGb")?.default).toBe(500);
-    expect(getField(schema, "freq")?.default).toBe("Daily");
-    expect(getField(schema, "complexity")?.default).toBe("Moderate");
-    expect(getField(schema, "users")?.default).toBe(40);
+  it("starts provider-supplied answers empty instead of claiming prototype examples", () => {
+    expect(getField(schema, "sourceSystem")).toBeUndefined();
+    expect(getField(schema, "sensitivity")?.default).toBeNull();
+    expect(getField(schema, "sensitivity")?.placeholder).toBe("Choose a sensitivity");
+    expect(getField(schema, "access")?.default).toBeNull();
+    expect(getField(schema, "engModel")?.default).toBeNull();
+    expect(getField(schema, "levers")?.default).toEqual([]);
+    expect(getField(schema, "outcome")?.default).toBeNull();
+    expect(getField(schema, "annualBenefit")?.default).toBeNull();
+    expect(getField(schema, "hoursSaved")?.default).toBeNull();
+    expect(getField(schema, "sizeGb")?.default).toBeNull();
+    expect(getField(schema, "freq")?.default).toBeNull();
+    expect(getField(schema, "complexity")?.default).toBeNull();
+    expect(getField(schema, "users")?.default).toBeNull();
   });
 
   it("preserves the sizing coefficients", () => {
@@ -390,10 +394,17 @@ describe("loadSchema", () => {
     expect(schema.sizing.cplxFactor).toEqual(CPLX_FACTOR);
   });
 
-  it("preserves the original option lists verbatim", () => {
-    expect(schema.optionLists.ingestPatterns).toEqual(ORIG_INGEST);
-    expect(schema.optionLists.accessPatterns).toEqual(ORIG_ACCESS);
-    expect(schema.optionLists.engModels).toEqual(ORIG_ENG);
+  it("preserves stable option ids while using provider-facing explanations", () => {
+    expect(schema.optionLists.ingestPatterns.map((option) => option.id)).toEqual(
+      ORIG_INGEST.map((option) => option.id),
+    );
+    expect(schema.optionLists.accessPatterns.map((option) => option.id)).toEqual(
+      ORIG_ACCESS.map((option) => option.id),
+    );
+    expect(schema.optionLists.engModels.map((option) => option.id)).toEqual(
+      ORIG_ENG.map((option) => option.id),
+    );
+    expect(schema.optionLists.ingestPatterns[0]?.name).toMatch(/Enterprise File Transfer Utility/);
     expect(schema.optionLists.roiLevers).toEqual(ORIG_LEVERS);
   });
 });
@@ -421,20 +432,35 @@ describe("canAdvance (canNext parity)", () => {
   ];
 
   it("matches the original per-step gates across sample states", () => {
-    for (let step = 0; step < stepIds.length; step++) {
+    // Source system/domain/ingestion moved to each dataset, so the original
+    // initiative/source and architecture gates no longer have parity.
+    for (let step = 2; step < stepIds.length; step++) {
       for (const state of states) {
         // The original wizard had no initiative owner (#103), so it's answered here.
-        const answered = { initiativeOwner: { kind: "self" }, ...state };
-        // Nor does the wizard ask for a steward any more (#103): the original's steward gate is passed.
-        expect(canAdvance(schema, stepIds[step]!, answered)).toBe(
-          oracleCanNext(step, { ...state, steward: "-" }),
-        );
+        const answered = {
+          initiativeOwner: { kind: "self" },
+          sensitivity: "SBU",
+          ...state,
+        };
+        expect(canAdvance(schema, stepIds[step]!, answered)).toBe(oracleCanNext(step, answered));
       }
     }
   });
 
   it("gates the review step open regardless of state", () => {
     expect(canAdvance(schema, "review", {})).toBe(true);
+  });
+});
+
+describe("required mission meaning", () => {
+  it("requires positive benefit but leaves outcome and priority optional", () => {
+    const state = {
+      useCase: "A sufficiently detailed mission case",
+      levers: ["fraud"],
+      annualBenefit: 100,
+    };
+    expect(validateStep(schema, "business", state)).toEqual([]);
+    expect(canAdvance(schema, "business", state)).toBe(true);
   });
 });
 
@@ -457,6 +483,25 @@ describe("estimateSizing / computeRoi / fmtUsd parity", () => {
     }
   });
 
+  it("maps provider-facing complexity labels to the original sizing factors", () => {
+    const estimate = (complexity: string) =>
+      estimateSizing(schema, { sizeGb: 500, freq: "Daily", complexity, users: 40 });
+    expect(estimate("Light — copy, filter, or rename")).toMatchObject({
+      dbu: 620,
+      monthlyCost: 3990,
+    });
+    expect(
+      estimate("Heavy — many joins, large aggregations, or frequent recomputation"),
+    ).toMatchObject({
+      dbu: 950,
+      monthlyCost: 5150,
+    });
+    expect(estimate("Machine learning — feature engineering or model workloads")).toMatchObject({
+      dbu: 1160,
+      monthlyCost: 5880,
+    });
+  });
+
   it("reproduces ROI computation", () => {
     for (const benefit of [0, 750000, 1200000, 50000]) {
       for (const annualCost of [1, 84000, 250000]) {
@@ -473,13 +518,13 @@ describe("estimateSizing / computeRoi / fmtUsd parity", () => {
 });
 
 describe("resolveSelections", () => {
-  it("falls back to the first option for unknown ids", () => {
+  it("does not substitute the first option for blank or unknown ids", () => {
     const sel = resolveSelections(schema, {});
-    expect(sel.patternDef.id).toBe("eftu");
-    expect(sel.accessDef.id).toBe("dbx");
-    expect(sel.engDef.id).toBe("self");
-    expect(sel.outcomeDef.id).toBe("fraud");
-    expect(sel.needsConsult).toBe(false);
+    expect(sel.patternDef.name).toBe("Not chosen");
+    expect(sel.accessDef.name).toBe("Not chosen");
+    expect(sel.engDef.name).toBe("Not chosen");
+    expect(sel.outcomeDef).toBeNull();
+    expect(sel.needsConsult).toBe(true);
     expect(sel.leverLabels).toEqual([]);
   });
 
@@ -598,6 +643,63 @@ describe("assembleRequest interprets (not ignores) the declarative request confi
     expect(out.purpose).toBe("Purpose: Alpha dataset / Zeta source");
   });
 
+  it("keeps a blank optional primary outcome blank in confirmation copy", () => {
+    const out = assembleRequest(schema, {
+      ...args,
+      values: { ...baseValues, outcome: "" },
+    });
+    expect(out.purpose).toContain("(primary: not chosen)");
+    expect(out.items).toContainEqual(
+      expect.objectContaining({ label: "Mission value — Primary outcome: not chosen" }),
+    );
+    expect(out.purpose).not.toContain("primary: Reduce fraud and improper payments");
+    const businessReview = out.subRequests.find(
+      (sub) => sub.system === "EDP business and ROI review",
+    );
+    expect(businessReview?.detail).toMatch(/^Primary outcome: not chosen · \$\S+\/yr est\. cost/);
+  });
+
+  it("lists every dataset domain in confirmation copy", () => {
+    const out = assembleRequest(schema, {
+      ...args,
+      values: {
+        ...baseValues,
+        datasets: [
+          {
+            name: "Returns",
+            sourceSystem: "IMF",
+            domain: "individual-filing",
+            ingestionMethod: "eftu",
+            datasetTag: "returns",
+            owners: [],
+          },
+          {
+            name: "Cases",
+            sourceSystem: "ICS",
+            domain: "enforcement-collections",
+            ingestionMethod: "informatica",
+            datasetTag: "cases",
+            owners: [],
+          },
+        ],
+      },
+      domainNames: {
+        "individual-filing": "Individual Filing",
+        "enforcement-collections": "Enforcement & Collections",
+      },
+    });
+    expect(out.purpose).toContain("the Individual Filing; Enforcement & Collections domains");
+    expect(out.items[0]?.sub).toBe(
+      "Target: the Individual Filing; Enforcement & Collections domains · Medium — dedicated pipeline",
+    );
+    expect(out.subRequests).toContainEqual({
+      system: "EDP intake CCB",
+      status: "pending",
+      detail:
+        "Intake change control board for the Individual Filing; Enforcement & Collections domains",
+    });
+  });
+
   it("actually consumes fieldMap (remapping a context var changes output)", () => {
     const base = assembleRequest(schema, args);
     const remapped = assembleRequest(
@@ -627,10 +729,12 @@ describe("assembleRequest interprets (not ignores) the declarative request confi
 });
 
 describe("the extended intake — datasets and workspace needs (#86)", () => {
-  const owner = { name: "Olive Owner", email: "olive.owner@example.test" };
+  const owner = { name: "Olive Owner", email: "olive.owner@example.gov" };
   const dataset = {
     name: "Case signals",
+    sourceSystem: "IMF / Individual Master File",
     domain: "individual-filing",
+    ingestionMethod: "eftu",
     datasetTag: "case_signals",
     owners: [owner],
   };
@@ -652,7 +756,9 @@ describe("the extended intake — datasets and workspace needs (#86)", () => {
       validateDatasets([dataset, { name: "", domain: "", datasetTag: "  ", owners: [] }]),
     ).toEqual([
       "Dataset 2: enter a dataset name.",
+      "Dataset 2: enter a source system.",
       'Dataset 2: choose a domain, or "Other".',
+      "Dataset 2: choose how this dataset gets into EDP.",
       "Dataset 2: enter a dataset tag.",
       "Dataset 2: name at least one dataset owner.",
     ]);
@@ -689,6 +795,7 @@ describe("the extended intake — datasets and workspace needs (#86)", () => {
     expect(validateStep(schema, "source", { domain: "individual-filing" })).toEqual([
       { field: "dataName", message: "Initiative name is required." },
       { field: "initiativeOwner", key: "kind", message: "Choose who owns the initiative." },
+      { field: "sensitivity", message: "Data sensitivity is required." },
     ]);
   });
 
@@ -698,19 +805,29 @@ describe("the extended intake — datasets and workspace needs (#86)", () => {
   });
 });
 
-describe("the initiative owner (#103)", () => {
+describe("the initiative point of contact (#103)", () => {
   const owner = (value: unknown) => validateStep(schema, "source", { initiativeOwner: value });
   const ownerIssues = (value: unknown) =>
     owner(value).filter((issue) => issue.field === "initiativeOwner");
 
-  it("declares a required initiative owner on the first step", () => {
+  it("declares a required initiative point of contact on the first step", () => {
     expect(getField(schema, "initiativeOwner")).toMatchObject({
       step: "source",
       type: "initiative-owner",
-      label: "Initiative owner",
+      label: "Initiative point of contact",
       required: true,
     });
     expect(schema.steps[0]?.layout?.flat()).toContain("initiativeOwner");
+  });
+
+  it("requires the provider to choose one of the original sensitivity values", () => {
+    expect(getField(schema, "sensitivity")).toMatchObject({
+      required: true,
+      options: ["SBU", "SBU (FTI)", "Non-SBU"],
+    });
+    expect(
+      validateStep(schema, "source", { sensitivity: "" }).map((issue) => issue.message),
+    ).toContain("Data sensitivity is required.");
   });
 
   it("needs Myself or Someone else to be chosen", () => {
@@ -726,15 +843,19 @@ describe("the initiative owner (#103)", () => {
 
   it("needs a name and a valid email for Someone else", () => {
     expect(ownerIssues({ kind: "someone-else", name: " ", email: "not-an-email" })).toEqual([
-      { field: "initiativeOwner", key: "name", message: "Enter the initiative owner's name." },
+      {
+        field: "initiativeOwner",
+        key: "name",
+        message: "Enter the initiative point of contact's name.",
+      },
       {
         field: "initiativeOwner",
         key: "email",
-        message: "Enter a valid email address for the initiative owner.",
+        message: "Enter a valid email address for the initiative point of contact.",
       },
     ]);
     expect(
-      ownerIssues({ kind: "someone-else", name: "Sam Else", email: "sam.else@example.test" }),
+      ownerIssues({ kind: "someone-else", name: "Sam Else", email: "sam.else@example.gov" }),
     ).toEqual([]);
   });
 
@@ -761,14 +882,14 @@ describe("the initiative owner (#103)", () => {
       expect(
         ownerIssues(withOwners({ self: false, name: "", email: "" })).map((issue) => issue.key),
       ).toEqual(["0:owner0:name", "0:owner0:email"]);
-      expect(ownerIssues(withOwners({ self: false, name: "Olive", email: "o@example.test" }))).toEqual(
+      expect(ownerIssues(withOwners({ self: false, name: "Olive", email: "o@example.gov" }))).toEqual(
         [],
       );
     });
 
     it("allows Myself once per dataset, and on more than one dataset", () => {
       const me = { self: true, name: "", email: "" };
-      expect(ownerIssues(withOwners(me, { name: "Olive", email: "o@example.test" }, me))).toEqual([
+      expect(ownerIssues(withOwners(me, { name: "Olive", email: "o@example.gov" }, me))).toEqual([
         {
           field: "datasets",
           key: "0:owner2:kind",
@@ -777,7 +898,14 @@ describe("the initiative owner (#103)", () => {
       ]);
       const two = [
         ...withOwners(me),
-        { name: "Other", domain: "individual-filing", datasetTag: "other_tag", owners: [me] },
+        {
+          name: "Other",
+          sourceSystem: "BMF / Business Master File",
+          domain: "individual-filing",
+          ingestionMethod: "informatica",
+          datasetTag: "other_tag",
+          owners: [me],
+        },
       ];
       expect(ownerIssues(two)).toEqual([]);
     });
@@ -786,7 +914,9 @@ describe("the initiative owner (#103)", () => {
   it("takes a dataset owner picked as Myself without a name or email", () => {
     const dataset = {
       name: "Case signals",
+      sourceSystem: "IMF / Individual Master File",
       domain: "individual-filing",
+      ingestionMethod: "eftu",
       datasetTag: "case_signals",
       owners: [{ self: true, name: "", email: "" }],
     };
@@ -803,6 +933,7 @@ describe("no accountable data steward (#103)", () => {
         dataName: "Set",
         initiativeOwner: { kind: "self" },
         domain: "individual-filing",
+        sensitivity: "SBU (FTI)",
       }),
     ).toEqual([]);
   });
@@ -857,6 +988,8 @@ describe("number fields typed as text", () => {
     validateStep(schema, "business", {
       useCase: "Score preparer risk weekly instead of quarterly.",
       levers: ["fraud"],
+      outcome: "fraud",
+      priority: "Standard — valuable planned work",
       annualBenefit: 750000,
       ...values,
     }).map((issue) => issue.message);

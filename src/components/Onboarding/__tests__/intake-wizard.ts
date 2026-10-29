@@ -4,13 +4,20 @@
 // accountable data steward) is made once, not in every test that walks it.
 import { fireEvent, within } from "@testing-library/react";
 
+function formControl(scope: HTMLElement, label: string | RegExp): HTMLElement {
+  return within(scope)
+    .getAllByLabelText(label)
+    .find((element) => element.tagName !== "BUTTON")!;
+}
+
 /** Fill the first step's required fields: the initiative name and its owner, Myself. */
 export function fillInitiativeStep(scope: HTMLElement, name = "Collections case signals"): void {
-  fireEvent.change(within(scope).getByLabelText(/initiative name/i), {
+  fireEvent.change(formControl(scope, /initiative name/i), {
     target: { value: name },
   });
-  const owner = within(scope).getByRole("group", { name: /initiative owner/i });
+  const owner = within(scope).getByRole("group", { name: /initiative point of contact/i });
   fireEvent.click(within(owner).getByRole("radio", { name: /myself/i }));
+  fireEvent.change(formControl(scope, /data sensitivity/i), { target: { value: "SBU" } });
 }
 
 /** Name dataset `d`'s owner `o` (both 1-based) as Someone else, with a name and email. */

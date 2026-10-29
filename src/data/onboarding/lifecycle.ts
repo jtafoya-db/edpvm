@@ -172,14 +172,11 @@ export function resubmissionStage(
   return stage ?? ONBOARDING_RESUBMISSION_FALLBACK_STAGE;
 }
 
-/** Refuse a reviewer decision from anyone outside the stage's configured reviewer group. */
+/** Refuse a reviewer decision from anyone outside the EDP admin group. */
 export function assertReviewer(stage: OnboardingReviewStage, actor: OnboardingActor): void {
   const role = REVIEWER_FOR_STAGE[stage];
   if (!actor.reviewerRoles.includes(role)) {
-    throw new Error(
-      `Only the ${REVIEWER_LABEL[role]} can decide at ${onboardingStageLabel(stage)}; ` +
-        `${actor.name} is not a member of the configured ${REVIEWER_LABEL[role]} group.`,
-    );
+    throw new Error(`${actor.name} is not a direct member of the EDP admin group.`);
   }
 }
 

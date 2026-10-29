@@ -150,6 +150,7 @@ CREATE TABLE IF NOT EXISTS IDENTIFIER(:catalog_name || '.' || :schema_prefix || 
   eir_draft_id STRING NOT NULL COMMENT 'The exact versioned draft evaluated',
   action STRING NOT NULL COMMENT 'evaluated',
   record_version BIGINT NOT NULL COMMENT 'The evaluated draft version',
+  evaluation_sequence BIGINT COMMENT 'The evaluation\'s place among its draft\'s evaluations: 1, 2, 3 in the order written, even within one millisecond; null on rows written before #204',
   actor_principal_id STRING NOT NULL,
   actor_display STRING NOT NULL,
   actor_app STRING NOT NULL,
@@ -197,6 +198,23 @@ SET VAR edp_migrate_eirs_display_code = (
 );
 EXECUTE IMMEDIATE edp_migrate_eirs_display_code;
 ALTER TABLE IDENTIFIER(:catalog_name || '.' || :schema_prefix || 'eir.eirs') ALTER COLUMN display_number DROP NOT NULL;
+
+-- #204: each evaluation's place among its draft's evaluations, so the latest
+-- is the one written last even when two share a millisecond. Rows written
+-- before it keep a null and sort before every row that has one.
+DECLARE OR REPLACE VARIABLE edp_migrate_eir_evaluations_sequence STRING;
+SET VAR edp_migrate_eir_evaluations_sequence = (
+  SELECT CASE WHEN count(*) = 0
+    THEN 'ALTER TABLE `' || replace(:catalog_name, '`', '``') || '`.`' || replace(:schema_prefix, '`', '``') || 'eir`.`eir_evaluations` '
+      || 'ADD COLUMN evaluation_sequence BIGINT COMMENT \'The evaluation\\\'s place among its draft\\\'s evaluations: 1, 2, 3 in the order written, even within one millisecond; null on rows written before #204\''
+    ELSE 'SELECT 1' END
+  FROM IDENTIFIER(:catalog_name || '.information_schema.columns')
+  WHERE table_catalog = :catalog_name
+    AND table_schema = :schema_prefix || 'eir'
+    AND table_name = 'eir_evaluations'
+    AND column_name = 'evaluation_sequence'
+);
+EXECUTE IMMEDIATE edp_migrate_eir_evaluations_sequence;
 
 -- Enums are CHECK constraints. Delta has no ADD CONSTRAINT IF NOT EXISTS, so
 -- each is dropped and re-added; re-adding validates the existing rows.

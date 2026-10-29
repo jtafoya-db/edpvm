@@ -12,7 +12,7 @@ const PROFILE: UserProfile = {
   initials: "RR",
   title: "EDP staff",
   tenant: "EDP",
-  email: "riley.reviewer@example.test",
+  email: "riley.reviewer@example.gov",
   isOnboardingLead: false,
   isAdmin: true,
   onboardingReviewerRoles: ["business-office", "ccb"],

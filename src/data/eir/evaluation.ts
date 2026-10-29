@@ -1,3 +1,5 @@
+import { DEFAULT_EIR_APPROVAL_CONFIG, isQualifyingOutcome } from "./approval-mode";
+import type { EirAutomaticValidityOutcome } from "./approval-mode";
 import { fieldRule } from "./definition/load";
 import type { EirDefinition, EirDisposition, EirRuleDefinition } from "./definition/types";
 import { EIR_FORM } from "./config";
@@ -108,13 +110,19 @@ export function evaluateEirRules(input: {
   return { outcome, outcomes };
 }
 
-/** Evaluate only an already validated, typed definition and a versioned persisted draft. */
+/**
+ * Evaluate only an already validated, typed definition and a versioned
+ * persisted draft. `automaticValidityOutcomes` is the deploy's setting
+ * (#204, `pass` only by default): it decides only what's recorded as
+ * eligible, never the outcome.
+ */
 export function evaluateEirDraft(input: {
   definition: EirDefinition;
   values: EirFormValues;
   draftVersion: number;
   draftStartedAt: string;
   effectiveAt: string;
+  automaticValidityOutcomes?: readonly EirAutomaticValidityOutcome[];
 }): EirEvaluation {
   const evaluated = evaluateEirRules(input);
   return {
@@ -125,7 +133,10 @@ export function evaluateEirDraft(input: {
     evaluatedDraftVersion: input.draftVersion,
     outcome: evaluated.outcome,
     outcomes: evaluated.outcomes,
-    automaticValidityEligible: evaluated.outcome === "pass" || evaluated.outcome === "warning",
+    automaticValidityEligible: isQualifyingOutcome(evaluated.outcome, {
+      automaticValidityOutcomes:
+        input.automaticValidityOutcomes ?? DEFAULT_EIR_APPROVAL_CONFIG.automaticValidityOutcomes,
+    }),
     actorPrincipalId: "system",
     actorDisplay: "EDP Vending Machine",
     actorApp: "system",

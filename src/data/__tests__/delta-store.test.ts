@@ -509,7 +509,7 @@ describe("Delta adapter: datasets, team and change list go to the Delta API", ()
   it("sends a team write as one request, the command, with no actor in the body", async () => {
     const member = {
       datasetId: DATASET_ID,
-      person: { name: "Tess Tester", email: "tess.tester@example.test" },
+      person: { name: "Tess Tester", email: "tess.tester@example.gov" },
       role: "tester",
       addedBy: OWNER.principalId,
       addedAt: "2026-10-01T12:00:00.000Z",
@@ -521,7 +521,7 @@ describe("Delta adapter: datasets, team and change list go to the Delta API", ()
     const added = await store.datasetRoles.addMember({
       datasetId: DATASET_ID,
       name: " Tess Tester ",
-      email: " Tess.Tester@example.test ",
+      email: " Tess.Tester@example.gov ",
       role: "tester",
     });
 
@@ -532,7 +532,7 @@ describe("Delta adapter: datasets, team and change list go to the Delta API", ()
     expect(body["payload"]).toEqual({
       datasetId: DATASET_ID,
       name: "Tess Tester",
-      email: "tess.tester@example.test",
+      email: "tess.tester@example.gov",
       role: "tester",
     });
     // What the screen gets has no row ID or version in it.
@@ -591,7 +591,7 @@ describe("Delta adapter: datasets, team and change list go to the Delta API", ()
       store.datasetRoles.addMember({
         datasetId: DATASET_ID,
         name: "X",
-        email: "x@example.test",
+        email: "x@example.gov",
         role: "tester",
       }),
     ).rejects.toMatchObject({ name: "ActionRefusedError", code: "not-owner" });
@@ -599,7 +599,7 @@ describe("Delta adapter: datasets, team and change list go to the Delta API", ()
 
   it("binds an owner's email on their first action, then resends the same key once", async () => {
     const owners = [
-      { displayName: "Nora Owner", email: "nora.owner@example.test", ref: { id: "o", version: 1 } },
+      { displayName: "Nora Owner", email: "nora.owner@example.gov", ref: { id: "o", version: 1 } },
     ];
     const dataset = { id: DATASET_ID, owners };
     const { calls, transport } = recording([
@@ -616,7 +616,7 @@ describe("Delta adapter: datasets, team and change list go to the Delta API", ()
     await store.datasetTeam.addOwner({
       datasetId: DATASET_ID,
       name: "Drew Partner",
-      email: "drew.partner@example.test",
+      email: "drew.partner@example.gov",
       idempotencyKey: "one-intent",
     });
 
@@ -649,7 +649,7 @@ describe("Delta adapter: datasets, team and change list go to the Delta API", ()
       store.datasetRoles.addMember({
         datasetId: DATASET_ID,
         name: "Tess Tester",
-        email: "tess.tester@example.test",
+        email: "tess.tester@example.gov",
         role: "tester",
         idempotencyKey: "fixed-key",
       }),

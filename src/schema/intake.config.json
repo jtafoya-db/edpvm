@@ -3,48 +3,38 @@
   "steps": [
     {
       "id": "source",
-      "label": "Source profile",
-      "title": "Tell us about the data",
-      "eyebrow": "Source profile",
-      "layout": [
-        "dataName",
-        "initiativeOwner",
-        ["sourceSystem", "domain", "sensitivity"],
-        "ftiNote"
-      ]
+      "label": "Initiative",
+      "title": "Tell us about the initiative",
+      "eyebrow": "Initiative",
+      "layout": ["dataName", "initiativeOwner", "sensitivity", "ftiNote"]
     },
     {
       "id": "architecture",
       "label": "Architecture",
-      "title": "Design the data flow",
-      "eyebrow": "Architecture — approved patterns",
-      "layout": ["architectureIntro", "pattern", "access", "archDiagram", "architectureNote"]
+      "title": "How will your team access this data?",
+      "eyebrow": "Initiative access method",
+      "layout": ["architectureIntro", "access", "accessConsultDetails"]
     },
     {
       "id": "delivery",
       "label": "Delivery support",
       "title": "Who builds the pipelines?",
       "eyebrow": "Data engineering delivery model",
-      "layout": ["deliveryIntro", "engModel", "deliveryNote"]
+      "layout": ["deliveryIntro", "engModel", "deliverySupportDetails", "deliveryNote"]
     },
     {
       "id": "business",
       "label": "Business case",
       "title": "What mission value does this data create?",
       "eyebrow": "Business justification & mission ROI",
-      "layout": [
-        "levers",
-        "useCase",
-        ["outcome", "priority", "annualBenefit", "hoursSaved"],
-        "businessNote"
-      ]
+      "layout": ["levers", "useCase", ["outcome", "annualBenefit", "hoursSaved"], "businessNote"]
     },
     {
       "id": "datasets",
       "label": "Datasets",
-      "title": "Which datasets are you bringing, and who owns them?",
-      "eyebrow": "Datasets, domains & dataset owners",
-      "layout": ["datasetsIntro", "datasets"]
+      "title": "Which input datasets are you bringing into EDP?",
+      "eyebrow": "Input datasets, sources, governance & ingestion",
+      "layout": ["datasetsIntro", "datasets", "archDiagram", "architectureNote"]
     },
     {
       "id": "workspace",
@@ -54,6 +44,7 @@
       "layout": [
         "workspaceIntro",
         ["isolation", "teamSize"],
+        "isolationReason",
         "workspaceCriteria",
         "computePolicyOverview"
       ]
@@ -61,8 +52,8 @@
     {
       "id": "sizing",
       "label": "Sizing",
-      "title": "AI-assisted sizing",
-      "eyebrow": "Capacity & cost estimate",
+      "title": "Estimate initiative capacity",
+      "eyebrow": "Preliminary capacity and cost",
       "layout": [["sizeGb", "freq", "complexity", "users"], "sizingEstimator"]
     },
     {
@@ -81,62 +72,49 @@
       "label": "Initiative name",
       "required": true,
       "default": "",
-      "placeholder": "e.g. Preparer oversight analytics"
+      "placeholder": "e.g. Preparer oversight analytics",
+      "help": "An initiative is the project or body of work bringing one or more new datasets into EDP. Use the name your team and leadership recognize."
     },
     {
       "id": "initiativeOwner",
       "step": "source",
       "type": "initiative-owner",
-      "label": "Initiative owner",
+      "label": "Initiative point of contact",
       "required": true,
       "default": null,
-      "help": "The person accountable for this initiative: you, or someone you name."
-    },
-    {
-      "id": "sourceSystem",
-      "step": "source",
-      "type": "text",
-      "label": "Source system",
-      "required": false,
-      "default": "IMF / Individual Master File",
-      "placeholder": "e.g. IMF / Individual Master File"
-    },
-    {
-      "id": "domain",
-      "step": "source",
-      "type": "select",
-      "label": "Target domain",
-      "required": true,
-      "default": null,
-      "dynamicOptions": "domains"
+      "help": "The person accountable for shepherding this request: you, or someone you name. Being the point of contact does not add anyone to a dataset team or give dataset-owner rights."
     },
     {
       "id": "sensitivity",
       "step": "source",
       "type": "select",
       "label": "Data sensitivity",
-      "help": "SBU means sensitive but unclassified. FTI means federal tax information.",
-      "required": false,
-      "default": "SBU (FTI)",
-      "options": ["SBU", "SBU (FTI)", "Non-SBU"]
-    },
-    {
-      "id": "pattern",
-      "step": "architecture",
-      "type": "card-select",
-      "label": "How does the data get into EDP?",
       "required": true,
-      "default": "eftu",
-      "optionList": "ingestPatterns"
+      "default": null,
+      "placeholder": "Choose a sensitivity",
+      "options": ["SBU", "SBU (FTI)", "Non-SBU"],
+      "help": "Choose the closest classification for the initiative's source data. Some datasets may need extra restrictions; EDP staff will discuss those needs during review."
     },
     {
       "id": "access",
       "step": "architecture",
       "type": "card-select",
-      "label": "How will people access it?",
+      "label": "How will your team access this data?",
       "required": true,
-      "default": "dbx",
-      "optionList": "accessPatterns"
+      "default": null,
+      "optionList": "accessPatterns",
+      "help": "Choose how your team expects to query or analyze this data. This does not give other teams access; data permissions are granted separately."
+    },
+    {
+      "id": "accessConsultDetails",
+      "step": "architecture",
+      "type": "textarea",
+      "label": "Proposed data access approach",
+      "required": false,
+      "default": "",
+      "rows": 3,
+      "placeholder": "Describe the tool, application, export, or user workflow you need.",
+      "help": "Tell EDP who needs the data, which tool or system they use, and what they need to do with it. Leave blank when the approved option already describes the need."
     },
     {
       "id": "engModel",
@@ -144,8 +122,20 @@
       "type": "card-select",
       "label": "Data engineering delivery model",
       "required": true,
-      "default": "self",
-      "optionList": "engModels"
+      "default": null,
+      "optionList": "engModels",
+      "help": "Tell EDP who will build and maintain the pipelines. Your own resources may be IRS employees, contractors, or implementation partners."
+    },
+    {
+      "id": "deliverySupportDetails",
+      "step": "delivery",
+      "type": "textarea",
+      "label": "Engineering support needed",
+      "required": false,
+      "default": "",
+      "rows": 3,
+      "placeholder": "Describe what your team can build and where you need EDP engineering help.",
+      "help": "Explain the skills and capacity your team has, the work you need EDP to perform, and any delivery deadline. Leave blank when no additional context is needed."
     },
     {
       "id": "levers",
@@ -153,7 +143,7 @@
       "type": "multi-card",
       "label": "Mission value levers",
       "required": true,
-      "default": ["fraud"],
+      "default": [],
       "optionList": "roiLevers",
       "help": "Select every IRS outcome this onboarding advances. The EDP business and ROI review scores the request against these levers."
     },
@@ -165,7 +155,8 @@
       "required": true,
       "default": "",
       "rows": 3,
-      "placeholder": "e.g. Enables the Return Preparer Office to score preparer risk weekly instead of quarterly, closing a tax gap segment and retiring three contractor-run extracts."
+      "placeholder": "e.g. Enables the Return Preparer Office to score preparer risk weekly instead of quarterly, closing a tax gap segment and retiring three contractor-run extracts.",
+      "help": "Include the mission problem, who benefits, the expected outcome, why it is urgent, and the evidence you have."
     },
     {
       "id": "outcome",
@@ -173,17 +164,10 @@
       "type": "select",
       "label": "Primary mission outcome",
       "required": false,
-      "default": "fraud",
-      "optionsFrom": "roiLevers"
-    },
-    {
-      "id": "priority",
-      "step": "business",
-      "type": "select",
-      "label": "Mission priority",
-      "required": false,
-      "default": "Mission-critical",
-      "options": ["Mission-critical", "High", "Standard"]
+      "default": null,
+      "optionsFrom": "roiLevers",
+      "placeholder": "Choose the primary outcome",
+      "help": "Choose the single result that best explains why the initiative matters. You may select several value levers above."
     },
     {
       "id": "annualBenefit",
@@ -191,10 +175,11 @@
       "type": "number",
       "label": "Estimated annual benefit (USD)",
       "required": true,
-      "default": 750000,
+      "default": null,
       "min": 0,
       "increment": 50000,
-      "numberFormat": "currency"
+      "numberFormat": "currency",
+      "help": "Estimate the annual dollars this work could produce or protect: tax gap reduced through added assessments or collections, fraud or improper payments prevented, direct costs avoided, or another measurable mission result. Enter an amount greater than zero. Explain uncertainty, ranges, and why the work matters in the business justification; EDP staff set mission priority during review."
     },
     {
       "id": "hoursSaved",
@@ -202,10 +187,10 @@
       "type": "number",
       "label": "Staff hours saved per year",
       "required": false,
-      "default": 1200,
+      "default": null,
       "min": 0,
       "increment": 100,
-      "help": "Includes contractor and O&M effort avoided."
+      "help": "Optional. Include IRS employee, contractor, or operations and maintenance effort avoided."
     },
     {
       "id": "datasets",
@@ -215,21 +200,22 @@
       "required": true,
       "default": [],
       "dynamicOptions": "domains",
-      "help": "Each dataset needs a domain (or Other), a dataset tag and at least one dataset owner. Dataset owners decide who works on the dataset once the initiative is active."
+      "help": "Only list new data that is not already available in EDP. Check whether it is already available before submitting. Each dataset needs a domain (or a proposed other domain), an ingestion method, a dataset tag, and at least one dataset owner."
     },
     {
       "id": "isolation",
       "step": "workspace",
       "type": "select",
-      "label": "Does this work need to be isolated from other tenants?",
+      "label": "Must your team's code or work products be hidden from other EDP teams?",
       "required": true,
       "default": null,
       "placeholder": "Choose an answer",
       "options": [
-        "No — shared workspaces are fine",
-        "Yes — it must be isolated from other tenants",
-        "Not sure"
-      ]
+        "No — notebooks, code, and dashboard names may be visible in a shared workspace",
+        "Yes — code, notebook or dashboard names or contents must be hidden",
+        "Not sure — ask EDP staff to assess"
+      ],
+      "help": "Most teams use shared workspaces. Data permissions remain separate: sharing a workspace does not give another team access to your data. EDP staff confirm the environment during review. Choose Yes only when the work products themselves must be separated, such as investigative methods."
     },
     {
       "id": "teamSize",
@@ -243,15 +229,27 @@
       "help": "Count everyone who will build, test or manage the datasets, not the data consumers who only read them."
     },
     {
+      "id": "isolationReason",
+      "step": "workspace",
+      "type": "textarea",
+      "label": "Workspace separation reason or constraint",
+      "required": false,
+      "default": "",
+      "rows": 3,
+      "placeholder": "e.g. investigative methods must not be visible outside the named team, or Not sure what policy applies",
+      "help": "Optional. Explain any policy, mission, investigation, or other constraint EDP staff should assess. Dedicated-workspace criteria are not automated."
+    },
+    {
       "id": "sizeGb",
       "step": "sizing",
       "type": "number",
       "label": "Data volume (GB, initial + 1 yr growth)",
       "required": false,
-      "default": 500,
+      "default": null,
       "min": 1,
       "increment": 50,
-      "numberFormat": "decimal"
+      "numberFormat": "decimal",
+      "help": "Estimate the total initial data plus one year of growth across this whole initiative, in gigabytes (GB). Leave blank if unknown; EDP staff will refine it."
     },
     {
       "id": "freq",
@@ -259,8 +257,10 @@
       "type": "select",
       "label": "Load frequency",
       "required": false,
-      "default": "Daily",
-      "options": ["Monthly", "Weekly", "Daily", "Hourly", "Streaming"]
+      "default": null,
+      "placeholder": "Choose a frequency",
+      "options": ["Monthly", "Weekly", "Daily", "Hourly", "Streaming", "Not sure"],
+      "help": "How often the initiative expects new or changed source data to arrive. Choose Not sure when the schedule is not established."
     },
     {
       "id": "complexity",
@@ -268,8 +268,16 @@
       "type": "select",
       "label": "Transformation complexity",
       "required": false,
-      "default": "Moderate",
-      "options": ["Light", "Moderate", "Heavy", "Very heavy / ML features"]
+      "default": null,
+      "placeholder": "Choose a complexity",
+      "options": [
+        "Light — copy, filter, or rename",
+        "Moderate — joins and recurring business rules",
+        "Heavy — many joins, large aggregations, or frequent recomputation",
+        "Machine learning — feature engineering or model workloads",
+        "Not sure"
+      ],
+      "help": "Describe the most demanding transformations across the initiative. Choose the level by the observable examples, or Not sure for EDP staff to assess."
     },
     {
       "id": "users",
@@ -277,9 +285,10 @@
       "type": "number",
       "label": "Business users needing to query",
       "required": false,
-      "default": 40,
+      "default": null,
       "min": 1,
-      "increment": 5
+      "increment": 5,
+      "help": "Estimate the total people who will run queries, reports, or dashboards against the initiative's data. This is different from the builders counted on the workspace step."
     }
   ],
   "optionLists": {
@@ -287,7 +296,7 @@
       {
         "id": "self",
         "name": "We have our own resources",
-        "desc": "Our team builds the pipelines and models using EDP patterns, guidelines and reference notebooks. No platform-team engineering capacity needed.",
+        "desc": "IRS employees, contractors, or implementation partners on our team build and maintain the pipelines using EDP guidance.",
         "approved": true,
         "platform": false,
         "box": "Tenant-built pipelines"
@@ -303,7 +312,7 @@
       {
         "id": "full",
         "name": "We need data engineering support",
-        "desc": "EDP platform team builds the ingestion and medallion transformations for us. Requires platform engineering capacity in the CCB decision.",
+        "desc": "The EDP platform team builds the ingestion and data transformations. EDP staff review whether engineering capacity is available.",
         "approved": true,
         "platform": true,
         "box": "Platform-built pipelines"
@@ -312,29 +321,29 @@
     "ingestPatterns": [
       {
         "id": "eftu",
-        "name": "EFTU secure file transfer",
-        "desc": "Scheduled file drops from the source system via EFTU into EDP.",
+        "name": "Enterprise File Transfer Utility (EFTU)",
+        "desc": "Scheduled, secure file drops from an IRS source system into EDP.",
         "approved": true,
         "box": "EFTU"
       },
       {
         "id": "informatica",
-        "name": "Informatica ETL",
-        "desc": "Informatica extracts and loads the source into EDP bronze tables.",
+        "name": "Informatica data transfer",
+        "desc": "Informatica extracts data from the source and loads it into EDP for processing.",
         "approved": true,
         "box": "Informatica"
       },
       {
         "id": "epz",
-        "name": "EPZ bucket landing zone",
-        "desc": "Source writes objects to the EPZ landing bucket; EDP ingests from there.",
+        "name": "Secure cloud storage landing area",
+        "desc": "The source writes files to approved cloud storage and EDP loads them from there.",
         "approved": true,
         "box": "EPZ landing zone"
       },
       {
         "id": "other",
-        "name": "Something else (needs consultation)",
-        "desc": "Direct DB links, APIs, streaming or custom connectors require an EDP architecture consultation.",
+        "name": "I don’t know or need something else — consultation required",
+        "desc": "Choose this when you do not know the transfer path or need something other than EFTU, Informatica, or an EPZ drop. EDP staff will discuss the request with you during review.",
         "approved": false,
         "box": "Custom path"
       }
@@ -350,21 +359,21 @@
       {
         "id": "tableau",
         "name": "Tableau",
-        "desc": "Tableau connects to Databricks SQL warehouse via Unity Catalog.",
+        "desc": "Tableau connects to an EDP query service governed by the data catalog.",
         "approved": true,
         "box": "Tableau"
       },
       {
         "id": "powerbi",
         "name": "Power BI",
-        "desc": "Power BI connects to Databricks SQL warehouse via Unity Catalog.",
+        "desc": "Power BI connects to an EDP query service governed by the data catalog.",
         "approved": true,
         "box": "Power BI"
       },
       {
         "id": "other-access",
-        "name": "Other tool / data extract (needs consultation)",
-        "desc": "Extracts to other platforms or custom apps require an EDP architecture consultation.",
+        "name": "I’m not sure or need another tool — consult EDP staff",
+        "desc": "Choose this for extracts to another platform, custom applications, or when you do not know how people will use the data.",
         "approved": false,
         "box": "Other consumer"
       }
@@ -456,24 +465,21 @@
     "source": [
       { "type": "minTrimmedLength", "field": "dataName", "min": 0 },
       { "type": "initiativeOwner", "field": "initiativeOwner" },
-      { "type": "truthy", "field": "domain" }
+      { "type": "truthy", "field": "sensitivity" }
     ],
-    "architecture": [
-      { "type": "truthy", "field": "pattern" },
-      { "type": "truthy", "field": "access" }
-    ],
+    "architecture": [{ "type": "truthy", "field": "access" }],
     "delivery": [{ "type": "truthy", "field": "engModel" }],
     "business": [
       { "type": "minTrimmedLength", "field": "useCase", "min": 10 },
-      { "type": "minNumber", "field": "annualBenefit", "min": 0 },
-      { "type": "minCount", "field": "levers", "min": 0 }
+      { "type": "minCount", "field": "levers", "min": 0 },
+      { "type": "minNumber", "field": "annualBenefit", "min": 0 }
     ],
     "datasets": [{ "type": "datasets", "field": "datasets" }],
     "workspace": [
       {
         "type": "truthy",
         "field": "isolation",
-        "message": "Answer whether this work needs to be isolated from other tenants."
+        "message": "Answer whether code or work products must be hidden from other EDP teams."
       },
       {
         "type": "minNumber",
@@ -507,7 +513,7 @@
     "overall": "Submitted — pending EDP business and ROI review",
     "stageIndex": 0,
     "titleTemplate": "EDP data onboarding: {dataName}",
-    "purposeTemplate": "Onboard {dataName} from {sourceSystem} into the {domainName} domain via {patternName}, consumed through {accessName}. {useCase} Mission value: {leverLabelsComma} (primary: {outcomeName}). Sizing: {sizingTier} ({sizeGb} GB, {freq} loads, {complexity} transforms, {users} query users) · est. {annualCostUsd}/yr vs. {annualBenefitUsd} annual benefit (ROI {roiRatio}x).",
+    "purposeTemplate": "Onboard {dataName} from {sourceSystem} into {domainPhrase} via {patternName}, consumed through {accessName}. {useCase} Mission value: {leverLabelsComma} (primary: {outcomeName}). Sizing: {sizingTier} ({sizeGb} GB, {freq} loads, {complexity} transforms, {users} query users) · est. {annualCostUsd}/yr vs. {annualBenefitUsd} annual benefit (ROI {roiRatio}x).",
     "fieldMap": {
       "dataName": "dataName",
       "sourceSystem": "sourceSystem",
@@ -519,7 +525,11 @@
       "annualBenefit": "annualBenefit"
     },
     "items": [
-      { "kind": "Onboarding", "label": "{dataName}", "sub": "{domainName} · {sizingTier}" },
+      {
+        "kind": "Onboarding",
+        "label": "{dataName}",
+        "sub": "Target: {domainPhrase} · {sizingTier}"
+      },
       {
         "kind": "Onboarding",
         "label": "Ingestion — {patternName}",
@@ -537,7 +547,7 @@
       },
       {
         "kind": "Onboarding",
-        "label": "Mission value — {outcomeName}",
+        "label": "Mission value — {outcomeSummary}",
         "sub": "{leverLabelsDot}"
       },
       {
@@ -566,12 +576,12 @@
       {
         "system": "EDP business and ROI review",
         "status": { "when": "needsConsult", "then": "pending", "else": "active" },
-        "detail": "{outcomeName} · {annualCostUsd}/yr est. cost · ROI {roiRatio}x"
+        "detail": "{outcomeSummary} · {annualCostUsd}/yr est. cost · ROI {roiRatio}x"
       },
       {
         "system": "EDP intake CCB",
         "status": "pending",
-        "detail": "{domainName} intake change control board"
+        "detail": "Intake change control board for {domainPhrase}"
       },
       {
         "system": "BEARS entitlement creation",

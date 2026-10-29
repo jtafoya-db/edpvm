@@ -16,6 +16,11 @@ import {
   insertedValue,
   type RecordedStatement,
 } from "./fake-sql-client.ts";
+import {
+  GOVCLOUD_CASES,
+  govCloudSessionUser,
+  leaksIdentifier,
+} from "../../__tests__/govcloud-identity.ts";
 
 const PROVIDER: SessionUser = {
   principalId: "scim-provider",
@@ -33,9 +38,12 @@ const INTAKE: OnboardingIntake = {
   datasets: [
     {
       name: "Case signals",
+      sourceSystem: "IMF / Individual Master File",
       domain: "individual-filing",
+      ingestionMethod: "eftu",
+      ingestionDetails: "Nightly secure transfer.",
       datasetTag: "case_signals",
-      owners: [{ name: "Olive Owner", email: "Olive.Owner@example.test" }],
+      owners: [{ name: "Olive Owner", email: "Olive.Owner@example.gov" }],
     },
   ],
   workspaceNeeds: { isolation: "shared", teamSize: 6 },
@@ -50,7 +58,7 @@ const STORED_INTAKE: OnboardingIntake = {
     {
       ...INTAKE.datasets[0]!,
       id: "ds-1",
-      owners: [{ id: "ow-1", name: "Olive Owner", email: "olive.owner@example.test" }],
+      owners: [{ id: "ow-1", name: "Olive Owner", email: "olive.owner@example.gov" }],
     },
   ],
 };
@@ -98,7 +106,10 @@ const DATASET_ROWS = [
     onboarding_request_id: UUID,
     position: 0,
     name: "Case signals",
+    source_system: "IMF / Individual Master File",
     domain: "individual-filing",
+    ingestion_method: "eftu",
+    ingestion_details: "Nightly secure transfer.",
     dataset_tag: "case_signals",
   },
 ];
@@ -109,7 +120,7 @@ const OWNER_ROWS = [
     onboarding_request_id: UUID,
     position: 0,
     person_display: "Olive Owner",
-    person_email: "olive.owner@example.test",
+    person_email: "olive.owner@example.gov",
     person_principal_id: null,
   },
 ];
@@ -162,13 +173,27 @@ const isRequestRead = (statement: string) => statement.includes("r.display_numbe
 /** The complete result row the submit block hydrates (request columns plus children). */
 const RESULT_ROW_FULL = {
   ...RESULT_ROW,
-  datasets: DATASET_ROWS.map(({ id, position, name, domain, dataset_tag }) => ({
-    id,
-    position,
-    name,
-    domain,
-    dataset_tag,
-  })),
+  datasets: DATASET_ROWS.map(
+    ({
+      id,
+      position,
+      name,
+      source_system,
+      domain,
+      ingestion_method,
+      ingestion_details,
+      dataset_tag,
+    }) => ({
+      id,
+      position,
+      name,
+      source_system,
+      domain,
+      ingestion_method,
+      ingestion_details,
+      dataset_tag,
+    }),
+  ),
   owners: OWNER_ROWS.map(({ id, intake_dataset_id, position, person_display, person_email }) => ({
     id,
     intake_dataset_id,
@@ -267,6 +292,116 @@ function deps(
 }
 
 describe("Delta onboarding area", () => {
+  it("rejects a missing sensitivity through the real Delta API handler", async () => {
+    const { sensitivity: _sensitivity, ...answers } = INTAKE.answers;
+    let wrote = false;
+    const d = deps((call) => {
+      if (call.statement.startsWith("BEGIN ATOMIC")) wrote = true;
+      return { rows: [] };
+    });
+    const response = await handleDeltaApiRequest(
+      post({
+        ...SUBMIT_BODY,
+        payload: { intake: { ...INTAKE, answers } },
+      }),
+      d,
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.message).toMatch(/sensitivity.*required/i);
+    expect(wrote).toBe(false);
+  });
+
+  it("requires an ingestion method key for every dataset", async () => {
+    const { ingestionMethod: _ingestionMethod, ...withoutMethod } = INTAKE.datasets[0]!;
+    let wrote = false;
+    const d = deps((call) => {
+      if (call.statement.startsWith("BEGIN ATOMIC")) wrote = true;
+      return { rows: [] };
+    });
+    const response = await handleDeltaApiRequest(
+      post({
+        ...SUBMIT_BODY,
+        payload: { intake: { ...INTAKE, datasets: [withoutMethod] } },
+      }),
+      d,
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe("invalid-request");
+    expect(wrote).toBe(false);
+  });
+
+  it.each(["sourceSystem", "domain"] as const)(
+    "rejects a dataset with no %s through the real Delta API handler",
+    async (field) => {
+      const dataset = { ...INTAKE.datasets[0] };
+      delete dataset[field];
+      let wrote = false;
+      const d = deps((call) => {
+        if (call.statement.startsWith("BEGIN ATOMIC")) wrote = true;
+        return { rows: [] };
+      });
+      const response = await handleDeltaApiRequest(
+        post({
+          ...SUBMIT_BODY,
+          payload: { intake: { ...INTAKE, datasets: [dataset] } },
+        }),
+        d,
+      );
+      expect(response.status).toBe(400);
+      expect(wrote).toBe(false);
+    },
+  );
+
+  it.each([
+    ["ingestionMethod", "not-a-real-ingestion-method"],
+    ["domain", "not-a-real-domain"],
+  ] as const)(
+    "rejects an unknown dataset %s through the real Delta API handler",
+    async (field, value) => {
+      let wrote = false;
+      const d = deps((call) => {
+        if (call.statement.startsWith("BEGIN ATOMIC")) wrote = true;
+        return { rows: [] };
+      });
+      const response = await handleDeltaApiRequest(
+        post({
+          ...SUBMIT_BODY,
+          payload: {
+            intake: {
+              ...INTAKE,
+              datasets: [{ ...INTAKE.datasets[0]!, [field]: value }],
+            },
+          },
+        }),
+        d,
+      );
+      expect(response.status).toBe(400);
+      expect((await response.json()).error.message).toMatch(new RegExp(`unknown.*${field}`, "i"));
+      expect(wrote).toBe(false);
+    },
+  );
+
+  it.each([0, -5])(
+    "rejects annual benefit %s through the real Delta API handler",
+    async (annualBenefit) => {
+      let wrote = false;
+      const d = deps((call) => {
+        if (call.statement.startsWith("BEGIN ATOMIC")) wrote = true;
+        return { rows: [] };
+      });
+      const response = await handleDeltaApiRequest(
+        post({
+          ...SUBMIT_BODY,
+          payload: { intake: { ...INTAKE, annualBenefit } },
+        }),
+        d,
+      );
+      expect(response.status).toBe(400);
+      expect((await response.json()).error.message).toMatch(/annual benefit.*more than 0/i);
+      expect(wrote).toBe(false);
+    },
+  );
+
   it("submits an onboarding request in one atomic runner command with reserved child IDs", async () => {
     const seen: RecordedStatement[] = [];
     const d = deps((call) => {
@@ -305,8 +440,10 @@ describe("Delta onboarding area", () => {
     expect(block.statement).toContain(
       "INSERT INTO `edp_vending`.`onboarding`.`onboarding_request_actions`",
     );
-    expect(Object.values(block.parameters)).toContain("olive.owner@example.test");
-    expect(block.statement).not.toContain("Olive.Owner@example.test");
+    expect(Object.values(block.parameters)).toContain("olive.owner@example.gov");
+    expect(Object.values(block.parameters)).toContain("eftu");
+    expect(Object.values(block.parameters)).toContain("Nightly secure transfer.");
+    expect(block.statement).not.toContain("Olive.Owner@example.gov");
   });
 
   it("retries the whole onboarding command when Delta reports a conflict", async () => {
@@ -355,9 +492,12 @@ describe("Delta onboarding command responses are complete", () => {
       {
         id: "ds-1",
         name: "Case signals",
+        sourceSystem: "IMF / Individual Master File",
         domain: "individual-filing",
+        ingestionMethod: "eftu",
+        ingestionDetails: "Nightly secure transfer.",
         datasetTag: "case_signals",
-        owners: [{ id: "ow-1", name: "Olive Owner", email: "olive.owner@example.test" }],
+        owners: [{ id: "ow-1", name: "Olive Owner", email: "olive.owner@example.gov" }],
       },
     ]);
     expect(commandResult.decisions.map((d: { kind: string }) => d.kind)).toEqual([
@@ -413,17 +553,26 @@ describe("Delta onboarding reserved IDs", () => {
     // 100 + datasetIndex*20 + ownerIndex scheme collided here.
     const manyOwners = Array.from({ length: 25 }, (_, i) => ({
       name: `Owner ${i}`,
-      email: `owner${i}@example.test`,
+      email: `owner${i}@example.gov`,
     }));
     const intake: OnboardingIntake = {
       ...INTAKE,
       datasets: [
-        { name: "A", domain: "individual-filing", datasetTag: "alpha_set", owners: manyOwners },
+        {
+          name: "A",
+          sourceSystem: "IMF / Individual Master File",
+          domain: "individual-filing",
+          ingestionMethod: "eftu",
+          datasetTag: "alpha_set",
+          owners: manyOwners,
+        },
         {
           name: "B",
+          sourceSystem: "BMF / Business Master File",
           domain: "individual-filing",
+          ingestionMethod: "informatica",
           datasetTag: "beta_set",
-          owners: [{ name: "Solo", email: "solo@example.test" }],
+          owners: [{ name: "Solo", email: "solo@example.gov" }],
         },
       ],
     };
@@ -673,9 +822,12 @@ describe("Delta onboarding lifecycle at the public seam", () => {
                 {
                   id: "ds-1",
                   name: "Case signals gold",
+                  sourceSystem: "IDRS case extract",
                   domain: "other",
+                  ingestionMethod: "informatica",
+                  ingestionDetails: "Daily managed transfer.",
                   datasetTag: "case_signals_gold",
-                  owners: [{ id: "ow-1", name: "Olivia Owner", email: "Olivia.Owner@example.test" }],
+                  owners: [{ id: "ow-1", name: "Olivia Owner", email: "Olivia.Owner@example.gov" }],
                 },
               ],
             },
@@ -701,9 +853,13 @@ describe("Delta onboarding lifecycle at the public seam", () => {
     expect(updatedIds(block()!, "onboarding_intake_datasets")).toEqual(["ds-1"]);
     expect(updatedIds(block()!, "onboarding_intake_owners")).toEqual(["ow-1"]);
     expect(Object.values(block()!.parameters)).toContain("Case signals gold");
+    expect(Object.values(block()!.parameters)).toContain("IDRS case extract");
     expect(Object.values(block()!.parameters)).toContain("case_signals_gold");
+    expect(Object.values(block()!.parameters)).toContain("informatica");
+    expect(Object.values(block()!.parameters)).toContain("Daily managed transfer.");
     expect(Object.values(block()!.parameters)).toContain("Olivia Owner");
-    expect(Object.values(block()!.parameters)).toContain("olivia.owner@example.test");
+    expect(JSON.stringify(Object.values(block()!.parameters))).toContain("Dataset 1 source system");
+    expect(Object.values(block()!.parameters)).toContain("olivia.owner@example.gov");
     expect(Object.values(block()!.parameters)).toContain(
       "Updated the dataset tag. Dataset tag changed: case_signals -> case_signals_gold.",
     );
@@ -765,7 +921,7 @@ describe("Delta onboarding lifecycle at the public seam", () => {
       id: "ow-2",
       intake_dataset_id: "ds-2",
       person_display: "Oscar Owner",
-      person_email: "oscar.owner@example.test",
+      person_email: "oscar.owner@example.gov",
     },
   ];
 
@@ -777,6 +933,56 @@ describe("Delta onboarding lifecycle at the public seam", () => {
       .map((line) => String(resolveMarker(block, /WHERE `id` = (:p\d+)/.exec(line)?.[1])));
   }
 
+  function updatedDatasetValues(block: RecordedStatement) {
+    return block.statement
+      .split("\n")
+      .filter((line) => line.startsWith("UPDATE") && line.includes("`onboarding_intake_datasets`"))
+      .map((line) => ({
+        id: String(resolveMarker(block, /WHERE `id` = (:p\d+)/.exec(line)?.[1])),
+        position: Number(resolveMarker(block, /position = (:p\d+)/.exec(line)?.[1])),
+        sourceSystem: String(resolveMarker(block, /source_system = (:p\d+)/.exec(line)?.[1])),
+        domain: String(resolveMarker(block, /domain = (:p\d+)/.exec(line)?.[1])),
+        ingestionMethod: String(resolveMarker(block, /ingestion_method = (:p\d+)/.exec(line)?.[1])),
+      }));
+  }
+
+  it("keeps each dataset's ingestion method by stable ID when datasets are reordered", async () => {
+    const first = STORED_INTAKE.datasets[0]!;
+    const second = {
+      ...first,
+      id: "ds-2",
+      name: "Case indicators",
+      sourceSystem: "BMF / Business Master File",
+      domain: "enforcement-collections",
+      ingestionMethod: "informatica",
+      ingestionDetails: "Managed daily transfer.",
+      datasetTag: "case_indicators",
+      owners: [{ id: "ow-2", name: "Oscar Owner", email: "oscar.owner@example.gov" }],
+    };
+    const { response, block } = await resubmitTwo({
+      ...STORED_INTAKE,
+      datasets: [second, first],
+    });
+
+    expect(response.status).toBe(200);
+    expect(updatedDatasetValues(block!)).toEqual([
+      {
+        id: "ds-2",
+        position: 0,
+        sourceSystem: "BMF / Business Master File",
+        domain: "enforcement-collections",
+        ingestionMethod: "informatica",
+      },
+      {
+        id: "ds-1",
+        position: 1,
+        sourceSystem: "IMF / Individual Master File",
+        domain: "individual-filing",
+        ingestionMethod: "eftu",
+      },
+    ]);
+  });
+
   it("adds and removes datasets and owners on resubmit, keeping the IDs of the ones it keeps", async () => {
     const { response, block } = await resubmitTwo({
       ...STORED_INTAKE,
@@ -785,14 +991,16 @@ describe("Delta onboarding lifecycle at the public seam", () => {
           ...STORED_INTAKE.datasets[0]!,
           owners: [
             STORED_INTAKE.datasets[0]!.owners[0]!,
-            { name: "Nia New", email: "Nia.New@example.test" },
+            { name: "Nia New", email: "Nia.New@example.gov" },
           ],
         },
         {
           name: "Collections ledger",
+          sourceSystem: "BMF / Business Master File",
           domain: "enforcement-collections",
+          ingestionMethod: "eftu",
           datasetTag: "collections_ledger",
-          owners: [{ name: "Lee Ledger", email: "lee.ledger@example.test" }],
+          owners: [{ name: "Lee Ledger", email: "lee.ledger@example.gov" }],
         },
       ],
     });
@@ -807,8 +1015,8 @@ describe("Delta onboarding lifecycle at the public seam", () => {
     expect(["ds-1", "ds-2"]).not.toContain(added!["id"]);
     const owners = parseInserts(block!, "onboarding_intake_owners");
     expect(owners.map((o) => [o["intake_dataset_id"], o["person_email"]])).toEqual([
-      ["ds-1", "nia.new@example.test"],
-      [added!["id"], "lee.ledger@example.test"],
+      ["ds-1", "nia.new@example.gov"],
+      [added!["id"], "lee.ledger@example.gov"],
     ]);
     // The removed dataset and its owner are deleted, and the removal is in the log.
     expect(deletedIds(block!, "onboarding_intake_datasets")).toEqual(["ds-2"]);
@@ -819,7 +1027,7 @@ describe("Delta onboarding lifecycle at the public seam", () => {
     );
     expect(JSON.parse(String(lead!["payload"])).changes).toContainEqual({
       field: "Dataset 2 removed",
-      before: "Case indicators (case_indicators); owners: Oscar Owner (oscar.owner@example.test)",
+      before: "Case indicators (case_indicators); owners: Oscar Owner (oscar.owner@example.gov)",
       after: "",
       kind: "removed",
     });
@@ -838,7 +1046,7 @@ describe("Delta onboarding lifecycle at the public seam", () => {
           ...STORED_INTAKE.datasets[0]!,
           id: "ds-2",
           datasetTag: "case_indicators",
-          owners: [{ id: "ow-1", name: "Olive Owner", email: "olive.owner@example.test" }],
+          owners: [{ id: "ow-1", name: "Olive Owner", email: "olive.owner@example.gov" }],
         },
       ],
     },
@@ -852,13 +1060,65 @@ describe("Delta onboarding lifecycle at the public seam", () => {
   it("re-validates the whole intake on resubmit before any write", async () => {
     const { response, block } = await resubmitTwo({
       ...STORED_INTAKE,
-      answers: { ...STORED_INTAKE.answers, domain: "", pattern: "" },
+      datasets: STORED_INTAKE.datasets.map((dataset, index) =>
+        index === 0 ? { ...dataset, domain: "" } : dataset,
+      ),
+      answers: { ...STORED_INTAKE.answers, domain: "", engModel: "" },
     });
     expect(response.status).toBe(400);
     const { error } = await response.json();
     expect(error.code).toBe("invalid-intake");
-    expect(error.message).toMatch(/Target domain is required.*How does the data get into EDP/i);
+    expect(error.message).toMatch(/delivery model is required.*Dataset 1.*domain/i);
     expect(block).toBeUndefined();
+  });
+
+  it("refuses a resubmitted dataset with an unknown ingestion method and domain before any write", async () => {
+    const { response, block } = await resubmitTwo({
+      ...STORED_INTAKE,
+      datasets: STORED_INTAKE.datasets.map((dataset, index) =>
+        index === 0 ? { ...dataset, ingestionMethod: "zzz", domain: "not-a-domain" } : dataset,
+      ),
+    });
+    expect(response.status).toBe(400);
+    const { error } = await response.json();
+    expect(error.code).toBe("invalid-intake");
+    expect(error.message).toMatch(/Dataset 1 has an unknown ingestionMethod: zzz/);
+    expect(block).toBeUndefined();
+  });
+
+  it.each([
+    ["ingestionMethod", "zzz"],
+    ["domain", "not-a-domain"],
+  ] as const)(
+    "refuses a resubmitted dataset with only an unknown %s before any write",
+    async (field, value) => {
+      const { response, block } = await resubmitTwo({
+        ...STORED_INTAKE,
+        datasets: STORED_INTAKE.datasets.map((dataset, index) =>
+          index === 0 ? { ...dataset, [field]: value } : dataset,
+        ),
+      });
+      expect(response.status).toBe(400);
+      const { error } = await response.json();
+      expect(error.code).toBe("invalid-intake");
+      expect(error.message).toMatch(new RegExp(`Dataset 1 has an unknown ${field}: ${value}`));
+      expect(block).toBeUndefined();
+    },
+  );
+
+  it("accepts 'other' as a resubmitted dataset's domain and ingestion method", async () => {
+    const { response, block } = await resubmitTwo({
+      ...STORED_INTAKE,
+      datasets: STORED_INTAKE.datasets.map((dataset, index) =>
+        index === 0 ? { ...dataset, ingestionMethod: "other", domain: "other" } : dataset,
+      ),
+    });
+    expect(response.status).toBe(200);
+    expect(updatedDatasetValues(block!)[0]).toMatchObject({
+      id: "ds-1",
+      domain: "other",
+      ingestionMethod: "other",
+    });
   });
 
   it("refuses a new request that names record IDs", async () => {
@@ -1066,6 +1326,43 @@ describe("Delta onboarding lifecycle at the public seam", () => {
     expect(updatedValue(block()!, "sla_due_at")).toBeNull();
     expect(updatedValue(block()!, "sla_due_soon_at")).toBeNull();
   });
+});
+
+describe("Delta onboarding: a GovCloud provider with no name (#332)", () => {
+  it.each(GOVCLOUD_CASES)(
+    "stores the provider, the Myself owner and the actor as %s, never the numeric id",
+    async (_label, govCloud, expected) => {
+      const user = await govCloudSessionUser(govCloud);
+      let block: RecordedStatement | undefined;
+      const d = deps((call) => {
+        if (call.statement.includes("WHERE idempotency_key = :key")) return { rows: [] };
+        if (call.statement.startsWith("BEGIN ATOMIC")) {
+          block = call;
+          return committed(call, RESULT_ROW_FULL);
+        }
+        return { rows: [] };
+      }, user);
+
+      const response = await handleDeltaApiRequest(post(SUBMIT_BODY), d);
+      expect(response.status).toBe(200);
+
+      const request = parseInserts(block!, "onboarding_requests")[0]!;
+      expect(request["provider_principal_id"]).toBe(user.principalId);
+      expect(request["provider_display"]).toBe(expected);
+      expect(request["initiative_owner_kind"]).toBe("self");
+      expect(request["initiative_owner_display"]).toBe(expected);
+      // The user's own action; the forward after it is the system's.
+      const actions = parseInserts(block!, "onboarding_request_actions").filter(
+        (action) => action["actor_principal_id"] === user.principalId,
+      );
+      expect(actions.map((action) => [action["action"], action["actor_display"]])).toEqual([
+        ["submitted", expected],
+      ]);
+      for (const value of [request["provider_display"], request["initiative_owner_display"]]) {
+        expect(leaksIdentifier(value)).toBe(false);
+      }
+    },
+  );
 });
 
 describe("Delta onboarding persists SLA deadlines on stage entry", () => {
@@ -1289,7 +1586,7 @@ describe("Delta onboarding refuses dataset tags that aren't identifier-safe", ()
               id: "ow-2",
               intake_dataset_id: "ds-2",
               person_display: "Oscar Owner",
-              person_email: "oscar.owner@example.test",
+              person_email: "oscar.owner@example.gov",
             },
           ],
         };
@@ -1309,16 +1606,20 @@ describe("Delta onboarding refuses dataset tags that aren't identifier-safe", ()
                 {
                   id: "ds-1",
                   name: "Case signals",
+                  sourceSystem: "IMF / Individual Master File",
                   domain: "individual-filing",
+                  ingestionMethod: "eftu",
                   datasetTag: "case_signals",
-                  owners: [{ id: "ow-1", name: "Olive Owner", email: "olive.owner@example.test" }],
+                  owners: [{ id: "ow-1", name: "Olive Owner", email: "olive.owner@example.gov" }],
                 },
                 {
                   id: "ds-2",
                   name: "Case indicators",
+                  sourceSystem: "BMF / Business Master File",
                   domain: "individual-filing",
+                  ingestionMethod: "informatica",
                   datasetTag: "case_signals",
-                  owners: [{ id: "ow-2", name: "Oscar Owner", email: "oscar.owner@example.test" }],
+                  owners: [{ id: "ow-2", name: "Oscar Owner", email: "oscar.owner@example.gov" }],
                 },
               ],
             },

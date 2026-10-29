@@ -31,6 +31,7 @@ import type {
   OnboardingReviewStage,
   OnboardingReviewerRole,
   OnboardingWriteIntent,
+  OwnerMatchInput,
 } from "./types";
 
 export const onboardingKeys = {
@@ -226,6 +227,35 @@ export function useDecideOnboardingRequest() {
   );
 }
 
+/** EDP staff match an owner to the principal they entered (#103, 103-B). */
+export function useMatchOnboardingOwner() {
+  const store = useStore();
+  return useOnboardingWrite(
+    (input: { id: string; match: OwnerMatchInput; intent?: OnboardingWriteIntent }) =>
+      store.onboarding.matchOwner(input.id, input.match, input.intent),
+  );
+}
+
+/** The change list's query key (datasets/queries.ts), re-read when onboarding lists an entry. */
+const CHANGE_LIST_KEY = ["change-list"] as const;
+
+/** EDP staff mark an owner not a Databricks user yet, listing an onboard-user entry (#103, 103-B). */
+export function useRequestOwnerOnboarding() {
+  const store = useStore();
+  const queryClient = useQueryClient();
+  return useOnboardingWrite(
+    async (input: { id: string; ownerId: string; intent?: OnboardingWriteIntent }) => {
+      const result = await store.onboarding.requestOwnerOnboarding(
+        input.id,
+        { ownerId: input.ownerId },
+        input.intent,
+      );
+      void queryClient.invalidateQueries({ queryKey: CHANGE_LIST_KEY });
+      return result;
+    },
+  );
+}
+
 // --- The provider's optimistic saves (#195) ----------------------------------
 
 /** The record a provider's save on one request locks: a resubmission or a withdrawal. */
@@ -314,6 +344,7 @@ export const submitOnboardingSave: SaveSpec<SubmitOnboardingInput, OnboardingReq
             // Who the owners are is the server's to say, from its session (#103).
             initiativeOwner: null,
             ownerVerification: {},
+            ownerMatches: [],
             decisions: [],
             sla: null,
           },

@@ -26,7 +26,7 @@ describe("Delta team writes: one request, ownership checked by the server", () =
     });
     return harness;
   }
-  const TESS = { name: "Tess Tester", email: "tess.tester@example.test" };
+  const TESS = { name: "Tess Tester", email: "tess.tester@example.gov" };
 
   it("an owner's add makes exactly one request, the command", async () => {
     const { store, requests } = setup(OWNER);
@@ -37,7 +37,7 @@ describe("Delta team writes: one request, ownership checked by the server", () =
     await store.datasetRoles.addMember({
       datasetId: DATASET_ID,
       name: "Devon Developer",
-      email: "devon.developer@example.test",
+      email: "devon.developer@example.gov",
       role: "developer",
     });
     expect(requests).toEqual(["POST /api/commands/teams/add-member"]);
@@ -51,7 +51,7 @@ describe("Delta team writes: one request, ownership checked by the server", () =
     await store.datasetTeam.addOwner({
       datasetId: DATASET_ID,
       name: "Drew Partner",
-      email: "drew.partner@example.test",
+      email: "drew.partner@example.gov",
     });
     expect(requests).toEqual(["POST /api/commands/teams/add-owner"]);
   });

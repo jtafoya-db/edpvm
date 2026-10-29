@@ -20,9 +20,11 @@ import {
   type OptionListName,
   type PatternOption,
   blankDataset,
+  OTHER_DOMAIN,
   validateStep,
 } from "../../schema";
 import { DatasetListField } from "./DatasetListField";
+import { FieldHelp } from "./FieldHelp";
 import { FieldError, datasetInputId } from "./field-helpers";
 import { InitiativeOwnerField, type SignedInPerson } from "./InitiativeOwnerField";
 
@@ -201,7 +203,15 @@ function fieldSelectOptions(
   field: FieldDef,
   dynamicOptions: Record<string, DynamicOption[]>,
 ): DynamicOption[] {
-  if (field.dynamicOptions) return dynamicOptions[field.dynamicOptions] ?? [];
+  if (field.dynamicOptions) {
+    const options = dynamicOptions[field.dynamicOptions] ?? [];
+    return field.id === "domain"
+      ? [
+          ...options,
+          { value: OTHER_DOMAIN, label: "No domain fits — propose another with EDP staff" },
+        ]
+      : options;
+  }
   if (field.optionsFrom) {
     return schema.optionLists[field.optionsFrom].map((o) => ({ value: o.id, label: o.name }));
   }
@@ -351,8 +361,7 @@ function computeInitialValues(
     if (field.type === "dataset-list") {
       values[field.id] = [blankDataset()];
     } else if (field.dynamicOptions) {
-      const opts = dynamicOptions[field.dynamicOptions] ?? [];
-      values[field.id] = field.default ?? opts[0]?.value ?? "";
+      values[field.id] = field.default ?? "";
     } else if (Array.isArray(field.default)) {
       values[field.id] = [...field.default];
     } else {
@@ -505,7 +514,6 @@ export function SchemaForm({
         <span style={req}>*</span>
       </>
     ) : null;
-    const labelStyle = marginTop ? { ...lbl, marginTop } : lbl;
     const issue = issueFor(fieldId);
     const inputId = domFieldId(fieldId);
     const errorId = `${inputId}-error`;
@@ -522,15 +530,40 @@ export function SchemaForm({
         {issue.message}
       </FieldError>
     ) : null;
+    const labelContents = (
+      <>
+        {field.label}
+        {mark}
+      </>
+    );
+    const fieldHelp = (
+      <FieldHelp id={inputId} label={field.label}>
+        {field.help}
+      </FieldHelp>
+    );
+    const labelRow = (htmlFor?: string) => (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginTop,
+          marginBottom: 7,
+          minWidth: 0,
+        }}
+      >
+        <label style={{ ...lbl, margin: 0, minWidth: 0 }} htmlFor={htmlFor}>
+          {labelContents}
+        </label>
+        {fieldHelp}
+      </div>
+    );
 
     switch (field.type) {
       case "text":
         return (
           <div key={fieldId}>
-            <label style={labelStyle} htmlFor={inputId}>
-              {field.label}
-              {mark}
-            </label>
+            {labelRow(inputId)}
             <input
               {...validationProps}
               value={String(value ?? "")}
@@ -544,10 +577,7 @@ export function SchemaForm({
       case "textarea":
         return (
           <div key={fieldId}>
-            <label style={labelStyle} htmlFor={inputId}>
-              {field.label}
-              {mark}
-            </label>
+            {labelRow(inputId)}
             <textarea
               {...validationProps}
               value={String(value ?? "")}
@@ -567,19 +597,11 @@ export function SchemaForm({
         // A text box, not type="number" (USWDS and GOV.UK advise against it):
         // it holds exactly what was typed, so nothing is rewritten under the
         // user. readNumber turns it into a number for validation and the intake.
-        const hintId = `${inputId}-hint`;
-        const describedBy =
-          [field.help ? hintId : null, issue ? errorId : null].filter(Boolean).join(" ") ||
-          undefined;
         return (
           <div key={fieldId}>
-            <label style={labelStyle} htmlFor={inputId}>
-              {field.label}
-              {mark}
-            </label>
+            {labelRow(inputId)}
             <input
               {...validationProps}
-              aria-describedby={describedBy}
               type="text"
               inputMode={(field.numberFormat ?? "integer") === "integer" ? "numeric" : "decimal"}
               spellCheck={false}
@@ -588,50 +610,16 @@ export function SchemaForm({
               style={issue ? { ...inp, border: "1.5px solid var(--theme-error)" } : inp}
             />
             {fieldError}
-            {field.help ? (
-              <div
-                id={hintId}
-                style={{
-                  fontSize: "var(--font-size-3xs)",
-                  color: "var(--text-muted)",
-                  marginTop: 5,
-                  lineHeight: 1.5,
-                }}
-              >
-                {field.help}
-              </div>
-            ) : null}
           </div>
         );
       }
       case "select": {
         const opts = fieldSelectOptions(schema, field, dynamicOptions);
-        const helpId = `${inputId}-help`;
         return (
           <div key={fieldId}>
-            <label style={labelStyle} htmlFor={inputId}>
-              {field.label}
-              {mark}
-            </label>
-            {field.help ? (
-              <p
-                id={helpId}
-                style={{
-                  fontSize: "var(--font-size-3xs)",
-                  color: "var(--text-muted)",
-                  margin: "0 0 6px",
-                  lineHeight: 1.5,
-                }}
-              >
-                {field.help}
-              </p>
-            ) : null}
+            {labelRow(inputId)}
             <select
               {...validationProps}
-              aria-describedby={
-                [field.help ? helpId : null, issue ? errorId : null].filter(Boolean).join(" ") ||
-                undefined
-              }
               value={String(value ?? "")}
               onChange={(e) => setValue(fieldId, e.target.value)}
               style={issue ? { ...inp, border: "1.5px solid var(--theme-error)" } : inp}
@@ -659,6 +647,7 @@ export function SchemaForm({
             help={field.help}
             value={value}
             domains={field.dynamicOptions ? (dynamicOptions[field.dynamicOptions] ?? []) : []}
+            ingestPatterns={schema.optionLists.ingestPatterns}
             onChange={(next) => setValue(fieldId, next)}
             Icon={Icon}
             showAll={attempted}
@@ -687,7 +676,7 @@ export function SchemaForm({
         const list = field.optionList ? cardOptions(schema, field.optionList) : [];
         return (
           <div key={fieldId}>
-            <label style={labelStyle}>{field.label}</label>
+            {labelRow()}
             <div
               id={inputId}
               tabIndex={-1}
@@ -715,22 +704,7 @@ export function SchemaForm({
         const selected = Array.isArray(value) ? (value as string[]) : [];
         return (
           <div key={fieldId}>
-            <label style={labelStyle}>
-              {field.label}
-              {mark}
-            </label>
-            {field.help ? (
-              <div
-                style={{
-                  fontSize: "var(--font-size-3xs)",
-                  color: "var(--text-muted)",
-                  margin: "-2px 0 10px",
-                  lineHeight: 1.5,
-                }}
-              >
-                {field.help}
-              </div>
-            ) : null}
+            {labelRow()}
             <div
               id={inputId}
               tabIndex={-1}
@@ -847,6 +821,7 @@ export function SchemaForm({
         ) : null}
 
         <div
+          className="intake-form-actions"
           style={{
             display: "flex",
             justifyContent: "space-between",

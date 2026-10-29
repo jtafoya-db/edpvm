@@ -14,7 +14,7 @@ const INTAKE: OnboardingIntake = {
       name: "Case signals",
       domain: "individual-filing",
       datasetTag: "case_signals",
-      owners: [{ name: "Olive Owner", email: "olive.owner@example.test" }],
+      owners: [{ name: "Olive Owner", email: "olive.owner@example.gov" }],
     },
   ],
   workspaceNeeds: { isolation: "Not sure", teamSize: 6 },
@@ -36,6 +36,7 @@ const REQUEST: OnboardingRequest = {
   sla: null,
   initiativeOwner: null,
   ownerVerification: {},
+  ownerMatches: [],
 };
 
 function transport(): DeltaApiTransport & {

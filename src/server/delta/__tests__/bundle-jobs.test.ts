@@ -110,6 +110,41 @@ describe("eir_allow_self_validation (preview test mode, 2026-10-07)", () => {
   });
 });
 
+describe("sample_access_requests (preview test data, #312)", () => {
+  interface Bundle {
+    variables: Record<string, { default?: string }>;
+    resources: {
+      apps: { edp_vending_machine: { config: { env: { name: string; value: string }[] } } };
+    };
+    targets: Record<string, { variables?: Record<string, string> }>;
+  }
+  const bundle = () => load(readFileSync(join(ROOT, "databricks.yml"), "utf8")) as Bundle;
+
+  it('defaults to "false" and reaches the app as EDP_SAMPLE_ACCESS_REQUESTS', () => {
+    const b = bundle();
+    expect(b.variables["sample_access_requests"]?.default).toBe("false");
+    expect(b.resources.apps.edp_vending_machine.config.env).toContainEqual({
+      name: "EDP_SAMPLE_ACCESS_REQUESTS",
+      value: "${var.sample_access_requests}",
+    });
+  });
+
+  it("is off on every target, preview included: a deploy has to ask for it", () => {
+    const targets = Object.entries(bundle().targets);
+    expect(targets.map(([name]) => name).sort()).toEqual(["dev", "govdev", "preview", "prod"]);
+    for (const [name, target] of targets) {
+      const value = target.variables?.["sample_access_requests"];
+      expect(value === undefined || String(value).trim() !== "true", name).toBe(true);
+    }
+  });
+
+  it("isn't set in app.yaml, which production runs from", () => {
+    expect(readFileSync(join(ROOT, "databricks-app/app.yaml"), "utf8")).not.toMatch(
+      /EDP_SAMPLE_ACCESS_REQUESTS/,
+    );
+  });
+});
+
 describe("EIR support contact deployment setting", () => {
   it("passes the optional bundle setting to the server without inventing an address", () => {
     const bundle = load(readFileSync(join(ROOT, "databricks.yml"), "utf8")) as {

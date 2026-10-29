@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { readBootstrapEirSource } from "../eir/definition/bootstrap-source";
@@ -17,6 +18,15 @@ function loaded(text: string = BOOTSTRAP) {
 }
 
 describe("EIR definition loader", () => {
+  it.each([
+    ["bootstrap", "3af890f8c065f1de3d5549ff07ac2d37a4d030e26e569a643d96ca418a75b82d"],
+    ["bootstrap-2", "35d2aac1e3e5134d67886de746e9ae67e803195b33e8be09c2185b7a01fc2b8c"],
+  ] as const)("keeps the %s source text byte-identical", (name, expectedHash) => {
+    const source = readBootstrapEirSource(name);
+    expect(source).toBeDefined();
+    expect(createHash("sha256").update(source!).digest("hex")).toBe(expectedHash);
+  });
+
   it("bootstrap definition loads into a typed definition, named by the identity it's given", () => {
     expect(loaded().form.version).toBe("unpublished");
     const definition = loadDefinition(BOOTSTRAP, "bootstrap");
@@ -329,8 +339,47 @@ describe("EIR definition schema allowlist", () => {
       expect.objectContaining({
         code: "invalid-value",
         path: ["form", "sections", 0, "fields", 4, "type"],
+        message:
+          "form.sections.0.fields.4.type: Invalid enum value. Expected 'text' | 'email' | 'date' | 'yes-no', received 'html'",
       }),
     ]);
+  });
+
+  it("keeps Zod 3's exact missing-value diagnostic", () => {
+    const diagnostics = refused(BOOTSTRAP.replace(/^validityDays:.*\n/m, ""));
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "invalid-value",
+        path: ["validityDays"],
+        message: "validityDays: Required",
+      }),
+    );
+  });
+
+  it("keeps Zod 3's exact numeric bound diagnostics", () => {
+    expect(refused(BOOTSTRAP.replace("validityDays: 365", "validityDays: 99999"))).toContainEqual(
+      expect.objectContaining({
+        path: ["validityDays"],
+        message: "validityDays: Number must be less than or equal to 3650",
+      }),
+    );
+    expect(refused(BOOTSTRAP.replace("maxLength: 12", "maxLength: 0"))).toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining("Number must be greater than 0"),
+      }),
+    );
+  });
+
+  it("keeps Zod 3's record wording for scenario answers", () => {
+    const diagnostics = refused(
+      BOOTSTRAP.replace(/    answers:\n(?:      .*\n)+/, "    answers: 5\n"),
+    );
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        path: ["scenarios", 0, "answers"],
+        message: "scenarios.0.answers: Expected object, received number",
+      }),
+    );
   });
 
   it("unknown rule operator is refused", () => {

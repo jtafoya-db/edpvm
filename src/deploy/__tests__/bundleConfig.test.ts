@@ -12,6 +12,7 @@ import {
   readAppDeployFields,
   schemasFromDdl,
 } from "../bundleConfig.ts";
+import { GOVDEV_SENTINELS } from "../govdevSentinels.ts";
 
 // Guards the field-parsing fix (#138): the turnkey wrapper reads resolved deploy
 // fields out of `bundle validate -o json`. An EMPTY field — store_schema_prefix
@@ -131,6 +132,7 @@ describe("checkResolvedConfig", () => {
             ...PROD_ENV,
             VITE_DATA_BACKEND: "delta",
             EDP_STORE_SCHEMA_PREFIX: "edp_vm_test_",
+            EIR_VOLUME_SCHEMA: "edp_vm_govdev_eir",
             EIR_VOLUME_NAME: "eir_pdfs",
           },
           undefined,
@@ -144,11 +146,13 @@ describe("checkResolvedConfig", () => {
   it.each([
     ["VITE_DATA_BACKEND", "memory"],
     ["EDP_STORE_SCHEMA_PREFIX", ""],
+    ["EDP_STORE_SCHEMA_PREFIX", "   "],
     ["EIR_VOLUME_SCHEMA", ""],
+    ["EIR_VOLUME_SCHEMA", "   "],
     ["EIR_VOLUME_NAME", ""],
     ["EIR_VOLUME_NAME", "   "],
     ["EDP_ADMIN_GROUP_ID", "configure-edp-admin-group-id"],
-  ])("rejects unsafe govdev %s=%s", (name, value) => {
+  ])("rejects unsafe govdev %s=%j", (name, value) => {
     const problems = checkResolvedConfig(
       config(
         {
@@ -164,6 +168,82 @@ describe("checkResolvedConfig", () => {
       ),
     );
     expect(problems.some((problem) => problem.includes("govdev"))).toBe(true);
+  });
+
+  it.each(["", "   "])("rejects a govdev app name of %j", (appName) => {
+    const problems = checkResolvedConfig(
+      config(
+        { ...PROD_ENV, VITE_DATA_BACKEND: "delta", EDP_STORE_SCHEMA_PREFIX: "edp_vm_test_" },
+        undefined,
+        "govdev",
+        appName,
+      ),
+    );
+    expect(problems).toContain("govdev app name must not be empty");
+  });
+
+  // The committed govdev defaults are sentinels: a validate that resolves any
+  // of them (no --var override) must fail the gate, not deploy a sentinel name.
+  const GOVDEV_OK = {
+    ...PROD_ENV,
+    VITE_DATA_BACKEND: "delta",
+    EDP_STORE_SCHEMA_PREFIX: "edp_vm_test_",
+    EIR_VOLUME_NAME: "eir_pdfs",
+    EDP_ADMIN_GROUP_ID: "123456789",
+  };
+
+  it.each([
+    ["EDP_STORE_SCHEMA_PREFIX", "edp_vm_govdev_unset_"],
+    ["EIR_VOLUME_NAME", "eir_govdev_unset"],
+    ["EDP_ADMIN_GROUP_ID", "configure-edp-admin-group-id"],
+  ])("rejects the committed govdev sentinel %s=%j", (name, value) => {
+    const problems = checkResolvedConfig(
+      config({ ...GOVDEV_OK, [name]: value }, undefined, "govdev", "edp-vm-test"),
+    );
+    expect(problems.some((p) => p.includes("sentinel") && p.includes(value))).toBe(true);
+  });
+
+  it("rejects the committed govdev sentinel app name", () => {
+    const problems = checkResolvedConfig(
+      config(GOVDEV_OK, undefined, "govdev", "edp-vm-govdev-unset"),
+    );
+    expect(problems.some((p) => p.includes("sentinel") && p.includes("edp-vm-govdev-unset"))).toBe(
+      true,
+    );
+  });
+
+  it("keeps the sentinel list in step with the committed govdev defaults", () => {
+    const bundle = load(readFileSync("databricks.yml", "utf8")) as {
+      targets: Record<string, { variables: Record<string, string> }>;
+    };
+    const vars = bundle.targets["govdev"]!.variables;
+    for (const [name, sentinel] of Object.entries(GOVDEV_SENTINELS)) {
+      expect(vars[name]).toBe(sentinel);
+    }
+  });
+
+  it("rejects the production app name for govdev", () => {
+    const problems = checkResolvedConfig(
+      config(GOVDEV_OK, undefined, "govdev", "edp-vending-machine"),
+    );
+    expect(problems).toContain("govdev must not use the production app name edp-vending-machine");
+  });
+
+  it.each(["\u00a0", "\u2003", "\u3000"])("rejects a Unicode-blank govdev value %j", (blank) => {
+    for (const name of ["EDP_STORE_SCHEMA_PREFIX", "EIR_VOLUME_SCHEMA", "EIR_VOLUME_NAME"]) {
+      const problems = checkResolvedConfig(
+        config({ ...GOVDEV_OK, [name]: blank }, undefined, "govdev", "edp-vm-test"),
+      );
+      expect(problems).toContain(`govdev ${name} must not be empty`);
+    }
+    expect(checkResolvedConfig(config(GOVDEV_OK, undefined, "govdev", blank))).toContain(
+      "govdev app name must not be empty",
+    );
+    expect(
+      checkResolvedConfig(
+        config({ ...GOVDEV_OK, EDP_ADMIN_GROUP_ID: blank }, undefined, "govdev", "edp-vm-test"),
+      ).some((p) => p.startsWith("govdev EDP_ADMIN_GROUP_ID")),
+    ).toBe(true);
   });
 });
 

@@ -22,8 +22,10 @@ import {
   createMemoryEirRepository,
   type EirDefinitionLookup,
   type EirRepository,
+  type EirUploadWrite,
 } from "../../../data/eir/repository";
 import type { EirEvaluation } from "../../../data/eir/types.ts";
+import type { EirApprovalConfig } from "../../../data/eir/approval-mode.ts";
 import type { evaluateEirDraft } from "../../../data/eir/evaluation.ts";
 import type { EffectiveSlaConfig } from "../../../data/sla-config.ts";
 import type { DeltaApiTransport } from "../../../data/adapters/delta";
@@ -40,7 +42,7 @@ export const VOLUME: EirVolumeConfig = { catalog: "edp", schema: "docs", volume:
 const person = (principalId: string, displayName: string, validator = false): SessionUser => ({
   principalId,
   displayName,
-  email: `${displayName.split(" ")[0]!.toLowerCase()}@example.test`,
+  email: `${displayName.split(" ")[0]!.toLowerCase()}@example.gov`,
   isAdmin: false,
   onboardingReviewerRoles: [],
   isSafeguardsValidator: validator,
@@ -87,6 +89,8 @@ function showingForm(repository: EirRepository, shown: string | undefined): EirR
       repository.saveDraft(principalId, values, expectedDraftVersion, formVersion ?? shown),
     submitWithFile: (input) =>
       repository.submitWithFile({ ...input, formVersion: input.formVersion ?? shown }),
+    preparePdf: (input) =>
+      repository.preparePdf({ ...input, formVersion: input.formVersion ?? shown }),
   };
 }
 
@@ -152,6 +156,12 @@ export function memoryImplementation(
     shownFormVersion?: string;
     evaluator?: typeof evaluateEirDraft;
     persistEvaluation?: (evaluation: EirEvaluation) => void;
+    /** The deploy-time approval settings (#204); manual-validator when unset. */
+    approval?: EirApprovalConfig;
+    /** Refuse the signed PDF's write to the volume while it returns true. */
+    failFileWrite?: () => boolean;
+    /** Fail an upload at one of its writes (`EirUploadWrite`). */
+    writeFailpoint?: (write: EirUploadWrite) => void;
   } = {},
 ): EirImplementation {
   const nextPath = pathSequence();
@@ -163,6 +173,17 @@ export function memoryImplementation(
     ...(options.definitions ? { definitions: options.definitions } : {}),
     ...(options.evaluator ? { evaluator: options.evaluator } : {}),
     ...(options.persistEvaluation ? { persistEvaluation: options.persistEvaluation } : {}),
+    ...(options.approval ? { approval: options.approval } : {}),
+    ...(options.writeFailpoint ? { writeFailpoint: options.writeFailpoint } : {}),
+    ...(options.failFileWrite
+      ? {
+          fileStorage: {
+            write: async () => {
+              if (options.failFileWrite!()) throw new Error("synthetic volume write failure");
+            },
+          },
+        }
+      : {}),
   });
   const shown = showingForm(repository, options.shownFormVersion);
   return { name: "memory", clock, as: () => shown };
@@ -191,19 +212,31 @@ export function deltaImplementation(
     /** The form version saves and uploads name when a test gives none (the screen's). */
     shownFormVersion?: string;
     evaluator?: typeof evaluateEirDraft;
-    failEvaluationPersistence?: boolean;
+    /** Refuse every insert into `eir_evaluations` (or only while it returns true). */
+    failEvaluationPersistence?: boolean | (() => boolean);
+    /** The deploy-time approval settings (#204); manual-validator when unset. */
+    approval?: EirApprovalConfig;
+    /** Refuse the signed PDF's upload to the volume while it returns true. */
+    failUpload?: () => boolean;
+    /** Fail a block right after one of its writes (`createSqliteWarehouse`'s `failWrite`). */
+    failWrite?: (statement: string, values: Record<string, unknown>) => boolean;
   } = {},
 ): DeltaImplementation {
   const nextPath = pathSequence();
   const warehouse = createSqliteWarehouse({
     now: () => clock.now,
     ...(options.schemaPrefix ? { schemaPrefix: options.schemaPrefix } : {}),
+    ...(options.failWrite ? { failWrite: options.failWrite } : {}),
   });
   const files = new Map<string, Uint8Array>();
   if (options.failEvaluationPersistence) {
     const execute = warehouse.client.execute.bind(warehouse.client);
+    const failing = options.failEvaluationPersistence;
     warehouse.client.execute = (statement, tag) => {
-      if (/INSERT INTO [^\s]*eir_evaluations\b/.test(statement.statement)) {
+      if (
+        (failing === true || (typeof failing === "function" && failing())) &&
+        /INSERT INTO [^\s]*eir_evaluations\b/.test(statement.statement)
+      ) {
         throw new Error("synthetic evaluation persistence failure");
       }
       return execute(statement, tag);
@@ -223,6 +256,7 @@ export function deltaImplementation(
     ...(options.slaConfig ? { slaConfig: () => options.slaConfig! } : {}),
     ...(options.definitions ? { definitions: async () => options.definitions! } : {}),
     ...(options.evaluator ? { evaluator: options.evaluator } : {}),
+    ...(options.approval ? { approval: () => options.approval! } : {}),
     // The app's own check (env flag + store prefix) unless a test sets the result.
     ...(options.selfDecisionTestMode !== undefined
       ? { selfDecisionTestMode: () => options.selfDecisionTestMode! }
@@ -289,6 +323,7 @@ export function deltaImplementation(
       createDeltaEirRepository({
         transport: transportFor(user),
         upload: async (file) => {
+          if (options.failUpload?.()) throw new Error("synthetic volume upload failure");
           let volumePath = nextPath(user.principalId);
           // Migration fixtures already use the deterministic path sequence. Skip any
           // persisted or newly written path so a test upload still models a fresh PDF.

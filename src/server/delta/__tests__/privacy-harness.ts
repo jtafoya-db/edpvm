@@ -80,7 +80,7 @@ export function deltaPrivacyImplementation(): PrivacyImplementation {
         const user: SessionUser = {
           principalId,
           displayName: "Test Person",
-          email: "test.person@example.test",
+          email: "test.person@example.gov",
           isAdmin: false,
           onboardingReviewerRoles: [],
         };
@@ -110,7 +110,7 @@ export function deltaPrivacyImplementation(): PrivacyImplementation {
           {
             principalId: "3001",
             displayName: "Sam Staff",
-            email: "sam@example.test",
+            email: "sam@example.gov",
             isAdmin: true,
             onboardingReviewerRoles: [],
           },

@@ -107,8 +107,14 @@ export interface IntakeDatasetInput {
   /** The stored dataset's ID, set by the server; absent on one not saved yet. */
   id?: string | undefined;
   name: string;
+  /** The system, agency, file collection, or location this dataset comes from. */
+  sourceSystem?: string | undefined;
   /** a BusinessDomain.id, or {@link OTHER_DOMAIN} */
   domain: string;
+  /** An ingestPatterns option id. */
+  ingestionMethod?: string | undefined;
+  /** Provider context when the ingestion method needs consultation. */
+  ingestionDetails?: string | undefined;
   datasetTag: string;
   owners: IntakeOwnerContact[];
 }
@@ -275,7 +281,7 @@ export interface ResolvedSelections {
   patternDef: PatternOption;
   accessDef: PatternOption;
   engDef: PatternOption;
-  outcomeDef: LeverOption;
+  outcomeDef: LeverOption | null;
   leverLabels: string[];
   needsConsult: boolean;
 }
@@ -307,5 +313,6 @@ export interface OnboardingRequest {
 export interface AssembleInput {
   values: IntakeState;
   domainName: string;
+  domainNames?: Record<string, string>;
   num: number;
 }

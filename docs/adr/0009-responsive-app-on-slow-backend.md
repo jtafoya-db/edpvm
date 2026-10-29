@@ -1,7 +1,7 @@
 # ADR-0009 — Responsive app on a slow transactional backend
 
 - **Status:** Accepted (2026-10-11). Amends ADR-0007 decision 6's warehouse-channel cost note (decision 8 below). Folds in #140 as phase 1.
-- **Related:** ADR-0007 (MVP Delta data model), ADR-0008 (separate tenant and staff apps), [`docs/research/snappy-on-slow-backend.md`](../research/snappy-on-slow-backend.md) (the evidence), [`docs/delta-backend.md`](../delta-backend.md), [`docs/production-checklist.md`](../production-checklist.md), [`GLOSSARY.md`](../../GLOSSARY.md), #140, #177, [wayfinder #141](https://github.com/jtafoya-db/edpvm/issues/141)
+- **Related:** ADR-0007 (MVP Delta data model), ADR-0008 (separate tenant and staff apps), `docs/research/snappy-on-slow-backend.md` (private source document; not published) (the evidence), [`docs/delta-backend.md`](../delta-backend.md), `docs/production-checklist.md` (private source document; not published), [`GLOSSARY.md`](../../GLOSSARY.md), #140, #177, [wayfinder #141](https://github.com/jtafoya-db/edpvm/issues/141)
 
 ## Context
 

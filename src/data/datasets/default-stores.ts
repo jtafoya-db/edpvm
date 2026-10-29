@@ -27,6 +27,7 @@ import { DEFAULT_ROLE_DESCRIPTIONS, type RoleDescriptions } from "./role-descrip
 import { DEFAULT_DATASET_SEED, withConfiguredOwners } from "./seed";
 import { fetchSeedOwnerIds } from "./seed-config";
 import type { DatasetSeed } from "./types";
+import type { GroupMembershipReader } from "../group-membership";
 
 /** Overrides for the defaults. Tests inject these. */
 export interface AccessStoreOptions {
@@ -46,6 +47,7 @@ export interface AccessStoreOptions {
   /** Draws a new access request's ID; a random display code by default (tests fix it). */
   newAccessRequestId?: () => string;
   slaConfig?: EffectiveSlaConfig;
+  groupMembershipReader?: GroupMembershipReader;
 }
 
 export function createDefaultAccessStores(
@@ -65,6 +67,9 @@ export function createDefaultAccessStores(
     roleDescriptions: options.roleDescriptions ?? DEFAULT_ROLE_DESCRIPTIONS,
     currentUser,
     now,
+    ...(options.groupMembershipReader
+      ? { groupMembershipReader: options.groupMembershipReader }
+      : {}),
   });
   // Access requests (#91) sit on top of the dataset and dataset-role stores.
   // Sample requests go with the default dataset seed only.

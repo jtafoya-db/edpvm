@@ -39,6 +39,9 @@ variables:
   app_name:
     description: Unique Databricks App name
     default: edp-vending-machine
+  minify_client:
+    description: Whether the deployed client bundle is minified; set only as committed target policy
+    default: "true"
   catalog:
     description: >-
       REQUIRED. The single Unity Catalog catalog this deploy targets. It feeds
@@ -90,6 +93,15 @@ variables:
       validator decide their own EIR, for testing. The server also requires a
       PR preview's store prefix (edp_vm_pr<N>_). Production must never set it.
     default: "false"
+  sample_access_requests:
+    description: >-
+      PR previews only (#312), off unless asked for: "true" gives the first
+      sample dataset's owner two sample access requests to decide, for testing.
+      No target sets it; pass --var sample_access_requests=true on a preview
+      deploy. The server also requires a PR preview's store prefix
+      (edp_vm_pr<N>_). Production must never set it: approving a sample adds a
+      real member.
+    default: "false"
   eir_max_upload_bytes:
     description: Maximum accepted signed EIR PDF size in bytes
     default: "10485760"
@@ -114,6 +126,21 @@ variables:
   eir_validity_days:
     description: Calendar days an EIR remains valid after validation
     default: "365"
+  eir_approval_mode:
+    description: >-
+      What a signed-PDF upload with a non-blocking pre-check does (#204):
+      manual-validator (a Safeguards validator decides; the default and the
+      first pilot's production setting) or automatic (the app re-checks at
+      the upload and records validity when the result qualifies, on a
+      published definition). Setting automatic is not Safeguards
+      authorization: production use needs Safeguards sign-off (#148).
+    default: "manual-validator"
+  eir_automatic_validity_outcomes:
+    description: >-
+      In automatic mode, the pre-check results that make an EIR valid at
+      upload (#148, 2026-10-24): pass (default), warning, or pass,warning.
+      Never blocking; manual-review always goes to a validator.
+    default: "pass"
   access_request_sla_provisional:
     description: Whether the access-request SLA is still labelled provisional
     default: "true"
@@ -163,6 +190,17 @@ variables:
       value) loads nothing in production and the sample datasets on a
       preview. Pass with --var at deploy.
     default: none
+  access_matrix_json:
+    description: >-
+      Complete JSON replacement for the approved #145 dataset access matrix.
+      "none" loads the checked-in approved default. The server validates every
+      matrix-dependent request and never falls back after an invalid override.
+    default: none
+  access_matrix_allow_draft:
+    description: >-
+      Explicitly permit a deploy override whose approvalStatus is draft. The
+      checked-in #145 default is approved and does not require this switch.
+    default: "false"
   seed_dataset_owner_ids:
     description: >-
       Preview only. Comma-separated SCIM ids that own the in-memory seed
@@ -273,6 +311,10 @@ resources:
             value: ${var.sla_holidays}
           - name: EDP_EIR_VALIDITY_DAYS
             value: ${var.eir_validity_days}
+          - name: EDP_EIR_APPROVAL_MODE
+            value: ${var.eir_approval_mode}
+          - name: EDP_EIR_AUTOMATIC_VALIDITY_OUTCOMES
+            value: ${var.eir_automatic_validity_outcomes}
           - name: EDP_ACCESS_REQUEST_SLA_PROVISIONAL
             value: ${var.access_request_sla_provisional}
           - name: EDP_EIR_SUPPORT_EMAIL
@@ -280,10 +322,18 @@ resources:
           # "false" except on the preview target (src/server/eir-test-mode.ts).
           - name: EDP_EIR_ALLOW_SELF_VALIDATION
             value: ${var.eir_allow_self_validation}
+          # "false" unless a preview deploy asks (src/server/sample-access-requests.ts).
+          - name: EDP_SAMPLE_ACCESS_REQUESTS
+            value: ${var.sample_access_requests}
           # Baked in at build time by scripts/deploy.sh. serve.mjs checks it
           # against the build and refuses to start on a mismatch.
           - name: VITE_DATA_BACKEND
             value: ${var.data_backend}
+          # The staged artifact records this value in build-info.json.
+          # serve.mjs refuses startup if a hand-run bundle deploy pairs the
+          # target with an artifact built under another client policy.
+          - name: EDP_CLIENT_MINIFIED
+            value: ${var.minify_client}
           # Server-only: where the store lives, and which warehouse runs it.
           - name: EDP_STORE_CATALOG
             value: ${var.store_catalog}
@@ -291,6 +341,10 @@ resources:
             value: ${var.membership_catalog}
           - name: EDP_MEMBERSHIP_SCHEMA
             value: ${var.membership_schema}
+          - name: EDP_ACCESS_MATRIX_JSON
+            value: ${var.access_matrix_json}
+          - name: EDP_ACCESS_MATRIX_ALLOW_DRAFT
+            value: ${var.access_matrix_allow_draft}
           # These env vars are deliberately NOT emitted app-wide:
           # EDP_STORE_SCHEMA_PREFIX and EDP_ADMIN_GROUP_ID have no usable
           # app-wide value, and the server treats an absent var the same as
@@ -503,6 +557,10 @@ targets:
     mode: development
     variables:
       app_name: edp-vm-preview-unset
+      # IRS CSIRC scans preview artifacts before production. Per the human
+      # decision on 2026-10-28 (#294), preview matches prod's unminified client
+      # policy so the scanner sees the same client-build form.
+      minify_client: "false"
       # Preview keeps its own copy of each schema in a shared catalog, so it
       # runs with a non-empty prefix. A per-PR deploy overrides this with
       # --var store_schema_prefix=edp_vm_pr<N>_ . Non-empty here means the
@@ -567,6 +625,9 @@ targets:
       # workspace carry environment identity. Names must resolve nonempty and
       # app_name must not be edp-vending-machine; the group id must be numeric.
       app_name: edp-vm-govdev-unset
+      # GovCloud is IRS-scanned like preview and prod, so govdev commits the
+      # same unminified client policy (#294); EDP_UNMINIFIED_BUILD is ignored.
+      minify_client: "false"
       data_backend: delta
       store_schema_prefix: edp_vm_govdev_unset_
       eir_volume_schema: edp_vm_govdev
@@ -587,6 +648,10 @@ targets:
   prod:
     mode: production
     variables:
+      # IRS security scanning flags minified client code as malware. Per the
+      # human decision on #294, committed target policy is the only deployed-
+      # build control; changing this value requires a reviewed PR.
+      minify_client: "false"
       # Production serves the durable Delta store, never the in-memory seed. The
       # preflight and the wrapper's resolved-config gate refuse anything else.
       data_backend: delta

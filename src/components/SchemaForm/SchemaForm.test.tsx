@@ -33,6 +33,7 @@ function renderForm(overrides: Partial<Parameters<typeof SchemaForm>[0]> = {}) {
       dynamicOptions={{ domains: DOMAINS }}
       onSubmit={onSubmit}
       onCancel={onCancel}
+      initialValues={buildDefaults()}
       {...overrides}
     />,
   );
@@ -44,9 +45,15 @@ function next(): HTMLButtonElement {
   return screen.getByRole("button", { name: /continue/i }) as HTMLButtonElement;
 }
 
+function control(label: string | RegExp): HTMLElement {
+  const match = screen.getAllByLabelText(label).find((element) => element.tagName !== "BUTTON");
+  if (!match) throw new Error(`No form control found for ${String(label)}`);
+  return match;
+}
+
 // Fill step 0 (source profile) so its gate opens, then advance.
 function completeSourceStep() {
-  fireEvent.change(screen.getByLabelText(/initiative name/i), {
+  fireEvent.change(control(/initiative name/i), {
     target: { value: "Preparer e-file submissions (curated)" },
   });
   fireEvent.click(screen.getByRole("radio", { name: /myself/i }));
@@ -56,11 +63,15 @@ function completeSourceStep() {
 // Fill the #86 datasets step (one dataset, one owner) and the workspace-needs
 // step so their gates open, advancing past both.
 function completeDatasetsAndWorkspace() {
-  fireEvent.change(screen.getByLabelText("Dataset 1 name"), { target: { value: "Case signals" } });
-  fireEvent.change(screen.getByLabelText("Dataset 1 domain"), {
+  fireEvent.change(control("Dataset 1 name"), { target: { value: "Case signals" } });
+  fireEvent.change(control("Dataset 1 source system"), {
+    target: { value: "IMF / Individual Master File" },
+  });
+  fireEvent.change(control("Dataset 1 domain"), {
     target: { value: "individual-filing" },
   });
-  fireEvent.change(screen.getByLabelText("Dataset 1 tag"), { target: { value: "case_signals" } });
+  fireEvent.change(control("Dataset 1 tag"), { target: { value: "case_signals" } });
+  fireEvent.change(control("Dataset 1 ingestion method"), { target: { value: "eftu" } });
   fireEvent.click(
     within(screen.getByRole("group", { name: "Dataset 1 owner 1" })).getByRole("radio", {
       name: /someone else/i,
@@ -77,22 +88,24 @@ function completeDatasetsAndWorkspace() {
       "Owner's email",
     ),
     {
-      target: { value: "olive.owner@example.test" },
+      target: { value: "olive.owner@example.gov" },
     },
   );
   fireEvent.click(next());
-  fireEvent.change(screen.getByLabelText(/isolated from other tenants/i), {
-    target: { value: "Not sure" },
+  fireEvent.change(control(/code or work products/i), {
+    target: { value: "Not sure — ask EDP staff to assess" },
   });
-  fireEvent.change(screen.getByLabelText(/how many people/i), { target: { value: "6" } });
+  fireEvent.change(control(/how many people/i), { target: { value: "6" } });
   fireEvent.click(next());
 }
 
 const VALID_DATASET = {
   name: "Case signals",
+  sourceSystem: "IMF / Individual Master File",
   domain: "individual-filing",
+  ingestionMethod: "eftu",
   datasetTag: "case_signals",
-  owners: [{ name: "Olive Owner", email: "olive.owner@example.test" }],
+  owners: [{ name: "Olive Owner", email: "olive.owner@example.gov" }],
 };
 
 // The full initial-values object (mirrors the schema defaults + domain seed) so
@@ -110,7 +123,6 @@ function buildDefaults(overrides: IntakeState = {}): IntakeState {
     levers: ["fraud"],
     useCase: "",
     outcome: "fraud",
-    priority: "Mission-critical",
     annualBenefit: 750000,
     hoursSaved: 1200,
     sizeGb: 500,
@@ -126,36 +138,26 @@ function buildDefaults(overrides: IntakeState = {}): IntakeState {
 }
 
 describe("SchemaForm — field type rendering", () => {
-  it("explains the sensitivity acronyms for a first-time data provider", () => {
+  it("explains the initiative sensitivity choices", () => {
     renderForm();
-    expect(
-      screen.getByText("SBU means sensitive but unclassified. FTI means federal tax information."),
-    ).toBeTruthy();
-    expect(screen.getByText(/Federal tax information \(FTI\).*Publication 1075/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Help for Data sensitivity" }));
+    expect(screen.getByRole("dialog", { name: "About Data sensitivity" }).textContent).toMatch(
+      /extra restrictions.*review/i,
+    );
   });
 
-  it("renders every field type the schema uses on step 0 (text + selects)", () => {
+  it("keeps the initiative page focused on name and owner", () => {
     renderForm();
-    // text inputs
-    expect(screen.getByLabelText(/initiative name/i)).toBeTruthy();
-    const source = screen.getByLabelText(/source system/i) as HTMLInputElement;
-    expect(source.value).toBe("IMF / Individual Master File"); // field default
-    // dynamic select (domains) is populated from dynamicOptions
-    const domain = screen.getByLabelText(/target domain/i) as HTMLSelectElement;
-    expect(within(domain).getByRole("option", { name: "Individual Filing" })).toBeTruthy();
-    // static-option select carries its default
-    const sensitivity = screen.getByLabelText(/data sensitivity/i) as HTMLSelectElement;
-    expect(sensitivity.value).toBe("SBU (FTI)");
+    expect(control(/initiative name/i)).toBeTruthy();
+    expect(screen.getByRole("group", { name: /initiative point of contact/i })).toBeTruthy();
+    expect(screen.queryByLabelText(/source system/i)).toBeNull();
   });
 
   it("renders card-select (PatternCards) and a schema-driven note widget", () => {
     renderForm();
     completeSourceStep();
-    // both ingest patterns and access patterns render as cards
-    expect(screen.getByRole("button", { name: /EFTU secure file transfer/i })).toBeTruthy();
+    // Access remains an initiative-level architecture choice.
     expect(screen.getByRole("button", { name: /All within Databricks/i })).toBeTruthy();
-    // the architecture note widget (referenced by id in the step layout) renders
-    expect(screen.getByText(/uses approved patterns only/i)).toBeTruthy();
   });
 
   it("renders number + textarea + multi-card on the business step", () => {
@@ -163,8 +165,8 @@ describe("SchemaForm — field type rendering", () => {
     completeSourceStep(); // -> architecture
     fireEvent.click(next()); // -> delivery (defaults valid)
     fireEvent.click(next()); // -> business
-    expect(screen.getByLabelText(/business justification/i).tagName).toBe("TEXTAREA");
-    const benefit = screen.getByLabelText(/estimated annual benefit/i) as HTMLInputElement;
+    expect(control(/business justification/i).tagName).toBe("TEXTAREA");
+    const benefit = control(/estimated annual benefit/i) as HTMLInputElement;
     expect(benefit.type).toBe("text");
     expect(benefit.value).toBe("750000");
     // ROI levers render as multi-card toggles
@@ -182,8 +184,8 @@ function goToBusinessStep() {
 }
 
 describe("SchemaForm — number fields", () => {
-  const benefitBox = () => screen.getByLabelText(/estimated annual benefit/i) as HTMLInputElement;
-  const hoursBox = () => screen.getByLabelText(/staff hours saved/i) as HTMLInputElement;
+  const benefitBox = () => control(/estimated annual benefit/i) as HTMLInputElement;
+  const hoursBox = () => control(/staff hours saved/i) as HTMLInputElement;
 
   it("renders a number field as a text box with a numeric keyboard, not a spinner", () => {
     renderForm();
@@ -195,9 +197,10 @@ describe("SchemaForm — number fields", () => {
     expect(hoursBox().inputMode).toBe("numeric");
     expect(benefit.hasAttribute("min")).toBe(false);
     expect(benefit.hasAttribute("step")).toBe(false);
-    // The hint is announced with the box.
-    const hint = document.getElementById(hoursBox().getAttribute("aria-describedby") ?? "");
-    expect(hint?.textContent).toMatch(/contractor and O&M effort/i);
+    fireEvent.click(screen.getByRole("button", { name: "Help for Staff hours saved per year" }));
+    expect(
+      screen.getByRole("dialog", { name: "About Staff hours saved per year" }).textContent,
+    ).toMatch(/contractor.*operations and maintenance/i);
   });
 
   it("lets the user clear a number field and type a new value", async () => {
@@ -220,7 +223,7 @@ describe("SchemaForm — number fields", () => {
     const user = userEvent.setup();
     renderForm();
     goToBusinessStep();
-    fireEvent.change(screen.getByLabelText(/business justification/i), {
+    fireEvent.change(control(/business justification/i), {
       target: { value: "Score preparer risk weekly instead of quarterly." },
     });
     for (const [box, typed] of [
@@ -236,7 +239,7 @@ describe("SchemaForm — number fields", () => {
     await user.clear(benefitBox());
     await user.type(benefitBox(), "1,200.50");
     await user.click(next());
-    expect(screen.getByLabelText("Dataset 1 name")).toBeTruthy(); // advanced to datasets
+    expect(control("Dataset 1 name")).toBeTruthy(); // advanced to datasets
   });
 
   it.each(["abc", "12abc", "1.2.3", "$"])("says '%s' must be a number", async (typed) => {
@@ -285,39 +288,40 @@ describe("SchemaForm — number fields", () => {
     expect(hoursBox()).toBeTruthy(); // still on the business step
   });
 
-  it("says an empty required number is required, and a typed 0 must be more than 0", async () => {
+  it("requires a positive annual benefit", async () => {
     const user = userEvent.setup();
     renderForm();
     goToBusinessStep();
     const benefit = benefitBox();
     await user.clear(benefit);
-    expect(screen.queryByText(/estimated annual benefit \(usd\) is required/i)).toBeNull();
-    await user.tab();
+    await user.click(next());
     expect(benefit.getAttribute("aria-invalid")).toBe("true");
-    expect(
-      screen.getAllByText("Estimated annual benefit (USD) is required.").length,
-    ).toBeGreaterThan(0);
+    expect(screen.getAllByText(/estimated annual benefit \(usd\) is required/i)).toHaveLength(2);
     expect(screen.queryByText(/must be more than 0/i)).toBeNull();
 
     await user.type(benefit, "0");
     expect(benefit.value).toBe("0");
-    expect(screen.getByText("Estimated annual benefit (USD) must be more than 0.")).toBeTruthy();
+    expect(screen.getAllByText("Estimated annual benefit (USD) must be more than 0.")).toHaveLength(
+      2,
+    );
     await user.clear(benefit);
     await user.type(benefit, "-5");
     expect(benefit.value).toBe("-5");
-    expect(screen.getByText("Estimated annual benefit (USD) must be more than 0.")).toBeTruthy();
+    expect(screen.getAllByText("Estimated annual benefit (USD) must be more than 0.")).toHaveLength(
+      2,
+    );
   });
 
   it("renders a number field with no default and no saved value empty, without an error", async () => {
     const user = userEvent.setup();
     renderForm({ initialValues: buildDefaults({ teamSize: undefined }) });
     goToBusinessStep();
-    fireEvent.change(screen.getByLabelText(/business justification/i), {
+    fireEvent.change(control(/business justification/i), {
       target: { value: "This justification is clearly longer than ten characters." },
     });
     fireEvent.click(next()); // -> datasets (valid)
     fireEvent.click(next()); // -> workspace
-    const team = screen.getByLabelText(/how many people/i) as HTMLInputElement;
+    const team = control(/how many people/i) as HTMLInputElement;
     expect(team.value).toBe("");
     expect(team.inputMode).toBe("numeric");
     expect(team.getAttribute("aria-invalid")).toBeNull();
@@ -346,7 +350,7 @@ describe("SchemaForm — number fields", () => {
     goToBusinessStep();
     fireEvent.click(next()); // -> datasets
     fireEvent.click(next()); // -> workspace
-    const team = screen.getByLabelText(/how many people/i) as HTMLInputElement;
+    const team = control(/how many people/i) as HTMLInputElement;
     expect(team.value).toBe("7");
     await user.clear(team);
     expect(team.value).toBe("");
@@ -356,13 +360,13 @@ describe("SchemaForm — number fields", () => {
       [/data volume/i, "321"],
       [/business users needing to query/i, "12"],
     ] as const) {
-      const input = screen.getByLabelText(label) as HTMLInputElement;
+      const input = control(label) as HTMLInputElement;
       expect(input.value).toBe(saved);
       await user.clear(input);
       expect(input.value).toBe("");
     }
     // Data volume takes decimals.
-    const volume = screen.getByLabelText(/data volume/i) as HTMLInputElement;
+    const volume = control(/data volume/i) as HTMLInputElement;
     expect(volume.inputMode).toBe("decimal");
     await user.type(volume, "1.5");
     await user.tab();
@@ -381,7 +385,7 @@ describe("SchemaForm — number fields", () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm();
     goToBusinessStep();
-    fireEvent.change(screen.getByLabelText(/business justification/i), {
+    fireEvent.change(control(/business justification/i), {
       target: { value: "Score preparer risk weekly instead of quarterly." },
     });
     await user.clear(benefitBox());
@@ -389,13 +393,13 @@ describe("SchemaForm — number fields", () => {
     await user.clear(hoursBox());
     fireEvent.click(next()); // optional hours left empty: the step still advances
     completeDatasetsAndWorkspace();
-    const volume = screen.getByLabelText(/data volume/i);
+    const volume = control(/data volume/i);
     await user.clear(volume);
     await user.type(volume, "2,500.5");
     // Fake timers only for the estimator's delay; user-event stalls under them.
     vi.useFakeTimers();
     try {
-      fireEvent.click(screen.getByRole("button", { name: /run ai sizing/i }));
+      fireEvent.click(screen.getByRole("button", { name: /run preliminary estimate/i }));
       act(() => vi.advanceTimersByTime(900));
       fireEvent.click(next());
       fireEvent.click(screen.getByRole("button", { name: /submit data onboarding request/i }));
@@ -418,21 +422,23 @@ describe("SchemaForm — per-step Next gating (canAdvance parity)", () => {
     expect(next().hasAttribute("aria-disabled")).toBe(false);
     fireEvent.click(next());
     expect(screen.getByRole("alert", { name: "Validation errors" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Tell us about the data" })).toBeTruthy();
-    fireEvent.change(screen.getByLabelText(/initiative name/i), {
+    expect(screen.getByRole("heading", { name: "Tell us about the initiative" })).toBeTruthy();
+    fireEvent.change(control(/initiative name/i), {
       target: { value: "Curated dataset" },
     });
     fireEvent.click(screen.getByRole("radio", { name: /myself/i }));
     fireEvent.click(next());
-    expect(screen.getByRole("heading", { name: "Design the data flow" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "How will your team access this data?" }),
+    ).toBeTruthy();
   });
 
   it("keeps summary links in the wizard, retains values, and announces every failed attempt", () => {
     window.history.replaceState(null, "", "#onboarding");
-    renderForm();
+    renderForm({ initialValues: buildDefaults({ initiativeOwner: null }) });
     expect(screen.queryByLabelText("Validation errors")).toBeNull();
 
-    const name = screen.getByLabelText(/initiative name/i);
+    const name = control(/initiative name/i);
     expect(name.getAttribute("aria-invalid")).toBeNull();
     fireEvent.blur(name);
     expect(name.getAttribute("aria-invalid")).toBe("true");
@@ -450,9 +456,7 @@ describe("SchemaForm — per-step Next gating (canAdvance parity)", () => {
     fireEvent.click(ownerLink);
     expect(window.location.hash).toBe(hash);
     expect(document.activeElement).toBe(screen.getByRole("radio", { name: /myself/i }));
-    expect((screen.getByLabelText(/initiative name/i) as HTMLInputElement).value).toBe(
-      "Saved initiative",
-    );
+    expect((control(/initiative name/i) as HTMLInputElement).value).toBe("Saved initiative");
 
     fireEvent.click(next());
     expect(document.activeElement).toBe(summary);
@@ -460,19 +464,18 @@ describe("SchemaForm — per-step Next gating (canAdvance parity)", () => {
 
   it("keeps focus and every keystroke in a field fixed after a failed Continue (#179)", async () => {
     const user = userEvent.setup();
-    renderForm();
+    renderForm({ initialValues: buildDefaults({ initiativeOwner: null }) });
     await user.click(next());
     const summary = screen.getByRole("alert", { name: "Validation errors" });
     expect(document.activeElement).toBe(summary);
 
     await user.click(within(summary).getByRole("link", { name: /initiative name/i }));
-    const name = screen.getByLabelText(/initiative name/i);
+    const name = control(/initiative name/i);
     expect(document.activeElement).toBe(name);
     await user.keyboard("Preparer e-file");
     expect(document.activeElement).toBe(name);
     expect((name as HTMLInputElement).value).toBe("Preparer e-file");
-    // The summary keeps up as answers are fixed, without taking focus.
-    expect(within(summary).queryByRole("link", { name: /initiative name/i })).toBeNull();
+    // Fixing an answer does not steal focus.
     await user.tab();
     expect(document.activeElement).not.toBe(summary);
 
@@ -480,7 +483,7 @@ describe("SchemaForm — per-step Next gating (canAdvance parity)", () => {
     expect(document.activeElement).toBe(screen.getByRole("alert", { name: "Validation errors" }));
   });
 
-  it("gates the business step on justification length, benefit and lever count", () => {
+  it("gates the business step on justification length and lever count while benefit may be unknown", () => {
     renderForm();
     completeSourceStep();
     fireEvent.click(next()); // delivery
@@ -490,41 +493,30 @@ describe("SchemaForm — per-step Next gating (canAdvance parity)", () => {
     expect(
       screen.getByRole("heading", { name: "What mission value does this data create?" }),
     ).toBeTruthy();
-    fireEvent.change(screen.getByLabelText(/business justification/i), {
+    fireEvent.change(control(/business justification/i), {
       target: { value: "This justification is clearly longer than ten characters." },
-    });
-    fireEvent.change(screen.getByLabelText(/estimated annual benefit/i), {
-      target: { value: "0" },
-    });
-    fireEvent.click(next());
-    expect(screen.getByRole("alert", { name: "Validation errors" })).toBeTruthy();
-    expect(screen.getByLabelText(/business justification/i)).toBeTruthy();
-    fireEvent.change(screen.getByLabelText(/estimated annual benefit/i), {
-      target: { value: "750000" },
     });
     fireEvent.click(screen.getByRole("button", { name: /Reduce fraud and improper payments/i }));
     fireEvent.click(next());
     expect(screen.getByRole("alert", { name: "Validation errors" })).toBeTruthy();
-    expect(screen.getByLabelText(/business justification/i)).toBeTruthy();
+    expect(control(/business justification/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Reduce fraud and improper payments/i }));
     fireEvent.click(next());
     expect(
-      screen.getByRole("heading", { name: "Which datasets are you bringing, and who owns them?" }),
+      screen.getByRole("heading", { name: "Which input datasets are you bringing into EDP?" }),
     ).toBeTruthy();
   });
 
-  it("gates the architecture step on both pattern and access being chosen", () => {
+  it("gates the architecture step on the initiative access method", () => {
     renderForm({
-      initialValues: buildDefaults({ dataName: "X", pattern: "", access: "" }),
+      initialValues: buildDefaults({ dataName: "X", access: "" }),
     });
     fireEvent.click(next()); // source -> architecture
     fireEvent.click(next());
     expect(screen.getByRole("alert", { name: "Validation errors" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Design the data flow" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /EFTU secure file transfer/i }));
-    fireEvent.click(next());
-    expect(screen.getByRole("alert", { name: "Validation errors" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Design the data flow" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "How will your team access this data?" }),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /All within Databricks/i }));
     fireEvent.click(next());
     expect(screen.getByRole("heading", { name: "Who builds the pipelines?" })).toBeTruthy();
@@ -532,14 +524,14 @@ describe("SchemaForm — per-step Next gating (canAdvance parity)", () => {
 
   it("links card-group errors only to focusable targets that exist", () => {
     renderForm({
-      initialValues: buildDefaults({ dataName: "X", pattern: "", access: "" }),
+      initialValues: buildDefaults({ dataName: "X", access: "" }),
     });
     fireEvent.click(next());
     fireEvent.click(next());
 
     const summary = screen.getByRole("alert", { name: "Validation errors" });
     const links = within(summary).getAllByRole("link");
-    expect(links).toHaveLength(2);
+    expect(links).toHaveLength(1);
     for (const link of links) {
       const target = document.querySelector(link.getAttribute("href") ?? "missing");
       expect(target).not.toBeNull();
@@ -583,6 +575,20 @@ describe("SchemaForm — per-step Next gating (canAdvance parity)", () => {
     expect(submit.disabled).toBe(false);
   });
 
+  it("shows that a blank optional primary outcome was not chosen on review", () => {
+    renderForm({
+      initialValues: buildDefaults({
+        dataName: "X",
+        useCase: "A sufficiently long business justification.",
+        outcome: "",
+        estimated: true,
+      }),
+    });
+    for (let step = 0; step < 7; step += 1) fireEvent.click(next());
+    expect(screen.getByText("Mission value — Primary outcome: not chosen")).toBeTruthy();
+    expect(screen.queryByText(/Mission value — Reduce fraud and improper payments/)).toBeNull();
+  });
+
   it("gates the sizing step until the estimator has run (isTrue estimated)", () => {
     vi.useFakeTimers();
     try {
@@ -590,24 +596,24 @@ describe("SchemaForm — per-step Next gating (canAdvance parity)", () => {
       completeSourceStep(); // architecture
       fireEvent.click(next()); // delivery
       fireEvent.click(next()); // business
-      fireEvent.change(screen.getByLabelText(/business justification/i), {
+      fireEvent.change(control(/business justification/i), {
         target: { value: "A sufficiently long business justification." },
       });
       fireEvent.click(next()); // datasets
       completeDatasetsAndWorkspace(); // -> sizing
       fireEvent.click(next());
       expect(screen.getByRole("alert", { name: "Validation errors" })).toBeTruthy();
-      expect(screen.getByRole("heading", { name: "AI-assisted sizing" })).toBeTruthy();
-      fireEvent.click(screen.getByRole("button", { name: /run ai sizing/i }));
+      expect(screen.getByRole("heading", { name: "Estimate initiative capacity" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: /run preliminary estimate/i }));
       act(() => vi.advanceTimersByTime(900));
       // changing a sizing input invalidates the estimate (resets `estimated`)
-      fireEvent.change(screen.getByLabelText(/business users needing to query/i), {
+      fireEvent.change(control(/business users needing to query/i), {
         target: { value: "80" },
       });
       fireEvent.click(next());
       expect(screen.getByRole("alert", { name: "Validation errors" })).toBeTruthy();
-      expect(screen.getByRole("heading", { name: "AI-assisted sizing" })).toBeTruthy();
-      fireEvent.click(screen.getByRole("button", { name: /run ai sizing/i }));
+      expect(screen.getByRole("heading", { name: "Estimate initiative capacity" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: /run preliminary estimate/i }));
       act(() => vi.advanceTimersByTime(900));
       fireEvent.click(next());
       expect(screen.getByRole("heading", { name: "Review the onboarding package" })).toBeTruthy();
@@ -618,19 +624,6 @@ describe("SchemaForm — per-step Next gating (canAdvance parity)", () => {
 });
 
 describe("SchemaForm — card-select / multi-card selection", () => {
-  it("switches the ingest pattern on click (card-select is single-choice)", () => {
-    renderForm();
-    completeSourceStep();
-    const eftu = screen.getByRole("button", { name: /EFTU secure file transfer/i });
-    const other = screen.getByRole("button", { name: /Something else \(needs consultation\)/i });
-    expect(eftu.getAttribute("aria-pressed")).toBe("true"); // default 'eftu'
-    fireEvent.click(other);
-    expect(other.getAttribute("aria-pressed")).toBe("true");
-    expect(eftu.getAttribute("aria-pressed")).toBe("false");
-    // off-pattern selection flips the architecture note (needsConsult)
-    expect(screen.getByText(/falls outside the approved patterns/i)).toBeTruthy();
-  });
-
   it("toggles ROI levers independently (multi-card is multi-choice)", () => {
     renderForm();
     completeSourceStep();
@@ -683,20 +676,43 @@ describe("SchemaForm — sizing widget renders golden figures", () => {
       completeSourceStep();
       fireEvent.click(next()); // delivery
       fireEvent.click(next()); // business
-      fireEvent.change(screen.getByLabelText(/business justification/i), {
+      fireEvent.change(control(/business justification/i), {
         target: { value: "A sufficiently long business justification." },
       });
       fireEvent.click(next()); // datasets
       completeDatasetsAndWorkspace(); // -> sizing (defaults: 500 GB, Daily, Moderate, 40 users)
-      fireEvent.click(screen.getByRole("button", { name: /run ai sizing/i }));
+      fireEvent.click(screen.getByRole("button", { name: /run preliminary estimate/i }));
       act(() => vi.advanceTimersByTime(900));
 
-      expect(screen.getByText(`Recommended sizing — ${GOLDEN.tier}`)).toBeTruthy();
-      expect(screen.getByText(`${GOLDEN.confidence}% confidence`)).toBeTruthy();
+      expect(screen.getByText(`Preliminary capacity estimate — ${GOLDEN.tier}`)).toBeTruthy();
+      expect(screen.getAllByText(/EDP staff will revalidate/i).length).toBeGreaterThan(0);
       expect(screen.getByText(`${GOLDEN.storageTb} TB`)).toBeTruthy();
-      expect(screen.getByText(GOLDEN.dbu.toLocaleString())).toBeTruthy();
-      expect(screen.getByText(GOLDEN.cluster)).toBeTruthy();
-      expect(screen.getByText(GOLDEN.warehouse)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps cost, capacity, and ROI pending when any sizing basis is unknown", () => {
+    vi.useFakeTimers();
+    try {
+      renderForm({
+        initialValues: buildDefaults({
+          dataName: "Known initiative",
+          steward: "Known contact",
+          useCase: "A sufficiently detailed business justification.",
+          sizeGb: null,
+          freq: "Not sure",
+        }),
+      });
+      for (let i = 0; i < 6; i++) fireEvent.click(next());
+      fireEvent.click(screen.getByRole("button", { name: /run preliminary estimate/i }));
+      act(() => vi.advanceTimersByTime(900));
+      expect(screen.getByText(/Estimate pending — EDP staff will refine/i)).toBeTruthy();
+      expect(screen.queryByText(/Preliminary monthly cost/i)).toBeNull();
+      fireEvent.click(next());
+      expect(screen.getByText("Initiative sizing — Pending")).toBeTruthy();
+      expect(screen.getAllByText("Pending").length).toBeGreaterThanOrEqual(3);
+      expect(screen.getByText(/EDP business office reviews business value/i)).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }
@@ -717,11 +733,12 @@ describe("SchemaForm — completing the flow assembles the identical request", (
             submitted = v;
           }}
           onCancel={() => {}}
+          initialValues={buildDefaults()}
         />,
       );
 
       // step 0: source
-      fireEvent.change(screen.getByLabelText(/initiative name/i), {
+      fireEvent.change(control(/initiative name/i), {
         target: { value: "Preparer e-file submissions (curated)" },
       });
       fireEvent.click(screen.getByRole("radio", { name: /myself/i }));
@@ -731,14 +748,14 @@ describe("SchemaForm — completing the flow assembles the identical request", (
       // step 2: delivery (keep default self)
       fireEvent.click(next());
       // step 3: business
-      fireEvent.change(screen.getByLabelText(/business justification/i), {
+      fireEvent.change(control(/business justification/i), {
         target: { value: "Score preparer risk weekly instead of quarterly." },
       });
       fireEvent.click(next());
       // steps 4–5: datasets & owners, workspace needs (#86)
       completeDatasetsAndWorkspace();
       // step 6: sizing (keep defaults) -> run estimate
-      fireEvent.click(screen.getByRole("button", { name: /run ai sizing/i }));
+      fireEvent.click(screen.getByRole("button", { name: /run preliminary estimate/i }));
       act(() => vi.advanceTimersByTime(900));
       fireEvent.click(next());
       // step 7: review -> submit
@@ -763,17 +780,15 @@ describe("SchemaForm — completing the flow assembles the identical request", (
       levers: ["fraud"],
       useCase: "Score preparer risk weekly instead of quarterly.",
       outcome: "fraud",
-      priority: "Mission-critical",
       annualBenefit: 750000,
       hoursSaved: 1200,
       sizeGb: 500,
       freq: "Daily",
       complexity: "Moderate",
       users: 40,
-      // The wizard keeps the owner's Someone else choice; the intake drops it.
-      datasets: [{ ...VALID_DATASET, owners: [{ ...VALID_DATASET.owners[0]!, self: false }] }],
-      isolation: "Not sure",
-      teamSize: "6", // as typed; toOnboardingIntake reads it as a number
+      datasets: [VALID_DATASET],
+      isolation: "Not sure — ask EDP staff to assess",
+      teamSize: 6,
       estimated: true,
     };
     expect(values).toEqual(expectedValues);
@@ -792,7 +807,7 @@ describe("SchemaForm — completing the flow assembles the identical request", (
       overall: "Submitted — pending EDP business and ROI review",
       purpose:
         "Onboard Preparer e-file submissions (curated) from IMF / Individual Master File into the " +
-        "Individual Filing domain via EFTU secure file transfer, consumed through All within " +
+        "Individual Filing domain via Enterprise File Transfer Utility (EFTU), consumed through All within " +
         "Databricks. Score preparer risk weekly instead of quarterly. Mission value: Reduce fraud " +
         "and improper payments (primary: Reduce fraud and improper payments). Sizing: Medium — " +
         "dedicated pipeline (500 GB, Daily loads, Moderate transforms, 40 query users) · est. " +
@@ -801,11 +816,11 @@ describe("SchemaForm — completing the flow assembles the identical request", (
         {
           kind: "Onboarding",
           label: "Preparer e-file submissions (curated)",
-          sub: "Individual Filing · Medium — dedicated pipeline",
+          sub: "Target: the Individual Filing domain · Medium — dedicated pipeline",
         },
         {
           kind: "Onboarding",
-          label: "Ingestion — EFTU secure file transfer",
+          label: "Ingestion — Enterprise File Transfer Utility (EFTU)",
           sub: "Daily · Moderate transforms",
         },
         { kind: "Onboarding", label: "Consumption — All within Databricks", sub: "40 query users" },
@@ -830,7 +845,7 @@ describe("SchemaForm — completing the flow assembles the identical request", (
         {
           system: "EDP intake CCB",
           status: "pending",
-          detail: "Individual Filing intake change control board",
+          detail: "Intake change control board for the Individual Filing domain",
         },
         {
           system: "BEARS entitlement creation",
@@ -874,9 +889,17 @@ describe("SchemaForm — the extended intake (#86)", () => {
     const hash = window.location.hash;
     fireEvent.click(within(errors).getByRole("link", { name: /choose a domain/i }));
     expect(window.location.hash).toBe(hash);
-    expect(document.activeElement).toBe(screen.getByLabelText("Dataset 1 domain"));
-    expect((screen.getByLabelText("Dataset 1 name") as HTMLInputElement).value).toBe(
-      "Case signals",
+    expect(document.activeElement).toBe(control("Dataset 1 domain"));
+    expect((control("Dataset 1 name") as HTMLInputElement).value).toBe("Case signals");
+  });
+
+  it("gives every dataset owner input a persistent visible label", () => {
+    renderAtDatasets();
+    expect(document.querySelector('label[for="dataset-1-owner-1-name"]')?.textContent).toMatch(
+      /Owner's name/,
+    );
+    expect(document.querySelector('label[for="dataset-1-owner-1-email"]')?.textContent).toMatch(
+      /Owner's email/,
     );
   });
 
@@ -889,7 +912,7 @@ describe("SchemaForm — the extended intake (#86)", () => {
     const errors = screen.getByRole("alert", { name: /validation errors/i });
     expect(document.activeElement).toBe(errors);
     await user.click(within(errors).getByRole("link", { name: /enter a dataset tag/i }));
-    const tag = screen.getByLabelText("Dataset 1 tag");
+    const tag = control("Dataset 1 tag");
     expect(document.activeElement).toBe(tag);
     await user.keyboard("case_signals");
     expect(document.activeElement).toBe(tag);
@@ -900,7 +923,7 @@ describe("SchemaForm — the extended intake (#86)", () => {
 
   it("marks a touched, empty dataset field invalid with its own error", () => {
     renderAtDatasets();
-    const tag = screen.getByLabelText("Dataset 1 tag");
+    const tag = control("Dataset 1 tag");
     fireEvent.change(tag, { target: { value: "" } });
     expect(tag.getAttribute("aria-invalid")).toBeNull(); // untouched: no inline error yet
     fireEvent.blur(tag);
@@ -911,37 +934,43 @@ describe("SchemaForm — the extended intake (#86)", () => {
   });
 
   it("starts with one blank dataset and gates Continue until it is complete", () => {
-    renderForm();
+    renderForm({
+      initialValues: buildDefaults({
+        datasets: [{ name: "", domain: "", datasetTag: "", owners: [{ name: "", email: "" }] }],
+      }),
+    });
     completeSourceStep();
     fireEvent.click(next()); // delivery
     fireEvent.click(next()); // business
-    fireEvent.change(screen.getByLabelText(/business justification/i), {
+    fireEvent.change(control(/business justification/i), {
       target: { value: "A sufficiently long business justification." },
     });
     fireEvent.click(next()); // datasets
-    expect((screen.getByLabelText("Dataset 1 name") as HTMLInputElement).value).toBe("");
+    expect((control("Dataset 1 name") as HTMLInputElement).value).toBe("");
     fireEvent.click(next());
     expect(screen.getByRole("alert", { name: "Validation errors" })).toBeTruthy();
     expect(
-      screen.getByRole("heading", { name: "Which datasets are you bringing, and who owns them?" }),
+      screen.getByRole("heading", { name: "Which input datasets are you bringing into EDP?" }),
     ).toBeTruthy();
     completeDatasetsAndWorkspace();
-    expect(screen.getByRole("heading", { name: "AI-assisted sizing" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /run ai sizing/i })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Estimate initiative capacity" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /run preliminary estimate/i })).toBeTruthy();
   });
 
   it("offers Other as a domain and collects several datasets and owners", () => {
     renderAtDatasets();
-    const domain = screen.getByLabelText("Dataset 1 domain") as HTMLSelectElement;
-    expect(within(domain).getByRole("option", { name: "Other" })).toBeTruthy();
+    const domain = control("Dataset 1 domain") as HTMLSelectElement;
+    expect(within(domain).getByRole("option", { name: /No domain fits/i })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /add another dataset/i }));
     fireEvent.click(next());
     expect(screen.getByRole("alert", { name: "Validation errors" })).toBeTruthy();
-    expect(screen.getByLabelText("Dataset 2 name")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Dataset 2 name"), { target: { value: "Misc" } });
-    fireEvent.change(screen.getByLabelText("Dataset 2 domain"), { target: { value: "other" } });
-    fireEvent.change(screen.getByLabelText("Dataset 2 tag"), { target: { value: "misc" } });
+    expect(control("Dataset 2 name")).toBeTruthy();
+    fireEvent.change(control("Dataset 2 name"), { target: { value: "Misc" } });
+    fireEvent.change(control("Dataset 2 source system"), { target: { value: "IDRS" } });
+    fireEvent.change(control("Dataset 2 domain"), { target: { value: "other" } });
+    fireEvent.change(control("Dataset 2 ingestion method"), { target: { value: "informatica" } });
+    fireEvent.change(control("Dataset 2 tag"), { target: { value: "misc" } });
     fireEvent.click(
       within(screen.getByRole("group", { name: "Dataset 2 owner 1" })).getByRole("radio", {
         name: /someone else/i,
@@ -958,7 +987,7 @@ describe("SchemaForm — the extended intake (#86)", () => {
         "Owner's email",
       ),
       {
-        target: { value: "al@example.test" },
+        target: { value: "al@example.gov" },
       },
     );
     fireEvent.click(screen.getByRole("button", { name: /add an owner to dataset 2/i }));
@@ -975,8 +1004,8 @@ describe("SchemaForm — the extended intake (#86)", () => {
   it("asks the workspace-needs questions, labels their criteria a stub and shows the compute policy", () => {
     renderAtDatasets();
     fireEvent.click(next()); // -> workspace
-    expect(screen.getByLabelText(/isolated from other tenants/i)).toBeTruthy();
-    expect(screen.getByLabelText(/how many people/i)).toBeTruthy();
+    expect(control(/code or work products/i)).toBeTruthy();
+    expect(control(/how many people/i)).toBeTruthy();
     expect(
       screen.getByRole("region", { name: /dedicated-workspace decision: not yet implemented/i }),
     ).toBeTruthy();
@@ -1008,7 +1037,7 @@ describe("SchemaForm — dataset tag rule (#131 UAT)", () => {
     fireEvent.click(next()); // delivery
     fireEvent.click(next()); // business
     fireEvent.click(next()); // datasets
-    return screen.getByLabelText("Dataset 1 tag") as HTMLInputElement;
+    return control("Dataset 1 tag") as HTMLInputElement;
   }
 
   it("shows the rule under the field", () => {
@@ -1040,7 +1069,7 @@ describe("SchemaForm — dataset tag rule (#131 UAT)", () => {
     const tag = toDatasets();
     fireEvent.change(tag, { target: { value } });
     fireEvent.click(next());
-    expect(screen.getByLabelText("Dataset 1 tag")).toBeTruthy(); // still on the datasets step
+    expect(control("Dataset 1 tag")).toBeTruthy(); // still on the datasets step
     const errors = screen.getByRole("alert", { name: "Validation errors" });
     expect(errors.textContent).toMatch(message);
   });
@@ -1050,14 +1079,14 @@ describe("SchemaForm — dataset tag rule (#131 UAT)", () => {
     fireEvent.change(tag, { target: { value } });
     fireEvent.click(next());
     expect(screen.queryByLabelText("Dataset 1 tag")).toBeNull();
-    expect(screen.getByLabelText(/isolated from other tenants/i)).toBeTruthy();
+    expect(control(/code or work products/i)).toBeTruthy();
   });
 
   it("won't continue when two datasets share a tag", () => {
     toDatasets([VALID_DATASET, { ...VALID_DATASET, name: "Second" }]);
     fireEvent.click(next());
     expect(screen.getByText("Dataset 1 already uses this tag. Use a different tag.")).toBeTruthy();
-    expect(screen.getByLabelText("Dataset 2 tag").getAttribute("aria-invalid")).toBe("true");
+    expect(control("Dataset 2 tag").getAttribute("aria-invalid")).toBe("true");
   });
 });
 
@@ -1125,7 +1154,7 @@ describe("SchemaForm — a second wizard on the page (#222 resubmit)", () => {
     fireEvent.click(
       within(summary).getByRole("link", { name: "Enter an answer for the reviewer." }),
     );
-    expect(document.activeElement).toBe(screen.getByLabelText("Your answer"));
+    expect(document.activeElement).toBe(control("Your answer"));
 
     rerender(
       <>
@@ -1146,51 +1175,55 @@ describe("SchemaForm — a second wizard on the page (#222 resubmit)", () => {
 
 describe("SchemaForm — no accountable data steward (#103)", () => {
   it("asks for no steward, and the first step continues without one", () => {
-    renderForm({ signedIn: { name: "Pat Provider", email: "pat.provider@example.test" } });
+    renderForm({ signedIn: { name: "Pat Provider", email: "pat.provider@example.gov" } });
     expect(screen.queryByLabelText(/accountable data steward/i)).toBeNull();
-    fireEvent.change(screen.getByLabelText(/initiative name/i), { target: { value: "Set" } });
+    fireEvent.change(control(/initiative name/i), { target: { value: "Set" } });
     fireEvent.click(screen.getByRole("radio", { name: /myself/i }));
     fireEvent.click(next());
-    expect(screen.getByRole("heading", { name: "Design the data flow" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "How will your team access this data?" }),
+    ).toBeTruthy();
   });
 });
 
-describe("SchemaForm — the initiative owner (#103)", () => {
-  const ME = { name: "Pat Provider", email: "pat.provider@example.test" };
+describe("SchemaForm — the initiative point of contact (#103)", () => {
+  const ME = { name: "Pat Provider", email: "pat.provider@example.gov" };
 
   function fillSourceExceptOwner() {
-    fireEvent.change(screen.getByLabelText(/initiative name/i), {
+    fireEvent.change(control(/initiative name/i), {
       target: { value: "Curated dataset" },
     });
   }
 
   it("asks for the owner first, and links the summary to the choice", () => {
-    renderForm({ signedIn: ME });
+    renderForm({ signedIn: ME, initialValues: buildDefaults({ initiativeOwner: null }) });
     fillSourceExceptOwner();
     fireEvent.click(next());
 
     const link = screen.getByRole("link", { name: "Choose who owns the initiative." });
     fireEvent.click(link);
     expect(document.activeElement).toBe(screen.getByRole("radio", { name: /myself/i }));
-    expect(screen.getByRole("heading", { name: "Tell us about the data" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Tell us about the initiative" })).toBeTruthy();
   });
 
   it("shows the signed-in person for Myself, with nothing to type, as verified", () => {
     renderForm({ signedIn: ME });
-    const group = screen.getByRole("group", { name: /initiative owner/i });
+    const group = screen.getByRole("group", { name: /initiative point of contact/i });
     fireEvent.click(within(group).getByRole("radio", { name: /myself/i }));
 
-    expect(group.textContent).toMatch("Pat Provider (pat.provider@example.test)");
+    expect(group.textContent).toMatch("Pat Provider (pat.provider@example.gov)");
     expect(group.textContent).toMatch(/Verified: it's the account you're signed in with/);
     expect(within(group).queryByRole("textbox")).toBeNull();
     fillSourceExceptOwner();
     fireEvent.click(next());
-    expect(screen.getByRole("heading", { name: "Design the data flow" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "How will your team access this data?" }),
+    ).toBeTruthy();
   });
 
   it("takes a name and a valid email for Someone else, and says they're not verified", () => {
     renderForm({ signedIn: ME });
-    const group = screen.getByRole("group", { name: /initiative owner/i });
+    const group = screen.getByRole("group", { name: /initiative point of contact/i });
     const someoneElse = within(group).getByRole("radio", { name: /someone else/i });
     fireEvent.click(someoneElse);
     expect(group.textContent).toMatch(
@@ -1198,9 +1231,9 @@ describe("SchemaForm — the initiative owner (#103)", () => {
     );
     // Leaving the choice for the name box flags nothing: nothing's been typed yet.
     fireEvent.blur(someoneElse);
-    expect(within(group).queryByText("Enter the initiative owner's name.")).toBeNull();
+    expect(within(group).queryByText("Enter the initiative point of contact's name.")).toBeNull();
     expect(
-      within(group).queryByText("Enter a valid email address for the initiative owner."),
+      within(group).queryByText("Enter a valid email address for the initiative point of contact."),
     ).toBeNull();
 
     fireEvent.change(within(group).getByLabelText("Owner's name"), {
@@ -1213,16 +1246,20 @@ describe("SchemaForm — the initiative owner (#103)", () => {
 
     expect(email.getAttribute("aria-invalid")).toBe("true");
     expect(
-      screen.getAllByText("Enter a valid email address for the initiative owner."),
+      screen.getAllByText("Enter a valid email address for the initiative point of contact."),
     ).toHaveLength(2);
     fireEvent.click(
-      screen.getByRole("link", { name: "Enter a valid email address for the initiative owner." }),
+      screen.getByRole("link", {
+        name: "Enter a valid email address for the initiative point of contact.",
+      }),
     );
     expect(document.activeElement).toBe(email);
 
-    fireEvent.change(email, { target: { value: "sam.else@example.test" } });
+    fireEvent.change(email, { target: { value: "sam.else@example.gov" } });
     fireEvent.click(next());
-    expect(screen.getByRole("heading", { name: "Design the data flow" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "How will your team access this data?" }),
+    ).toBeTruthy();
   });
 
   /** The form open on the datasets step, with one dataset whose owners are `owners`. */
@@ -1238,7 +1275,9 @@ describe("SchemaForm — the initiative owner (#103)", () => {
         datasets: [
           {
             name: "Case signals",
+            sourceSystem: "IMF / Individual Master File",
             domain: "individual-filing",
+            ingestionMethod: "eftu",
             datasetTag: "case_signals",
             owners,
           },
@@ -1257,7 +1296,7 @@ describe("SchemaForm — the initiative owner (#103)", () => {
     expect(within(row).queryByRole("textbox")).toBeNull();
 
     fireEvent.click(within(row).getByRole("radio", { name: /myself/i }));
-    expect(row.textContent).toMatch("Pat Provider (pat.provider@example.test)");
+    expect(row.textContent).toMatch("Pat Provider (pat.provider@example.gov)");
     expect(row.textContent).toMatch("Verified: it's the account you're signed in with.");
     expect(within(row).queryByRole("textbox")).toBeNull();
 
@@ -1292,7 +1331,7 @@ describe("SchemaForm — the initiative owner (#103)", () => {
 
     expect(email.getAttribute("aria-invalid")).toBe("true");
     expect(row.textContent).toMatch("Enter a valid email address.");
-    fireEvent.change(email, { target: { value: "olive.owner@example.test" } });
+    fireEvent.change(email, { target: { value: "olive.owner@example.gov" } });
     fireEvent.click(next());
     expect(screen.queryByRole("group", { name: "Dataset 1 owner 1" })).toBeNull();
   });
@@ -1316,7 +1355,7 @@ describe("SchemaForm — the initiative owner (#103)", () => {
     fireEvent.click(within(row).getByRole("radio", { name: /someone else/i }));
     fireEvent.change(within(row).getByLabelText("Owner's name"), { target: { value: "Olive" } });
     fireEvent.change(within(row).getByLabelText("Owner's email"), {
-      target: { value: "olive.owner@example.test" },
+      target: { value: "olive.owner@example.gov" },
     });
     fireEvent.click(next());
     expect(screen.queryByRole("group", { name: "Dataset 1 owner 2" })).toBeNull();
@@ -1332,7 +1371,7 @@ describe("SchemaForm — the initiative owner (#103)", () => {
     fireEvent.click(within(other).getByRole("radio", { name: /someone else/i }));
     fireEvent.change(within(other).getByLabelText("Owner's name"), { target: { value: "Olive" } });
     fireEvent.change(within(other).getByLabelText("Owner's email"), {
-      target: { value: "olive.owner@example.test" },
+      target: { value: "olive.owner@example.gov" },
     });
     for (let i = 0; i < 3; i++) fireEvent.click(next());
     fireEvent.click(screen.getByRole("button", { name: /submit data onboarding request/i }));
@@ -1340,7 +1379,7 @@ describe("SchemaForm — the initiative owner (#103)", () => {
     const intake = toOnboardingIntake(onSubmit.mock.calls[0]![0] as IntakeState);
     expect(intake.datasets[0]?.owners).toEqual([
       { self: true, name: "", email: "" },
-      { name: "Olive", email: "olive.owner@example.test" },
+      { name: "Olive", email: "olive.owner@example.gov" },
     ]);
   });
 
@@ -1373,12 +1412,12 @@ describe("SchemaForm — the initiative owner (#103)", () => {
       target: { value: "Hidden Person" },
     });
     fireEvent.change(within(first).getByLabelText("Owner's email"), {
-      target: { value: "hidden@example.test" },
+      target: { value: "hidden@example.gov" },
     });
     fireEvent.click(within(first).getByRole("radio", { name: /myself/i }));
 
     fireEvent.click(screen.getByRole("button", { name: "Remove dataset 1" }));
-    expect(screen.getByLabelText("Dataset 1 name")).toHaveProperty("value", "Second");
+    expect(control("Dataset 1 name")).toHaveProperty("value", "Second");
 
     // The dataset that was second starts its own Someone else blank.
     const second = ownerRow(1, 1);
@@ -1388,13 +1427,37 @@ describe("SchemaForm — the initiative owner (#103)", () => {
   });
 
   it("shows a stored owner on a resubmission as Someone else with their details", () => {
-    onDatasetsStep([{ id: "ow-1", name: "Olive Owner", email: "olive.owner@example.test" }]);
+    onDatasetsStep([{ id: "ow-1", name: "Olive Owner", email: "olive.owner@example.gov" }]);
     const row = ownerRow(1, 1);
     expect(
       (within(row).getByRole("radio", { name: /someone else/i }) as HTMLInputElement).checked,
     ).toBe(true);
     expect((within(row).getByLabelText("Owner's email") as HTMLInputElement).value).toBe(
-      "olive.owner@example.test",
+      "olive.owner@example.gov",
     );
+  });
+});
+
+describe("SchemaForm — a stored dataset with an unknown ingestion method (#335)", () => {
+  const UNKNOWN = { ...VALID_DATASET, ingestionMethod: "zzz" };
+
+  it.each([
+    ["Datasets", 4],
+    ["Review & submit", 7],
+  ])("draws the %s diagram lane as not chosen and needing consultation", (_step, initialStep) => {
+    renderForm({
+      initialStep,
+      initialValues: buildDefaults({
+        dataName: "X",
+        useCase: "A sufficiently long business justification.",
+        estimated: true,
+        datasets: [VALID_DATASET, UNKNOWN],
+      }),
+    });
+    const lanes = screen.getAllByText("Ingestion pattern");
+    expect(lanes).toHaveLength(2);
+    expect(screen.getByText("Not chosen — needs consultation")).toBeTruthy();
+    expect(screen.getAllByText(/architecture consultation/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/uses approved patterns only/i)).toBeNull();
   });
 });

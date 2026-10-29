@@ -25,7 +25,7 @@ import { ChangeListScreen, DatasetTeamScreen } from "./index";
 
 afterEach(cleanup);
 
-const TESS = { name: "Tess Tester", email: "tess.tester@example.test" };
+const TESS = { name: "Tess Tester", email: "tess.tester@example.gov" };
 
 function makeStore(user: () => UserProfile) {
   return createMemoryStore(makeSnapshot(), {
@@ -96,7 +96,7 @@ describe("editing a member's role on the team page", () => {
       .find((r) => r.textContent?.includes(TESS.email));
     expect(tess).toHaveTextContent("Dev (test)");
     expect(await screen.findByRole("table", { name: "Team history" })).toHaveTextContent(
-      "Changed Tess Tester (tess.tester@example.test) from Tester to Dev (test)",
+      "Changed Tess Tester (tess.tester@example.gov) from Tester to Dev (test)",
     );
   });
 
@@ -159,7 +159,7 @@ describe("owners", () => {
     await store.datasetTeam.addOwner({
       datasetId: DATASET_ID,
       name: "Drew",
-      email: "drew@example.test",
+      email: "drew@example.gov",
     });
     team(store);
 
@@ -167,7 +167,7 @@ describe("owners", () => {
     const confirm = screen.getByRole("region", { name: "Confirm the owner removal" });
     const lose = within(confirm).getByRole("region", { name: "They lose" });
     expect(lose).toHaveTextContent("Ownership");
-    expect(lose).toHaveTextContent("The Manager role");
+    expect(lose).toHaveTextContent("The Maintainer role");
     expect(lose).toHaveTextContent("Test grant: read/write");
     expect(lose).toHaveTextContent("Test grant: manage");
     fireEvent.click(within(confirm).getByRole("button", { name: /Confirm owner removal/ }));
@@ -175,12 +175,12 @@ describe("owners", () => {
     // An owner holds only the manager role, so removing them leaves only their pending removal.
     expect(
       await screen.findByText(
-        /Removed Drew as an owner and from the Manager role\. CL-0002 pending/,
+        /Removed Drew as an owner and from the Maintainer role\. CL-0002 pending/,
       ),
     ).toBeInTheDocument();
     const members = screen.getByRole("table", { name: "Members" });
     await waitFor(() =>
-      expect(within(members).getByText("drew@example.test").closest("tr")).toHaveTextContent(
+      expect(within(members).getByText("drew@example.gov").closest("tr")).toHaveTextContent(
         "Pending removal · CL-0002",
       ),
     );
@@ -192,7 +192,7 @@ describe("owners", () => {
     await store.datasetTeam.addOwner({
       datasetId: DATASET_ID,
       name: "Drew",
-      email: "drew@example.test",
+      email: "drew@example.gov",
     });
     team(store);
 
@@ -204,13 +204,13 @@ describe("owners", () => {
       "Test grant: manage",
     );
     expect(confirm).toHaveTextContent(
-      `remove them (Databricks account ID ${OWNER.principalId}) from the Manager group`,
+      `remove them (Databricks account ID ${OWNER.principalId}) from the Maintainer group`,
     );
     fireEvent.click(within(confirm).getByRole("button", { name: /Confirm owner removal/ }));
 
     expect(
       await screen.findByText(
-        /Removed Olive Owner as an owner and from the Manager role\. CL-0002/,
+        /Removed Olive Owner as an owner and from the Maintainer role\. CL-0002/,
       ),
     ).toBeInTheDocument();
     // Olive no longer owns the dataset, so the change list is EDP staff's to read.
@@ -233,7 +233,7 @@ describe("owners", () => {
     const form = await openAddOwner();
     fireEvent.change(within(form).getByLabelText(/name/i), { target: { value: "Drew Partner" } });
     fireEvent.change(within(form).getByLabelText(/email/i), {
-      target: { value: "drew.partner@example.test" },
+      target: { value: "drew.partner@example.gov" },
     });
     fireEvent.click(within(form).getByRole("button", { name: /Review new owner/ }));
     expect(screen.getByRole("region", { name: "Confirm the new owner" })).toHaveTextContent(
@@ -243,11 +243,37 @@ describe("owners", () => {
 
     expect(await screen.findByText(/Made Drew Partner an owner\. CL-0001/)).toBeInTheDocument();
     const owners = screen.getByRole("table", { name: "Owners" });
-    expect(owners).toHaveTextContent("drew.partner@example.test");
+    expect(owners).toHaveTextContent("drew.partner@example.gov");
     expect(owners).toHaveTextContent("Not bound yet");
     const members = await screen.findByRole("table", { name: "Members" });
-    expect(members).toHaveTextContent("Owner: holds manager");
+    expect(members).toHaveTextContent("Owner: holds Maintainer");
     expect(within(members).queryByRole("button", { name: /Edit access for Drew/ })).toBeNull();
+  });
+
+  it("the Owner-only add form names the existing role that will be replaced", async () => {
+    let current = OWNER;
+    const store = makeStore(() => current);
+    await store.datasetRoles.addMember({ datasetId: DATASET_ID, ...TESS, role: "developer" });
+    current = STAFF;
+    team(store);
+
+    const form = await openAddOwner();
+    fireEvent.change(within(form).getByLabelText(/Owner's name/), {
+      target: { value: TESS.name },
+    });
+    fireEvent.change(within(form).getByLabelText(/Owner's email/), {
+      target: { value: TESS.email },
+    });
+    fireEvent.click(within(form).getByRole("button", { name: /Review new owner/ }));
+
+    expect(screen.getByRole("region", { name: "Confirm the new owner" })).toHaveTextContent(
+      "Making Tess Tester an owner will replace their Dev (test) role with Maintainer in one step.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Confirm new owner/ }));
+    expect(await screen.findByText(/Made Tess Tester an owner\./)).toBeInTheDocument();
+    expect(await store.datasetTeam.listTeamEvents(DATASET_ID)).toEqual([
+      expect.objectContaining({ kind: "owner-added", replacedRole: "developer" }),
+    ]);
   });
 
   it("marks the add-owner fields required, and on an empty submit announces and focuses the errors", async () => {
@@ -360,7 +386,7 @@ describe("adding an owner when the proxy answers instead of the app", () => {
   async function confirmNewOwner(user: ReturnType<typeof userEvent.setup>) {
     const form = await openAddOwner();
     await user.type(within(form).getByLabelText(/name/i), "Drew Partner");
-    await user.type(within(form).getByLabelText(/email/i), "drew.partner@example.test");
+    await user.type(within(form).getByLabelText(/email/i), "drew.partner@example.gov");
     await user.click(within(form).getByRole("button", { name: /Review new owner/ }));
     await user.click(screen.getByRole("button", { name: /Confirm new owner/ }));
   }
@@ -471,14 +497,14 @@ describe("the change list shows team-management entries", () => {
     const table = await screen.findByRole("table", { name: "Change-list entries" });
     const rows = within(table).getAllByRole("row").slice(1);
     expect(rows[1]).toHaveTextContent(
-      "Remove Tess Tester (tess.tester@example.test) from group edp-refund_anomalies-tester",
+      "Remove Tess Tester (tess.tester@example.gov) from group edp-refund_anomalies-tester",
     );
     expect(rows[1]).toHaveTextContent("Revokes: Test grant: read");
     expect(rows[1]).toHaveTextContent(
       "Olive Owner changed their role on Refund anomaly scores from Tester to Dev (test)",
     );
     expect(rows[2]).toHaveTextContent(
-      "Add Tess Tester (tess.tester@example.test) to group edp-refund_anomalies-developer",
+      "Add Tess Tester (tess.tester@example.gov) to group edp-refund_anomalies-developer",
     );
     expect(rows[2]).toHaveTextContent("Grants: Test grant: read/write");
     expect(rows).toHaveLength(3);

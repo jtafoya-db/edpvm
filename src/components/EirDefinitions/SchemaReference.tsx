@@ -351,8 +351,10 @@ export const SchemaReference = forwardRef<SchemaReferenceHandle>(function Schema
             <p style={{ ...muted, margin: 0 }}>
               What happens when an answer doesn&apos;t meet a rule. The most serious one wins:
               blocking, then manual-review, then warning. A missing or malformed answer always
-              blocks. Automatic validity isn&apos;t switched on in this app: a Safeguards validator
-              decides every EIR, and eligibility is only recorded.
+              blocks. By default a Safeguards validator decides every EIR. A deploy can set
+              automatic validity: then a signed upload whose pre-check passes is recorded as valid
+              at once, and a warning only if the deploy also names it. Automatic validity isn&apos;t
+              authorized for production use until Safeguards signs off.
             </p>
             {dispositions.map((d) => (
               <Entry key={d.name} anchor={d.anchor} title={d.name}>
@@ -365,7 +367,11 @@ export const SchemaReference = forwardRef<SchemaReferenceHandle>(function Schema
                   <dt style={dt}>Upload</dt>
                   <dd style={dd}>{d.upload === "refused" ? "Refused" : "Accepted"}</dd>
                   <dt style={dt}>Automatic validity</dt>
-                  <dd style={dd}>{d.automaticValidityEligible ? "Eligible" : "Never eligible"}</dd>
+                  <dd style={dd}>
+                    {d.automaticValidity === "if-configured"
+                      ? "Only if the deploy names it (not by default)"
+                      : "Never"}
+                  </dd>
                 </dl>
               </Entry>
             ))}

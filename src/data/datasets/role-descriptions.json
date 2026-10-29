@@ -2,6 +2,7 @@
   "roles": {
     "tester": {
       "label": "Tester",
+      "pluralLabel": "Testers",
       "summary": "Read-only on everything with the dataset's tag, including uncertified data",
       "grants": [
         "Read-only access to everything with the dataset's tag, including uncertified data",
@@ -10,6 +11,7 @@
     },
     "developer": {
       "label": "Developer",
+      "pluralLabel": "Developers",
       "summary": "Read and write on everything with the dataset's tag",
       "grants": [
         "Read and write access to everything with the dataset's tag",
@@ -17,8 +19,9 @@
       ]
     },
     "manager": {
-      "label": "Manager",
-      "summary": "Everything a developer has, plus managing members and prod permissions",
+      "label": "Maintainer",
+      "pluralLabel": "Maintainers",
+      "summary": "Everything a developer has, plus running the dataset's jobs and managing permissions on what it publishes in prod",
       "grants": [
         "Everything a developer has",
         "Manage permissions on what the dataset publishes in prod"

@@ -53,6 +53,7 @@ import {
   type EirFormsAnswer,
   type PublishedEirDefinition,
 } from "../../../data/eir/definition/repository.ts";
+import { preflightRulesFor } from "../../../data/eir/definition/preflight-rules.ts";
 import { DomainError, VersionConflictError } from "../errors.ts";
 import { canonicalJson } from "../ids.ts";
 import type { EirFormConfig } from "../../../data/eir/config.ts";
@@ -608,7 +609,8 @@ export function registerEirDefinitionsArea(registry: Registry): void {
     async run({ query, names, read }): Promise<EirFormsAnswer> {
       // Identities (#224): published numbers, built-in names, legacy form versions.
       const versions = (query.versions ?? "").split(",").filter(Boolean).slice(0, 10);
-      const forms = await resolveEirForms({ names, read }, versions);
+      const definitions = await resolveEirDefinitions({ names, read }, { ids: versions });
+      const forms = formsOf(definitions);
       const active = forms.active();
       const known: Record<string, EirFormConfig> = {};
       for (const version of versions) {
@@ -617,7 +619,13 @@ export function registerEirDefinitionsArea(registry: Registry): void {
         if (form) known[version] = form;
       }
       if (!active) throw unavailableForm();
-      return { active, forms: known };
+      // For the instant pre-check only (#235): published rules; the server still decides.
+      const rules = preflightRulesFor(
+        [active.version, ...versions],
+        (id) => definitions.byId(id),
+        (id) => publishedVersionNumber(id) !== undefined,
+      );
+      return { active, forms: known, rules };
     },
   });
 }

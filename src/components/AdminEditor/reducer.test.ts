@@ -85,10 +85,10 @@ describe("applyEdit — fields & sizing", () => {
   it("edits a field label and required flag", () => {
     const relabelled = applyEdit(base, {
       kind: "setFieldLabel",
-      id: "sourceSystem",
-      value: "Owner",
+      id: "dataName",
+      value: "Initiative title",
     });
-    expect(relabelled.fields.find((f) => f.id === "sourceSystem")?.label).toBe("Owner");
+    expect(relabelled.fields.find((f) => f.id === "dataName")?.label).toBe("Initiative title");
 
     const optional = applyEdit(base, {
       kind: "setFieldRequired",

@@ -236,7 +236,17 @@ export function sqliteSchema(file: string): { creates: string[]; counters: [stri
 }
 
 export function createSqliteWarehouse(
-  options: { files?: string[]; now?: () => Date; schemaPrefix?: string } = {},
+  options: {
+    files?: string[];
+    now?: () => Date;
+    schemaPrefix?: string;
+    /**
+     * Fail a block right after it runs a write this returns true for (its
+     * SQLite text and bound values), as a warehouse failing mid-transaction:
+     * the whole block rolls back, that write included.
+     */
+    failWrite?: (statement: string, values: Record<string, SQLInputValue>) => boolean;
+  } = {},
 ): SqliteWarehouse {
   const db = new DatabaseSync(":memory:");
   const now = options.now ?? (() => new Date());
@@ -371,6 +381,9 @@ export function createSqliteWarehouse(
           continue;
         }
         rows = run(withVariables(step), params).rows;
+        if (options.failWrite?.(step, params)) {
+          throw new Error("synthetic warehouse failure after a write in the block");
+        }
       }
       db.exec("COMMIT");
     } catch (error) {

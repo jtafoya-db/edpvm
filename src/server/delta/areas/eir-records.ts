@@ -21,6 +21,7 @@
  * - `draftValues`: `eir_drafts`, unsigned, with its own version.
  */
 import { displayLabel } from "../../../data/display-codes.ts";
+import type { EirAutomaticValidity } from "../../../data/eir/approval-mode.ts";
 import { withoutLegacyMarker } from "../../../data/eir/self-decision.ts";
 import type {
   EirAction,
@@ -292,7 +293,21 @@ function toAction(row: EirActionRow): EirAction {
     ...(note ? (SUBMITTING.has(action) ? { response: note } : { note }) : {}),
     ...(onRenewal ? { subject: "renewal" as const } : {}),
     ...(selfDecisionPayload(row.payload) ? { selfDecisionTestMode: true as const } : {}),
+    ...automaticValidityPayload(row.payload),
   };
+}
+
+/** What an automatic validity decision rests on (#204), from the action's payload (set only by the server). */
+function automaticValidityPayload(payload: string | null | undefined): {
+  automaticValidity?: EirAutomaticValidity;
+} {
+  if (!payload) return {};
+  try {
+    const parsed = JSON.parse(payload) as { automaticValidity?: EirAutomaticValidity };
+    return parsed.automaticValidity ? { automaticValidity: parsed.automaticValidity } : {};
+  } catch {
+    return {};
+  }
 }
 
 /** Whether an action row's payload records a test-mode self-decision (set only by the server). */

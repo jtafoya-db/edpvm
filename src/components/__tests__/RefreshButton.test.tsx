@@ -73,7 +73,7 @@ describe("Refresh on work queues", () => {
     await store.datasetRoles.addMember({
       datasetId: DATASET_ID,
       name: "Tess Tester",
-      email: "tess.tester@example.test",
+      email: "tess.tester@example.gov",
       role: "tester",
     });
     me.current = STAFF;
@@ -120,8 +120,8 @@ describe("writes still reach the keys they change under the policy", () => {
       result.current.addOwner({
         datasetId: DATASET_ID,
         name: "Drew Deputy",
-        email: "drew.deputy@example.test",
-        managerLabel: "Manager",
+        email: "drew.deputy@example.gov",
+        managerLabel: "Maintainer",
       });
     });
     await waitFor(() => expect(listInbox).toHaveBeenCalledTimes(2));

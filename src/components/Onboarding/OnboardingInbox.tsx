@@ -25,6 +25,7 @@ import { FeatureGate } from "@/features/FeatureGate";
 import { RefreshButton } from "../RefreshButton";
 import { ChromeProvider, useChrome, type OnboardingChrome } from "./chrome";
 import { IntakePackage } from "./IntakePackage";
+import { OwnerMatchingPanel } from "./OwnerMatching";
 import {
   ActionFailedNotice,
   DecisionLog,
@@ -180,6 +181,12 @@ function InboxItem({
             request={request}
             changes={pendingResubmission(request, STAGE_FOR_REVIEWER[role])?.record.changes}
           />
+          {/* Matching is EDP staff's (#103, 103-B); the store refuses anyone else. */}
+          {user.data?.isAdmin ? (
+            <FeatureGate id="owner-matching">
+              <OwnerMatchingPanel request={request} />
+            </FeatureGate>
+          ) : null}
           <DecisionLog request={request} />
         </div>
 
@@ -372,15 +379,6 @@ function InboxBody({ role }: { role: OnboardingReviewerRole }) {
     return <Notice tone="error">Could not resolve who you are: {user.error.message}</Notice>;
   }
   if (!user.data) return <Notice>Loading…</Notice>;
-  if (!isMember) {
-    return (
-      <Notice tone="warning">
-        This inbox is for members of the configured {REVIEWER_LABEL[role]} group, and you are not
-        one. In the MVP the EDP admin group holds this role: ask EDP staff to add you to it
-        (configured by <code>EDP_ADMIN_GROUP_ID</code>).
-      </Notice>
-    );
-  }
   if (inbox.isError) return <ActionFailedNotice error={inbox.error} />;
   if (!inbox.data) return <Notice>Loading…</Notice>;
   return (

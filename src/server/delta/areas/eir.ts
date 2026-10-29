@@ -32,26 +32,30 @@ import {
   EIR_UNAVAILABLE_MESSAGE,
   EirDomainError,
   eirWaitingSince,
+  evaluatePinnedDraft,
   FORM_CHANGED_REFUSAL,
-  definitionForDraft,
   formForNextSave,
   formsOfDefinitions,
   isRenewalStage,
   type EirDefinitionLookup,
   type MemoryEirRepository,
+  withAutomaticValidity,
 } from "../../../data/eir/repository.ts";
-import { EIR_FORM } from "../../../data/eir/config.ts";
+import {
+  automaticValidityOf,
+  qualifiesForAutomaticValidity,
+  type EirApprovalConfig,
+  type EirAutomaticValidity,
+} from "../../../data/eir/approval-mode.ts";
+import { configuredEirApprovalConfig } from "../../eir-approval-mode.ts";
+import { EIR_FORM, type EirFormConfig } from "../../../data/eir/config.ts";
 import { definitionLabel } from "../../../data/eir/definition/identity.ts";
 import type { EffectiveSlaConfig } from "../../../data/sla-config.ts";
 import { resolveEirDefinitions } from "./eir-definitions.ts";
 import { cloneEffectiveSlaConfig, DEFAULT_EFFECTIVE_SLA_CONFIG } from "../../../data/sla-config.ts";
 import type { EirAction, EirInboxItem, EirRecord } from "../../../data/eir/types";
 import type { EirEvaluation } from "../../../data/eir/types";
-import {
-  blockingGuidance,
-  evaluateEirDraft,
-  manualHandlingEvaluation,
-} from "../../../data/eir/evaluation.ts";
+import { blockingGuidance, evaluateEirDraft } from "../../../data/eir/evaluation.ts";
 import type { EirDefinitionVersions } from "../../../data/eir/definition/repository.ts";
 import { generateEirPdf } from "../../../data/eir/pdf.ts";
 import { displayLabel } from "../../../data/display-codes.ts";
@@ -82,6 +86,7 @@ import {
   expectRow,
   followOn,
   allocateDisplayCode,
+  insertAction,
   insertCurrentState,
   insertRow,
   json,
@@ -89,6 +94,7 @@ import {
   timestamp,
   updateCurrentState,
   type ColumnValue,
+  type SqlExpr,
 } from "../write-helpers.ts";
 import {
   draftIdFor,
@@ -217,6 +223,8 @@ export interface EirAreaDeps {
     wanted: EirDefinitionVersions,
   ) => Promise<EirDefinitionLookup>;
   evaluator: typeof evaluateEirDraft;
+  /** The deploy-time approval settings (#204), resolved on the server. */
+  approval: () => EirApprovalConfig;
 }
 
 // The app's own volume and service principal, from env. Loaded on first use,
@@ -237,6 +245,7 @@ const defaultDeps: EirAreaDeps = {
   selfDecisionTestMode: (names) => defaultSelfDecisionTestMode(names),
   definitions: resolveEirDefinitions,
   evaluator: evaluateEirDraft,
+  approval: () => configuredEirApprovalConfig(),
 };
 
 /**
@@ -365,6 +374,9 @@ const EIR_EVALUATIONS = {
   recordIdColumn: "eir_draft_id",
 } as const;
 
+/** The follow-on position of an upload's own pre-check row (#204), clear of planEirChange's. */
+const UPLOAD_EVALUATION_POSITION = 64;
+
 const evaluationFromRow = (row: Record<string, unknown>): EirEvaluation => ({
   definitionVersion: String(row["definition_version"]),
   formVersion: String(row["form_version"]),
@@ -374,10 +386,94 @@ const evaluationFromRow = (row: Record<string, unknown>): EirEvaluation => ({
   outcomes: JSON.parse(String(row["rule_outcomes"])),
   automaticValidityEligible:
     row["automatic_validity_eligible"] === true || Number(row["automatic_validity_eligible"]) === 1,
+  ...(row["evaluation_sequence"] != null ? { sequence: Number(row["evaluation_sequence"]) } : {}),
   actorPrincipalId: "system",
   actorDisplay: "EDP Vending Machine",
   actorApp: "system",
 });
+
+/**
+ * A saved draft's evaluation against the definition it's pinned to (#201,
+ * #224), on the command's clock: the shared rule ({@link evaluatePinnedDraft}),
+ * so a definition that can't be loaded, or an evaluator that fails, is
+ * manual handling, never a refusal or a guess.
+ */
+function evaluationOf(
+  deps: Pick<EirAreaDeps, "evaluator" | "approval">,
+  definitions: EirDefinitionLookup,
+  draft: Pick<EirRecord, "draftFormVersion">,
+  input: { values: Record<string, string>; draftVersion: number; draftStartedAt: string },
+  occurredAt: Date,
+): EirEvaluation {
+  return evaluatePinnedDraft({
+    evaluator: deps.evaluator,
+    definitions,
+    record: draft,
+    ...input,
+    effectiveAt: occurredAt.toISOString(),
+    config: deps.approval(),
+  }).evaluation;
+}
+
+/**
+ * The next pre-check's place in its draft's evaluations (#204): one more
+ * than the highest recorded, taken inside the block that writes it. That
+ * read of the table also makes a concurrent pre-check of the same draft
+ * conflict at commit, so the runner retries it and no number is used twice.
+ * Rows recorded before the column existed have none and come first.
+ */
+function nextEvaluationSequence(ctx: CommandContext<unknown>, draftId: string): SqlExpr {
+  const evaluations = ctx.names.table(EIR_EVALUATIONS.schema, EIR_EVALUATIONS.table);
+  return {
+    sql: ctx.block.declare(
+      "BIGINT",
+      `SELECT COALESCE(MAX(evaluation_sequence), 0) + 1 FROM ${evaluations} WHERE eir_draft_id = ${ctx.block.bind(draftId)}`,
+    ),
+  };
+}
+
+/** How the reads order a draft's pre-checks, latest first: by sequence, then (older rows) by time. */
+const LATEST_EVALUATION_FIRST = (alias = "") =>
+  `${alias}evaluation_sequence DESC NULLS LAST, ${alias}occurred_at DESC, ${alias}action_id DESC`;
+
+/** The `eir_evaluations` columns of a recorded pre-check, beyond the shared action columns. */
+const evaluationColumns = (
+  evaluation: EirEvaluation,
+  sequence: SqlExpr,
+): Record<string, ColumnValue> => ({
+  evaluation_sequence: sequence,
+  definition_version: evaluation.definitionVersion,
+  form_version: evaluation.formVersion,
+  outcome: evaluation.outcome,
+  rule_outcomes: json(evaluation.outcomes),
+  automatic_validity_eligible: evaluation.automaticValidityEligible,
+  evaluator_principal_id: SYSTEM_ACTOR.principalId,
+  evaluator_display: SYSTEM_ACTOR.display,
+  evaluator_app: SYSTEM_ACTOR.app,
+});
+
+/** The lead `evaluated` action of a command that records an evaluation. */
+const evaluatedAction = (
+  evaluation: EirEvaluation,
+  sequence: SqlExpr,
+): CommandPlan["leadAction"] => ({
+  action: "evaluated",
+  payload: evaluation,
+  columns: evaluationColumns(evaluation, sequence),
+});
+
+/** The evaluation's columns in a command's response row ({@link evaluationFromRow} reads them). */
+function evaluationResultColumns(ctx: ResultRowContext): string {
+  const evaluation = ctx.leadAction.payload as EirEvaluation;
+  return `${ctx.block.bind(evaluation.definitionVersion)} AS definition_version,
+        ${ctx.block.bind(evaluation.formVersion)} AS form_version,
+        ${ctx.block.bind(ctx.occurredAt.toISOString())} AS effective_at,
+        ${ctx.block.bind(ctx.recordVersion)} AS evaluated_draft_version,
+        ${ctx.block.bind(evaluation.outcome)} AS outcome,
+        ${ctx.block.bind(json(evaluation.outcomes))} AS rule_outcomes,
+        ${ctx.block.bind(evaluation.automaticValidityEligible)} AS automatic_validity_eligible,
+        ${(ctx.leadAction.columns?.["evaluation_sequence"] as SqlExpr).sql} AS evaluation_sequence`;
+}
 
 async function latestEvaluation(
   names: StoreNames,
@@ -388,11 +484,11 @@ async function latestEvaluation(
   if (!draftId || draftVersion === undefined) return undefined;
   const rows = await read<Record<string, unknown>>({
     statement: `SELECT definition_version, form_version, occurred_at, record_version,
-      outcome, rule_outcomes, automatic_validity_eligible
+      outcome, rule_outcomes, automatic_validity_eligible, evaluation_sequence
       FROM ${names.table(EIR_EVALUATIONS.schema, EIR_EVALUATIONS.table)}
       WHERE eir_draft_id = :draft_id
       ORDER BY CASE WHEN record_version = :draft_version THEN 0 ELSE 1 END,
-        occurred_at DESC, action_id DESC LIMIT 1`,
+        ${LATEST_EVALUATION_FIRST()} LIMIT 1`,
     parameters: { draft_id: draftId, draft_version: draftVersion },
   });
   return rows[0] ? evaluationFromRow(rows[0]) : undefined;
@@ -411,6 +507,13 @@ function latestEvaluationFromSnapshot(
       const leftMatches = Number(left["record_version"]) === draftVersion;
       const rightMatches = Number(right["record_version"]) === draftVersion;
       if (leftMatches !== rightMatches) return leftMatches ? -1 : 1;
+      // As LATEST_EVALUATION_FIRST: by sequence, rows without one last.
+      const leftSequence = left["evaluation_sequence"];
+      const rightSequence = right["evaluation_sequence"];
+      if ((leftSequence == null) !== (rightSequence == null)) return leftSequence == null ? 1 : -1;
+      if (leftSequence != null && Number(leftSequence) !== Number(rightSequence)) {
+        return Number(rightSequence) - Number(leftSequence);
+      }
       const occurredAt =
         Date.parse(String(right["occurred_at"])) - Date.parse(String(left["occurred_at"]));
       if (occurredAt !== 0) return occurredAt;
@@ -524,8 +627,11 @@ interface PlannedAction {
   submissionId: string | null;
   note: string | null;
   bySystem: boolean;
-  /** The structured marker of a test-mode self-decision (the action's payload). */
-  payload: { selfDecisionTestMode: true } | null;
+  /**
+   * The action's structured payload, set only by the rules: the marker of a
+   * test-mode self-decision, or what an automatic validity decision rests on (#204).
+   */
+  payload: { selfDecisionTestMode: true } | { automaticValidity: EirAutomaticValidity } | null;
 }
 
 /**
@@ -649,7 +755,11 @@ async function planEirChange(
       submissionId,
       note: (submitting ? action.response : action.note) ?? null,
       bySystem: action.actorScimId === SYSTEM_ACTOR.principalId,
-      payload: action.selfDecisionTestMode ? { selfDecisionTestMode: true } : null,
+      payload: action.selfDecisionTestMode
+        ? { selfDecisionTestMode: true }
+        : action.automaticValidity
+          ? { automaticValidity: action.automaticValidity }
+          : null,
     };
   });
 
@@ -682,7 +792,8 @@ async function planEirChange(
       form_started_at: timestamp(
         new Date(newSubmission.formStartedAt ?? newSubmission.submittedAt),
       ),
-      stage: "submitted",
+      // Valid at once when the system validates it in this block (#204).
+      stage: submissionStage.get(newSubmissionId) ?? "submitted",
       submitted_at: timestamp(new Date(newSubmission.submittedAt)),
       created_at: at,
       updated_at: at,
@@ -747,6 +858,8 @@ async function planEirChange(
       { stage_entered_at: at, ...columns },
       { displayCode: allocateDisplayCode(ctx, "EIR", EIRS) },
     );
+    // A first submission the system also validates (#204) is two versions.
+    for (let i = 1; i < planned.length; i++) updateCurrentState(ctx, EIRS, state.eirId, i, {});
   } else {
     // One version per action: a revocation that closes a renewal is two.
     for (let i = 0; i < planned.length - 1; i++) {
@@ -755,9 +868,15 @@ async function planEirChange(
     updateCurrentState(ctx, EIRS, state.eirId, ctx.expectedVersion + planned.length - 1, columns);
   }
 
-  // Follow-on actions (a renewal closed by a revocation), then the lead.
-  for (const [i, action] of planned.slice(0, -1).entries()) {
-    const actionId = await followOn(ctx, 1 + i);
+  // The lead is the caller's own action; the others are follow-ons it
+  // caused, by the system: a renewal closed by a revocation (before the
+  // lead), or the validity decision on an upload in automatic approval mode
+  // (#204, after it). Each action is one version, in order.
+  const own = planned.findIndex((action) => !action.bySystem);
+  const leadIndex = own === -1 ? planned.length - 1 : own;
+  for (const [i, action] of planned.entries()) {
+    if (i === leadIndex) continue;
+    const actionId = await followOn(ctx, i < leadIndex ? 1 + i : i);
     insertRow(ctx, EIR_ACTIONS, {
       ...actionColumns(action.bySystem ? { ...ctx, actor: SYSTEM_ACTOR } : ctx, EIR_ACTIONS, {
         actionId,
@@ -776,10 +895,10 @@ async function planEirChange(
     });
     expectRow(ctx, EIR_ACTIONS, "action_id", actionId);
   }
-  const lead = planned.at(-1)!;
+  const lead = planned[leadIndex]!;
   return {
     recordId: state.eirId,
-    recordVersion: ctx.expectedVersion + planned.length,
+    recordVersion: ctx.expectedVersion + 1 + leadIndex,
     leadAction: {
       action: lead.name,
       change: { stage: [lead.from, lead.to] },
@@ -914,6 +1033,96 @@ function rowsFromCommandResult(row: Record<string, unknown>): {
   };
 }
 
+/** Start the person's EIR in this block: its row, with a new Record ID. */
+function insertStartedEir(
+  ctx: CommandContext<unknown>,
+  eirId: string,
+  principalId: string,
+  displayName: string,
+): void {
+  // The rule, inside the block: a second tab starting it too loses.
+  ctx.block.signal(
+    `EXISTS (SELECT 1 FROM ${ctx.names.table(EIRS.schema, EIRS.table)} WHERE id = ${ctx.block.bind(eirId)} OR person_principal_id = ${ctx.block.bind(principalId)})`,
+    GUARD_STATE.versionConflict,
+    "edp:version-conflict",
+  );
+  insertCurrentState(
+    ctx,
+    EIRS,
+    eirId,
+    {
+      person_principal_id: principalId,
+      person_display: displayName,
+      stage: "not-started",
+      stage_entered_at: timestamp(ctx.occurredAt),
+      sla_due_at: null,
+      sla_due_soon_at: null,
+      expires_at: null,
+      valid_submission_id: null,
+      open_submission_id: null,
+      current_submission_id: null,
+      renewal_submission_id: null,
+    },
+    { displayCode: allocateDisplayCode(ctx, "EIR", EIRS) },
+  );
+}
+
+/**
+ * Write the draft the rules saved (`saved`) at `ctx.expectedVersion + 1`:
+ * inserted, or updated from the version the plan read. Returns its ID.
+ */
+async function writeDraft(
+  ctx: CommandContext<{ values: Record<string, string> }>,
+  state: EirState,
+  saved: EirRecord,
+): Promise<string> {
+  const { block, names } = ctx;
+  const eirs = names.table(EIRS.schema, EIRS.table);
+  const subs = names.table(EIR_SUBMISSIONS.schema, EIR_SUBMISSIONS.table);
+  // The rule, inside the block: no draft while the EIR waits on a validator.
+  block.guard(
+    `EXISTS (SELECT 1 FROM ${eirs} e LEFT JOIN ${subs} s ON s.id = e.renewal_submission_id WHERE e.id = ${block.bind(state.eirId)} AND (e.stage = 'submitted' OR s.stage = 'submitted'))`,
+    new DomainError(
+      "eir-refused",
+      "A draft can't be saved while the EIR waits for a safeguards validator.",
+      409,
+    ),
+  );
+  const draftId = await draftIdFor(state.eirId);
+  const draft = {
+    form_values: json(ctx.payload.values),
+    // The version the draft began under, or the active one for a new draft (#201).
+    form_version: saved.draftFormVersion ?? EIR_FORM.version,
+    form_started_at: timestamp(new Date(saved.draftStartedAt ?? ctx.occurredAt)),
+  };
+  if (!state.rows.draft) {
+    block.signal(
+      `EXISTS (SELECT 1 FROM ${names.table(EIR_DRAFTS.schema, EIR_DRAFTS.table)} WHERE id = ${block.bind(draftId)} OR eir_id = ${block.bind(state.eirId)})`,
+      GUARD_STATE.versionConflict,
+      "edp:version-conflict",
+    );
+    insertCurrentState(ctx, EIR_DRAFTS, draftId, { eir_id: state.eirId, ...draft });
+  } else {
+    updateCurrentState(ctx, EIR_DRAFTS, draftId, ctx.expectedVersion, draft);
+  }
+  return draftId;
+}
+
+/** `eir/prepare-pdf`'s answer: the PDF as base64, absent when the evaluation blocks. */
+export interface EirPreparedPdfResult {
+  record: EirRecord;
+  evaluation: EirEvaluation;
+  pdf?: string;
+}
+
+function base64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  return btoa(binary);
+}
+
 export function registerEirArea(registry: Registry, overrides: Partial<EirAreaDeps> = {}): void {
   const deps: EirAreaDeps = { ...defaultDeps, ...overrides };
   const usesDefaults = !overrides.volume;
@@ -957,56 +1166,114 @@ export function registerEirArea(registry: Registry, overrides: Partial<EirAreaDe
       const definitions = await deps
         .definitions(ctx, { ids: [state.record.draftFormVersion] })
         .catch((): EirDefinitionLookup => ({ active: () => undefined, byId: () => null }));
-      const { formVersion, definition } = definitionForDraft(state.record, definitions);
-      let evaluation: EirEvaluation;
-      try {
-        if (!definition) throw new Error("draft definition unavailable");
-        evaluation = deps.evaluator({
-          definition,
+      const evaluation = evaluationOf(
+        deps,
+        definitions,
+        state.record,
+        {
           values: JSON.parse(draft.form_values),
           draftVersion,
           draftStartedAt: draft.form_started_at,
-          effectiveAt: ctx.occurredAt.toISOString(),
-        });
-      } catch {
-        evaluation = manualHandlingEvaluation({
-          draftVersion,
-          effectiveAt: ctx.occurredAt.toISOString(),
-          formVersion,
-          ...(definition ? { definitionVersion: definition.form.version } : {}),
-        });
-      }
+        },
+        ctx.occurredAt,
+      );
       return {
         recordId: draft.id,
         recordVersion: draftVersion,
-        leadAction: {
-          action: "evaluated",
-          payload: evaluation,
-          columns: {
-            definition_version: evaluation.definitionVersion,
-            form_version: evaluation.formVersion,
-            outcome: evaluation.outcome,
-            rule_outcomes: json(evaluation.outcomes),
-            automatic_validity_eligible: evaluation.automaticValidityEligible,
-            evaluator_principal_id: SYSTEM_ACTOR.principalId,
-            evaluator_display: SYSTEM_ACTOR.display,
-            evaluator_app: SYSTEM_ACTOR.app,
-          },
-        },
+        leadAction: evaluatedAction(evaluation, nextEvaluationSequence(ctx, draft.id)),
       };
     },
     resultRow(ctx) {
-      const evaluation = ctx.leadAction.payload as EirEvaluation;
-      return `SELECT ${ctx.block.bind(evaluation.definitionVersion)} AS definition_version,
-        ${ctx.block.bind(evaluation.formVersion)} AS form_version,
-        ${ctx.block.bind(ctx.occurredAt.toISOString())} AS effective_at,
-        ${ctx.block.bind(ctx.recordVersion)} AS evaluated_draft_version,
-        ${ctx.block.bind(evaluation.outcome)} AS outcome,
-        ${ctx.block.bind(json(evaluation.outcomes))} AS rule_outcomes,
-        ${ctx.block.bind(evaluation.automaticValidityEligible)} AS automatic_validity_eligible`;
+      return `SELECT ${evaluationResultColumns(ctx)}`;
     },
     result(row): EirEvaluation {
       return evaluationFromRow(row);
+    },
+  });
+
+  // The forms prepare-pdf planned on, by draft and version, so its first
+  // answer needs no second definitions read; a replay reads them again.
+  const plannedForms = new Map<string, EirFormConfig>();
+  registry.command({
+    area: "eir",
+    name: "prepare-pdf",
+    app: "tenant",
+    payload: draftPayload,
+    // The evaluation leads: it holds the key, and the draft it evaluated.
+    leadActionTable: EIR_EVALUATIONS,
+    async plan(ctx) {
+      const { principalId, displayName } = ctx.user;
+      const state = await readEirState(ctx, principalId);
+      checkVersion(Number(state.rows.draft?.version ?? 0), ctx.expectedVersion);
+      const definitions = await definitionsFor(deps, ctx, state.record);
+      // The same rules as start, save-draft and evaluate, in one block.
+      const saved = await applyRule(() =>
+        rulesFor(state, ctx.occurredAt, {
+          slaConfig: cloneEffectiveSlaConfig(deps.slaConfig()),
+          definitions,
+        }).saveDraft(principalId, ctx.payload.values, undefined, ctx.payload.formVersion),
+      );
+      if (!state.rows.eir) {
+        insertStartedEir(ctx, state.eirId, principalId, displayName);
+        insertAction(ctx, EIR_ACTIONS, {
+          actionId: await followOn(ctx, 1),
+          recordId: state.eirId,
+          action: "started",
+          recordVersion: 1,
+          change: { stage: [null, "not-started"] },
+        });
+      }
+      const draftId = await writeDraft(ctx, state, saved);
+      const draftVersion = ctx.expectedVersion + 1;
+      const evaluation = evaluationOf(
+        deps,
+        definitions,
+        saved,
+        {
+          values: ctx.payload.values,
+          draftVersion,
+          draftStartedAt: saved.draftStartedAt ?? ctx.occurredAt.toISOString(),
+        },
+        ctx.occurredAt,
+      );
+      const form = definitions.byId(evaluation.formVersion)?.form;
+      if (form) {
+        plannedForms.set(`${draftId}:${draftVersion}`, form);
+        // Bounded: a refused block leaves its entry behind.
+        if (plannedForms.size > 100) plannedForms.delete(plannedForms.keys().next().value!);
+      }
+      return {
+        recordId: draftId,
+        recordVersion: draftVersion,
+        leadAction: evaluatedAction(evaluation, nextEvaluationSequence(ctx, draftId)),
+      };
+    },
+    resultRow(ctx) {
+      return `SELECT edp_evaluation.*, edp_record.* FROM (SELECT ${evaluationResultColumns(ctx)}) AS edp_evaluation CROSS JOIN (${draftCommandResultRow(ctx)}) AS edp_record`;
+    },
+    async result(row, ctx): Promise<EirPreparedPdfResult> {
+      const evaluation = evaluationFromRow(row);
+      const record = { ...(await toResult(row, ctx)), evaluation };
+      if (evaluation.outcome === "blocking") return { record, evaluation };
+      const key = `${ctx.recordId}:${ctx.recordVersion}`;
+      // On the form the draft was evaluated on, never guessed (#201).
+      const form =
+        plannedForms.get(key) ??
+        (
+          await deps.definitions(
+            { names: ctx.names, read: ctx.read },
+            { ids: [evaluation.formVersion] },
+          )
+        ).byId(evaluation.formVersion)?.form;
+      plannedForms.delete(key);
+      if (!form || !record.draftValues) {
+        throw new DomainError("eir-unavailable", EIR_UNAVAILABLE_MESSAGE, 503);
+      }
+      const bytes = await generateEirPdf(record.draftValues, {
+        recordId: record.recordId ?? ctx.user.principalId,
+        form,
+      });
+      return { record, evaluation, pdf: base64(bytes) };
     },
   });
 
@@ -1035,7 +1302,7 @@ export function registerEirArea(registry: Registry, overrides: Partial<EirAreaDe
       }>({
         statement: `SELECT record_version, outcome, rule_outcomes FROM ${evaluations}
           WHERE eir_draft_id = :draft_id AND record_version = :draft_version
-          ORDER BY occurred_at DESC, action_id DESC LIMIT 1`,
+          ORDER BY ${LATEST_EVALUATION_FIRST()} LIMIT 1`,
         parameters: { draft_id: draft.id, draft_version: Number(draft.version) },
       });
       const evaluation = evaluationRows[0];
@@ -1117,7 +1384,55 @@ export function registerEirArea(registry: Registry, overrides: Partial<EirAreaDe
             )
           : rules.submit(principalId, displayName, volumePath, values, response, metadata),
       );
-      return planEirChange(ctx, state, after, slaConfig);
+      const approval = deps.approval();
+      if (approval.mode !== "automatic") return planEirChange(ctx, state, after, slaConfig);
+      // Automatic mode (#204): the pre-check again, at the upload, on the
+      // definition the draft is pinned to and this command's clock. It's
+      // recorded in this block whatever it gives, so the decision and its
+      // evidence commit together or not at all.
+      const draftVersion = Number(draft.version);
+      const atUpload = evaluatePinnedDraft({
+        evaluator: deps.evaluator,
+        definitions,
+        record: state.record,
+        values: evaluatedValues,
+        draftVersion,
+        draftStartedAt: new Date(draft.form_started_at ?? ctx.occurredAt).toISOString(),
+        effectiveAt: ctx.occurredAt.toISOString(),
+        config: approval,
+      });
+      const evaluationId = await followOn(ctx, UPLOAD_EVALUATION_POSITION);
+      const decided = qualifiesForAutomaticValidity({
+        config: approval,
+        atUpload: atUpload.evaluation,
+        definitionLoaded: atUpload.definitionLoaded,
+      })
+        ? await applyRule(() =>
+            withAutomaticValidity(after, {
+              clock: () => ctx.occurredAt,
+              validityDays: slaConfig.eirValidityDays,
+              reviewSlaBusinessDays: slaConfig.stages["eir-validation"],
+              provenance: automaticValidityOf(atUpload.evaluation, evaluationId, approval),
+            }),
+          )
+        : after;
+      const sequence = nextEvaluationSequence(ctx, draft.id);
+      insertRow(ctx, EIR_EVALUATIONS, {
+        ...actionColumns({ ...ctx, actor: SYSTEM_ACTOR }, EIR_EVALUATIONS, {
+          actionId: evaluationId,
+          recordId: draft.id,
+          action: "evaluated",
+          recordVersion: draftVersion,
+          payload: atUpload.evaluation,
+          causedByActionId: ctx.actionId,
+        }),
+        ...evaluationColumns(atUpload.evaluation, sequence),
+        command: null,
+        command_hash: null,
+        expected_effects: null,
+      });
+      expectRow(ctx, EIR_EVALUATIONS, "action_id", evaluationId);
+      return planEirChange(ctx, state, decided, slaConfig);
     },
     resultRow: eirCommandResultRow,
     result: toResult,
@@ -1137,31 +1452,7 @@ export function registerEirArea(registry: Registry, overrides: Partial<EirAreaDe
         throw new DomainError("already-started", "This EIR has already been started.", 409);
       }
       checkVersion(0, ctx.expectedVersion);
-      // The rule, inside the block: a second tab starting it too loses.
-      ctx.block.signal(
-        `EXISTS (SELECT 1 FROM ${ctx.names.table(EIRS.schema, EIRS.table)} WHERE id = ${ctx.block.bind(state.eirId)} OR person_principal_id = ${ctx.block.bind(principalId)})`,
-        GUARD_STATE.versionConflict,
-        "edp:version-conflict",
-      );
-      insertCurrentState(
-        ctx,
-        EIRS,
-        state.eirId,
-        {
-          person_principal_id: principalId,
-          person_display: displayName,
-          stage: "not-started",
-          stage_entered_at: timestamp(ctx.occurredAt),
-          sla_due_at: null,
-          sla_due_soon_at: null,
-          expires_at: null,
-          valid_submission_id: null,
-          open_submission_id: null,
-          current_submission_id: null,
-          renewal_submission_id: null,
-        },
-        { displayCode: allocateDisplayCode(ctx, "EIR", EIRS) },
-      );
+      insertStartedEir(ctx, state.eirId, principalId, displayName);
       return {
         recordId: state.eirId,
         recordVersion: 1,
@@ -1189,36 +1480,7 @@ export function registerEirArea(registry: Registry, overrides: Partial<EirAreaDe
           definitions,
         }).saveDraft(principalId, ctx.payload.values, undefined, ctx.payload.formVersion),
       );
-      const { block, names } = ctx;
-      const eirs = names.table(EIRS.schema, EIRS.table);
-      const subs = names.table(EIR_SUBMISSIONS.schema, EIR_SUBMISSIONS.table);
-      // The rule, inside the block: no draft while the EIR waits on a validator.
-      block.guard(
-        `EXISTS (SELECT 1 FROM ${eirs} e LEFT JOIN ${subs} s ON s.id = e.renewal_submission_id WHERE e.id = ${block.bind(state.eirId)} AND (e.stage = 'submitted' OR s.stage = 'submitted'))`,
-        new DomainError(
-          "eir-refused",
-          "A draft can't be saved while the EIR waits for a safeguards validator.",
-          409,
-        ),
-      );
-      const draftId = await draftIdFor(state.eirId);
-      const formValuesJson = json(ctx.payload.values);
-      const draft = {
-        form_values: formValuesJson,
-        // The version the draft began under, or the active one for a new draft (#201).
-        form_version: saved.draftFormVersion ?? EIR_FORM.version,
-        form_started_at: timestamp(new Date(saved.draftStartedAt ?? ctx.occurredAt)),
-      };
-      if (!state.rows.draft) {
-        block.signal(
-          `EXISTS (SELECT 1 FROM ${names.table(EIR_DRAFTS.schema, EIR_DRAFTS.table)} WHERE id = ${block.bind(draftId)} OR eir_id = ${block.bind(state.eirId)})`,
-          GUARD_STATE.versionConflict,
-          "edp:version-conflict",
-        );
-        insertCurrentState(ctx, EIR_DRAFTS, draftId, { eir_id: state.eirId, ...draft });
-      } else {
-        updateCurrentState(ctx, EIR_DRAFTS, draftId, ctx.expectedVersion, draft);
-      }
+      const draftId = await writeDraft(ctx, state, saved);
       return {
         recordId: draftId,
         recordVersion: ctx.expectedVersion + 1,
@@ -1330,7 +1592,7 @@ export function registerEirArea(registry: Registry, overrides: Partial<EirAreaDe
           JOIN ${evaluations} v ON v.eir_draft_id = d.id
           WHERE d.eir_id = :eir_id
           ORDER BY CASE WHEN v.record_version = d.version THEN 0 ELSE 1 END,
-            v.occurred_at DESC, v.action_id DESC LIMIT 1`,
+            ${LATEST_EVALUATION_FIRST("v.")} LIMIT 1`,
         parameters: { eir_id: ownEirId },
       });
       const row = rows[0];
@@ -1374,11 +1636,7 @@ export function registerEirArea(registry: Registry, overrides: Partial<EirAreaDe
         recordId: (state.rows.eir && displayLabel("EIR", state.rows.eir)) ?? user.principalId,
         form,
       });
-      let binary = "";
-      for (let index = 0; index < bytes.length; index += 0x8000) {
-        binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-      }
-      return { bytes: btoa(binary) };
+      return { bytes: base64(bytes) };
     },
   });
 

@@ -54,6 +54,7 @@ describe("real privacy guard at the EIR API seam", () => {
     ["start", command("start", "00000000-0000-4000-8000-000000000001")],
     ["save", command("save-draft", "00000000-0000-4000-8000-000000000002")],
     ["evaluate", command("evaluate", "00000000-0000-4000-8000-000000000005")],
+    ["prepare PDF", command("prepare-pdf", "00000000-0000-4000-8000-000000000006")],
     ["submit", command("submit", "00000000-0000-4000-8000-000000000003")],
     ["respond", command("respond", "00000000-0000-4000-8000-000000000004")],
   ])("EIR %s is refused without a current acknowledgment", async (_operation, request) => {

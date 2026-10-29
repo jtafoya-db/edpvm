@@ -24,11 +24,19 @@
  * - `teams/ownership`: the caller's own standing;
  * - the change list: EDP staff see all of it, anyone else only entries for
  *   datasets they own.
+ *
+ * Sample access requests (#312) are a PR preview's test data: unless sample
+ * mode is on for this store (src/server/sample-access-requests.ts), every
+ * command refuses to add a sample requester as a member or owner, or to list
+ * an add-member change for one. Removing one stays possible.
  */
 import { z } from "zod";
 
 import { reconcileMembership, type DesiredMembership } from "../../../data/change-list/reconciler";
 import { reconcileRemovals } from "../../../data/change-list/removals";
+import { applyObservedMemberships } from "../../../data/change-list/snapshot-match";
+import { applySupersession } from "../../../data/change-list/supersession";
+import type { GroupMembershipReader } from "../../../data/group-membership";
 import type { TeamEvent } from "../../../data/datasets/team-store";
 import {
   datasetGroupName,
@@ -50,6 +58,7 @@ import {
   ownerPrincipalId,
 } from "../../../data/datasets/ownership";
 import { evaluateMemberAdd, roleTakenMessage } from "../../../data/datasets/membership";
+import { isSampleRequester } from "../../../data/access-requests/seed";
 import {
   DEFAULT_ROLE_DESCRIPTIONS,
   validateRoleDescriptions,
@@ -73,9 +82,11 @@ import type {
   WireEntry,
 } from "../../../data/adapters/teams-wire";
 import { DomainError, GUARD_STATE } from "../errors.ts";
+import { sampleAccessRequestsForStore } from "../../sample-access-requests.ts";
 import type { CommandContext, Registry, ResultRowContext, SessionUser } from "../registry.ts";
 import type { DeltaSnapshot } from "../snapshot-cache.ts";
 import type { AtomicBlock, StoreNames } from "../sql-builder.ts";
+import { membershipReaderFor, type MembershipAreaConfig } from "./membership.ts";
 import {
   allocateDisplayNumber,
   expectRow,
@@ -129,6 +140,11 @@ import {
 export interface TeamsAreaOptions {
   groupNaming?: GroupNamingConfig;
   roleDescriptions?: RoleDescriptions;
+  membership?: MembershipAreaConfig;
+  groupMembershipReader?: GroupMembershipReader;
+  now?: () => Date;
+  /** Whether sample access requests are on for a store; the env and its prefix by default (#312). */
+  sampleAccessRequests?: (names: StoreNames) => boolean;
 }
 
 const datasetId = z.string().trim().min(1).max(200);
@@ -199,6 +215,7 @@ function snapshotOwnerRows(snapshot: DeltaSnapshot): OwnerRow[] {
   });
 }
 
+/** Rebuild the entry read projection from #193's cached app-state tables. */
 function snapshotEntryRows(snapshot: DeltaSnapshot): EntryRow[] {
   const memberActions = snapshot.table<Record<string, unknown>>("teams", "dataset_member_actions");
   const applications = snapshot.table<Record<string, unknown>>(
@@ -343,7 +360,7 @@ interface EntryPlan {
 }
 
 /** List change-list entries: a `CL-` number, the entry, and its `listed` action, per entry. */
-async function listEntries(ctx: WriteContext, next: () => Promise<string>, entries: EntryPlan[]) {
+async function writeEntries(ctx: WriteContext, next: () => Promise<string>, entries: EntryPlan[]) {
   for (const entry of entries) {
     const id = await next();
     const displayNumber = allocateDisplayNumber(ctx, "CL");
@@ -399,7 +416,14 @@ function entriesOf(row: Record<string, unknown>): WireEntry[] {
   const to = row["to_role"] as string | null | undefined;
   const change = from && to ? { from, to } : undefined;
   return parse<EntryRow[]>(row["entries"] ?? "[]")
-    .map((entry) => toEntry(entry, entry.reason === "dataset-role-changed" ? change : undefined))
+    .map((entry) =>
+      toEntry(
+        entry,
+        entry.reason === "dataset-role-changed" || entry.reason === "dataset-owner-added"
+          ? change
+          : undefined,
+      ),
+    )
     .sort((a, b) => (a.id < b.id ? -1 : 1));
 }
 
@@ -409,7 +433,8 @@ function ownerResultRow({ names, block }: ResultRowContext): string {
   return (
     `SELECT (SELECT to_json(${rowJson(["id", "initiative_id", "name", "domain_tag", "dataset_tag", "version"], "d")}) FROM ${tableName(names, DATASETS)} d WHERE d.id = ${d}) AS dataset, ` +
     `${ownersJson(names, d)} AS owners, ${block.bind(info["order"] ?? "[]")} AS owner_order, ` +
-    `${listedEntriesJson(names, block.bind(info["actionId"] ?? null))} AS entries`
+    `${listedEntriesJson(names, block.bind(info["actionId"] ?? null))} AS entries, ` +
+    `${block.bind(info["from"] ?? null)} AS from_role, ${block.bind(info["to"] ?? null)} AS to_role`
   );
 }
 
@@ -428,6 +453,66 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
   const roles = validateRoleDescriptions(
     structuredClone(options.roleDescriptions ?? DEFAULT_ROLE_DESCRIPTIONS),
   );
+  const samplesOn = options.sampleAccessRequests ?? sampleAccessRequestsForStore;
+  /**
+   * Refuse to add a sample requester, unless this store is in sample mode
+   * (#312). Generic on purpose: it doesn't say why.
+   */
+  const refuseSamplePeople = (
+    ctx: WriteContext,
+    people: { email?: string | null; principalId?: string | null }[],
+  ) => {
+    if (people.some(isSampleRequester) && !samplesOn(ctx.names)) {
+      throw new DomainError("not-allowed", "This change isn't allowed.", 403);
+    }
+  };
+  /** Every change-list entry the area lists goes through here. */
+  const listEntries = (ctx: WriteContext, next: () => Promise<string>, entries: EntryPlan[]) => {
+    refuseSamplePeople(
+      ctx,
+      entries.filter((entry) => entry.kind === "add-member").map((entry) => entry.target.person),
+    );
+    return writeEntries(ctx, next, entries);
+  };
+  const observe = (
+    entries: WireEntry[],
+    datasets: DatasetRow[],
+    user: SessionUser,
+    names: StoreNames,
+    read?: import("../registry.ts").ReadFn,
+  ) => {
+    const reader =
+      options.groupMembershipReader ??
+      (options.membership && read
+        ? membershipReaderFor(options.membership, user, names, read)
+        : null);
+    const observed = reader
+      ? applyObservedMemberships(
+          entries,
+          datasets.map((dataset) => toDataset(dataset, [])),
+          reader,
+          options.now?.() ?? new Date(),
+        )
+      : Promise.resolve(entries);
+    return observed.then(applySupersession);
+  };
+  const visibleSnapshotEntries = (snapshot: DeltaSnapshot, user: SessionUser): WireEntry[] => {
+    const rows = snapshotEntryRows(snapshot);
+    if (user.isAdmin) return rows.map((row) => toEntry(row));
+    const owners = snapshotOwnerRows(snapshot);
+    const byDataset = new Map<string, DatasetOwner[]>();
+    for (const row of owners) {
+      byDataset.set(row.dataset_id, [...(byDataset.get(row.dataset_id) ?? []), bare(toOwner(row))]);
+    }
+    const owned = new Set(
+      [...byDataset.entries()]
+        .filter(([, list]) => isDatasetOwner({ owners: list }, user))
+        .map(([id]) => id),
+    );
+    return rows
+      .filter((entry) => entry.dataset_id !== null && owned.has(entry.dataset_id))
+      .map((row) => toEntry(row));
+  };
 
   // ---- dataset roles -------------------------------------------------------
 
@@ -444,6 +529,7 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
       if (!isValidEmail(email)) throw invalidEmail(ctx.payload.email);
       const role = ctx.payload.role;
       requireRole(role);
+      refuseSamplePeople(ctx, [{ email }]);
       if (ctx.expectedVersion !== 0) {
         throw new DomainError("bad-version", "A new member starts from version 0.", 400);
       }
@@ -557,13 +643,13 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
     return row;
   }
 
-  /** ADR-0005: every dataset owner holds the manager role, so it can't be taken away. */
+  /** ADR-0005: every dataset owner holds the Maintainer (stored as `manager`) role, so it can't be taken away. */
   function guardOwnerManager(snapshot: Snapshot, row: MemberRow) {
     const person = domainMember(row).person;
     if (row.role === "manager" && snapshot.domain.owners.some((o) => ownerIsPerson(o, person))) {
       throw new DomainError(
         "owner-holds-manager",
-        `${row.person_display} is an owner of ${snapshot.dataset.name}, and every owner holds the manager role. ` +
+        `${row.person_display} is an owner of ${snapshot.dataset.name}, and every owner holds the ${roles.roles.manager.label} role. ` +
           "Remove them as an owner first.",
         409,
       );
@@ -735,6 +821,7 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
       const name = ctx.payload.name.trim();
       if (!name) throw new DomainError("invalid", "Enter the new owner's name.");
       if (!isValidEmail(email)) throw invalidEmail(ctx.payload.email);
+      refuseSamplePeople(ctx, [{ email }]);
       // One person, one owner record (ADR-0006 decision 6).
       const same = findSameOwner(dataset, { email }, snapshot.bindingMap);
       if (same) {
@@ -746,18 +833,11 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
           409,
         );
       }
-      // One role per person per dataset (ADR-0007 decision 11): the owner's
-      // manager role can't be a second role for someone who already holds one.
+      // One role per person per dataset (ADR-0007 decision 11): ownership
+      // replaces an existing tester/developer role with Maintainer (ADR-0005).
       const otherRole = snapshot.members.find(
         (m) => (m.person_email ?? "") === email && m.role !== "manager",
       );
-      if (otherRole) {
-        throw new DomainError(
-          "duplicate",
-          roleTakenMessage(name, roles.roles[otherRole.role].label, dataset.name),
-          409,
-        );
-      }
 
       const next = positions(ctx);
       const id = await next();
@@ -771,13 +851,27 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
         person_principal_id: binding?.principal_id ?? null,
         bound_at: binding ? timestamp(new Date(binding.created_at)) : null,
       });
-      // ADR-0005: every owner holds the manager role on their dataset.
+      // ADR-0005: every owner holds the Maintainer (stored as `manager`) role on their dataset.
       const existing = snapshot.members.find(
         (m) => m.person_email === email && m.role === "manager",
       );
       let manager: DatasetMember;
       let causedBy = ctx.actionId;
-      if (existing) {
+      const replacedRole = otherRole?.role;
+      if (otherRole) {
+        manager = { ...domainMember(otherRole), role: "manager" };
+        updateReadRow(ctx, MEMBERS, otherRole.id, Number(otherRole.version), { role: "manager" });
+        causedBy = await next();
+        insertAction(ctx, MEMBER_ACTIONS, {
+          actionId: causedBy,
+          recordId: otherRole.id,
+          action: "role-changed",
+          recordVersion: Number(otherRole.version) + 1,
+          change: { role: [otherRole.role, "manager"] },
+          payload: memberPayload(snapshot, manager.person),
+          causedByActionId: ctx.actionId,
+        });
+      } else if (existing) {
         manager = domainMember(existing);
       } else {
         const memberId = await next();
@@ -806,6 +900,12 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
           payload: memberPayload(snapshot, manager.person),
         });
       }
+      const after = snapshot.members.map((row) =>
+        row.id === otherRole?.id ? manager : domainMember(row),
+      );
+      const removals = replacedRole
+        ? removalPlans(snapshot, after, "dataset-owner-added", causedBy)
+        : [];
       const desired = reconcileMembership({
         datasets: [dataset],
         members: [manager],
@@ -814,28 +914,35 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
         actual: [],
         changeList: entriesForRules(snapshot),
       });
-      await listEntries(
-        ctx,
-        next,
-        desired.map((target) => ({
-          kind: "add-member",
-          target,
-          grants: target.grants,
-          reason: "dataset-owner-added",
-          causedBy,
-        })),
-      );
+      await listEntries(ctx, next, [
+        ...removals,
+        ...desired.map(
+          (target) =>
+            ({
+              kind: "add-member",
+              target,
+              grants: target.grants,
+              reason: "dataset-owner-added",
+              causedBy,
+            }) satisfies EntryPlan,
+        ),
+      ]);
       planned.set(ctx.block, {
         actionId: ctx.actionId,
         datasetId: dataset.id,
         order: JSON.stringify(snapshot.owners.map((o) => o.id)),
+        ...(replacedRole ? { from: replacedRole, to: "manager" } : {}),
       });
       return {
         recordId: id,
         recordVersion: 1,
         leadAction: {
           action: "added",
-          payload: { datasetId: dataset.id, person: { name, email } },
+          payload: {
+            datasetId: dataset.id,
+            person: { name, email },
+            ...(replacedRole ? { replacedRole } : {}),
+          },
         },
       };
     },
@@ -883,7 +990,7 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
         throw new DomainError(
           "invalid",
           `${owner.displayName} has no email or SCIM id on record, so EDP staff couldn't act on ` +
-            "removing them from the manager group. Ask EDP staff to fix the owner record first.",
+            `removing them from the ${roles.roles.manager.label} group. Ask EDP staff to fix the owner record first.`,
         );
       }
 
@@ -914,7 +1021,7 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
             payload,
           });
         }
-        // The manager role goes with ownership (ADR-0005), and its entry is
+        // The Maintainer role goes with ownership (ADR-0005), and its entry is
         // always listed: the membership may predate the app (standup).
         const fallback: PersonContact = { name: record.displayName, email: record.email ?? "" };
         if (!record.email) fallback.principalId = ownerPrincipalId(record, bindings)!;
@@ -1068,7 +1175,7 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
     area: "change-list",
     name: "mark-applied",
     app: "staff",
-    payload: z.object({ entryId: z.string().uuid() }).strict(),
+    payload: z.object({ entryId: z.guid() }).strict(),
     leadActionTable: ENTRY_ACTIONS,
     authorize: (user) => {
       if (!user.isAdmin) {
@@ -1091,6 +1198,34 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
           409,
         );
       }
+      const allEntries = (
+        await ctx.read<EntryRow>({ statement: entrySelect(ctx.names, "TRUE") })
+      ).map((row) => toEntry(row));
+      if (applySupersession(allEntries).find((candidate) => candidate.id === label)?.supersededBy) {
+        throw new DomainError("superseded", "This change is no longer pending.", 409);
+      }
+      // Re-check inside the atomic block. A removal can be listed after the plan read but
+      // before this command commits; the stale add must fail closed in that window too.
+      const principalId = entry.person_principal_id?.trim() || null;
+      const email = normalizeEmail(entry.person_email ?? "") || null;
+      const laterPrincipal = "NULLIF(TRIM(later.person_principal_id), '')";
+      const laterEmail = "NULLIF(LOWER(TRIM(later.person_email)), '')";
+      ctx.block.guard(
+        `EXISTS (SELECT 1 FROM ${tableName(ctx.names, ENTRIES)} later ` +
+          `WHERE later.display_number > ${ctx.block.bind(entry.display_number)} ` +
+          `AND later.kind = CASE ${ctx.block.bind(entry.kind)} WHEN 'add-member' THEN 'remove-member' WHEN 'remove-member' THEN 'add-member' ELSE '__not-membership__' END ` +
+          `AND later.dataset_id = ${ctx.block.bind(entry.dataset_id)} ` +
+          `AND later.group_name = ${ctx.block.bind(entry.group_name)} ` +
+          `AND later.role = ${ctx.block.bind(entry.role)} ` +
+          `AND ((` +
+          `${ctx.block.bind(principalId)} IS NOT NULL AND ${laterPrincipal} IS NOT NULL ` +
+          `AND ${laterPrincipal} = ${ctx.block.bind(principalId)}` +
+          `) OR (` +
+          `(${ctx.block.bind(principalId)} IS NULL OR ${laterPrincipal} IS NULL) ` +
+          `AND ${ctx.block.bind(email)} IS NOT NULL AND ${laterEmail} = ${ctx.block.bind(email)}` +
+          `)))`,
+        new DomainError("superseded", "This change is no longer pending.", 409),
+      );
       const applications = tableName(ctx.names, APPLICATIONS);
       ctx.block.guard(
         `EXISTS (SELECT 1 FROM ${applications} WHERE change_list_entry_id = ${ctx.block.bind(entry.id)})`,
@@ -1374,11 +1509,15 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
           .sort();
       const events: TeamEvent[] = [
         ...ownerActions.map((a): TeamEvent => {
-          const payload = parse<{ person: { name: string; email: string | null } }>(a["payload"]);
+          const payload = parse<{
+            person: { name: string; email: string | null };
+            replacedRole?: DatasetRoleName;
+          }>(a["payload"]);
           return {
             datasetId: query.datasetId,
             kind: a["action"] === "added" ? "owner-added" : "owner-removed",
             person: payload.person,
+            ...(payload.replacedRole ? { replacedRole: payload.replacedRole } : {}),
             by: String(a["actor_principal_id"]),
             at: new Date(String(a["occurred_at"])).toISOString(),
             entryIds: entryIds(String(a["idempotency_key"])),
@@ -1449,11 +1588,15 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
           .map((l) => entryLabel(Number(l.display_number)));
       const events: TeamEvent[] = [
         ...owners.map((a): TeamEvent => {
-          const payload = parse<{ person: { name: string; email: string | null } }>(a.payload);
+          const payload = parse<{
+            person: { name: string; email: string | null };
+            replacedRole?: DatasetRoleName;
+          }>(a.payload);
           return {
             datasetId: query.datasetId,
             kind: a.action === "added" ? "owner-added" : "owner-removed",
             person: payload.person,
+            ...(payload.replacedRole ? { replacedRole: payload.replacedRole } : {}),
             by: a.actor_principal_id,
             at: new Date(a.occurred_at).toISOString(),
             entryIds: entryIds(a.idempotency_key),
@@ -1520,31 +1663,32 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
     area: "change-list",
     name: "entries",
     app: "tenant",
-    dependsOn: ["teams"],
+    dependsOn: ["teams", "initiatives"],
     query: z.object({}).strict(),
-    snapshot({ snapshot, user }) {
-      const entries = snapshotEntryRows(snapshot);
-      if (user.isAdmin) return entries.map((row) => toEntry(row));
-      const owners = snapshotOwnerRows(snapshot);
-      const byDataset = new Map<string, DatasetOwner[]>();
-      for (const row of owners) {
-        byDataset.set(row.dataset_id, [
-          ...(byDataset.get(row.dataset_id) ?? []),
-          bare(toOwner(row)),
-        ]);
-      }
-      const owned = new Set(
-        [...byDataset.entries()]
-          .filter(([, list]) => isDatasetOwner({ owners: list }, user))
-          .map(([id]) => id),
+    snapshot({ snapshot, user, names, snapshotRead }) {
+      return observe(
+        visibleSnapshotEntries(snapshot, user),
+        snapshot.table<DatasetRow>("initiatives", "datasets"),
+        user,
+        names,
+        snapshotRead,
       );
-      return entries.filter((entry) => owned.has(entry.dataset_id)).map((row) => toEntry(row));
     },
     async run({ user, names, read }) {
-      if (user.isAdmin)
-        return (await read<EntryRow>({ statement: entrySelect(names, "TRUE") })).map((row) =>
-          toEntry(row),
+      const observeSql = async (entries: WireEntry[]) => {
+        if (!options.groupMembershipReader && !options.membership)
+          return applySupersession(entries);
+        const datasets = await read<DatasetRow>({
+          statement: `SELECT d.id, d.initiative_id, d.name, d.domain_tag, d.dataset_tag, d.version FROM ${tableName(names, DATASETS)} d ORDER BY d._metadata.row_id`,
+        });
+        return observe(entries, datasets, user, names, read);
+      };
+      if (user.isAdmin) {
+        const entries = (await read<EntryRow>({ statement: entrySelect(names, "TRUE") })).map(
+          (row) => toEntry(row),
         );
+        return observeSql(entries);
+      }
       // Anyone else: only entries for datasets they own, by the owner records (no binding on a read).
       const owners = await read<OwnerRow>({ statement: ownerSelect(names, "TRUE") });
       const byDataset = new Map<string, DatasetOwner[]>();
@@ -1558,15 +1702,14 @@ export function registerTeamsArea(registry: Registry, options: TeamsAreaOptions 
         .filter(([, list]) => isDatasetOwner({ owners: list }, user))
         .map(([id]) => id);
       if (!owned.length) return [];
-      return (
-        await read<EntryRow>({
-          statement: entrySelect(
-            names,
-            `e.dataset_id IN (${owned.map((_, i) => `:d${i}`).join(", ")})`,
-          ),
-          parameters: Object.fromEntries(owned.map((id, i) => [`d${i}`, id])),
-        })
-      ).map((row) => toEntry(row));
+      const entries = await read<EntryRow>({
+        statement: entrySelect(
+          names,
+          `e.dataset_id IN (${owned.map((_, i) => `:d${i}`).join(", ")})`,
+        ),
+        parameters: Object.fromEntries(owned.map((id, i) => [`d${i}`, id])),
+      });
+      return observeSql(entries.map((row) => toEntry(row)));
     },
   });
 }

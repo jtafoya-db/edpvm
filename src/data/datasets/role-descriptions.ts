@@ -12,7 +12,10 @@ import defaultConfig from "./role-descriptions.json";
 import { DATASET_ROLES, type DatasetRoleName } from "./types";
 
 export interface RoleDescription {
+  /** The role's name as users see it. The stored value (`manager`) stays put. */
   label: string;
+  /** The label for more than one, as on the team's KPI cards. */
+  pluralLabel: string;
   /** One line, for reminders next to a member's role. */
   summary: string;
   /** Each thing the role grants, shown in full when adding and on the change list. */
@@ -25,20 +28,21 @@ export interface RoleDescriptions {
   consumerNote: string;
 }
 
-/** Throws unless every role has a label, a summary and at least one grant. */
+/** Throws unless every role has a label, a plural label, a summary and at least one grant. */
 export function validateRoleDescriptions(config: RoleDescriptions): RoleDescriptions {
   for (const role of DATASET_ROLES) {
     const description = config.roles?.[role];
     if (
       !description ||
       !description.label?.trim() ||
+      !description.pluralLabel?.trim() ||
       !description.summary?.trim() ||
       !Array.isArray(description.grants) ||
       description.grants.length === 0 ||
       description.grants.some((grant) => typeof grant !== "string" || !grant.trim())
     ) {
       throw new Error(
-        `Role descriptions must give the ${role} role a label, a summary and at least one grant.`,
+        `Role descriptions must give the ${role} role a label, a plural label, a summary and at least one grant.`,
       );
     }
   }

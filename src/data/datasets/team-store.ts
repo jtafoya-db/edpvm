@@ -63,6 +63,8 @@ export type TeamEvent = {
       kind: "owner-added" | "owner-removed";
       /** Owners named at intake have a SCIM id but no email. */
       person: { name: string; email: string | null };
+      /** Present when making this owner replaced an existing dataset role. */
+      replacedRole?: DatasetRoleName;
     }
 );
 
@@ -71,19 +73,19 @@ export interface DatasetTeamStore {
    * Move one of a person's roles to another. Refused unless the signed-in
    * user owns the dataset and its initiative is active; refused as a
    * `duplicate` if the person already holds the new role; refused for an
-   * owner's manager role. Lists remove-old and add-new entries.
+   * owner's Maintainer (stored as `manager`) role. Lists remove-old and add-new entries.
    */
   changeMemberRole(input: ChangeMemberRoleInput): Promise<ChangeMemberRoleResult>;
   /** Remove one of a person's roles, listing a remove-member entry. Same refusals. */
   removeMember(input: MemberRoleRef): Promise<RemoveMemberResult>;
   /**
    * Add an owner by name and email. Any owner, or EDP staff (to reassign
-   * ownership when none remains), can. The new owner gets the manager role.
+   * ownership when none remains), can. The new owner gets the Maintainer role.
    */
   addOwner(input: AddOwnerInput): Promise<OwnerChangeResult>;
   /**
    * Remove an owner, named by SCIM id or email ({@link ownerKey}). Refused
-   * with `last-owner` if they're the only one. Their manager role goes too,
+   * with `last-owner` if they're the only one. Their Maintainer role goes too,
    * listing a remove-member entry; their other roles stay, and so does their
    * email's SCIM binding (ADR-0006).
    */

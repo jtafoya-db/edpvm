@@ -518,7 +518,11 @@ const OPERATORS: Record<EirRuleOperator, OperatorInfo> = {
 export interface EirDispositionEffect {
   pdf: "refused" | "allowed";
   upload: "refused" | "allowed";
-  automaticValidityEligible: boolean;
+  /**
+   * In automatic approval mode (#204): `never`, or only when the deploy's
+   * setting names it (`pass` only by default, #148), so not by default.
+   */
+  automaticValidity: "never" | "if-configured";
 }
 
 interface DispositionInfo extends EirDispositionEffect {
@@ -531,19 +535,19 @@ const DISPOSITIONS: Record<EirDisposition, DispositionInfo> = {
       "A hard stop. The employee sees the rule's guidance beside the question and must change the answer before going on.",
     pdf: "refused",
     upload: "refused",
-    automaticValidityEligible: false,
+    automaticValidity: "never",
   },
   "manual-review": {
     meaning: "The employee can go on, but a Safeguards validator must look at the EIR.",
     pdf: "allowed",
     upload: "allowed",
-    automaticValidityEligible: false,
+    automaticValidity: "never",
   },
   warning: {
     meaning: "Recorded and shown, but doesn't stop anything.",
     pdf: "allowed",
     upload: "allowed",
-    automaticValidityEligible: true,
+    automaticValidity: "if-configured",
   },
 };
 
@@ -750,20 +754,39 @@ export function eirReferenceKeyFor(path: readonly (string | number)[]): string |
   return found;
 }
 
-type Schema = z.ZodTypeAny;
+type Schema = z.ZodType;
 
 const unwrap = (schema: Schema): { schema: Schema; optional: boolean } =>
   schema instanceof z.ZodOptional
-    ? { schema: unwrap(schema.unwrap()).schema, optional: true }
+    ? { schema: unwrap(schema.unwrap() as Schema).schema, optional: true }
     : { schema, optional: false };
 
 function bounds(schema: z.ZodNumber): string {
   let min: number | undefined;
   let max: number | undefined;
-  for (const check of schema._def.checks) {
-    if (check.kind === "min") min = check.inclusive ? check.value : check.value + 1;
-    if (check.kind === "max") max = check.inclusive ? check.value : check.value - 1;
+  for (const check of schema._def.checks ?? []) {
+    const definition = check._zod.def;
+    if (
+      definition.check === "greater_than" &&
+      "value" in definition &&
+      typeof definition.value === "number" &&
+      "inclusive" in definition &&
+      typeof definition.inclusive === "boolean"
+    ) {
+      min = definition.inclusive ? definition.value : definition.value + 1;
+    }
+    if (
+      definition.check === "less_than" &&
+      "value" in definition &&
+      typeof definition.value === "number" &&
+      "inclusive" in definition &&
+      typeof definition.inclusive === "boolean"
+    ) {
+      max = definition.inclusive ? definition.value : definition.value - 1;
+    }
   }
+  // Zod 4's `.int()` adds ±MAX_SAFE_INTEGER format limits. Those are an
+  // implementation constraint, not an authored business bound to show admins.
   if (min !== undefined && max !== undefined) return ` from ${min} to ${max}`;
   if (min !== undefined) return ` of ${min} or more`;
   return "";
@@ -777,15 +800,25 @@ function typeOf(schema: Schema): string {
   if (inner instanceof z.ZodString) return "Text";
   if (inner instanceof z.ZodBoolean) return "true or false";
   if (inner instanceof z.ZodNumber) {
-    const whole = inner._def.checks.some((check) => check.kind === "int");
+    const whole = inner.isInt;
     return `${whole ? "Whole number" : "Number"}${bounds(inner)}`;
   }
   if (inner instanceof z.ZodEnum) return "One of the values below";
   if (inner instanceof z.ZodObject) return "Group of keys";
   if (inner instanceof z.ZodRecord) return "Map of question ID to answer";
   if (inner instanceof z.ZodArray) {
-    const element = typeOf(inner.element);
-    const atLeastOne = inner._def.minLength?.value ? ", at least one" : "";
+    const element = typeOf(inner.element as Schema);
+    const atLeastOne = inner._def.checks?.some((check) => {
+      const definition = check._zod.def;
+      return (
+        definition.check === "min_length" &&
+        "minimum" in definition &&
+        typeof definition.minimum === "number" &&
+        definition.minimum > 0
+      );
+    })
+      ? ", at least one"
+      : "";
     return `List${atLeastOne} of: ${element.charAt(0).toLowerCase()}${element.slice(1)}`;
   }
   throw new Error(`The schema reference can't describe this type (${inner.constructor.name}).`);
@@ -815,9 +848,9 @@ function valuesOf(path: string, schema: Schema): EirReferenceValue[] | undefined
 }
 
 /** The schema's keys, depth first in schema order, each with its meaning. */
-function keysOf(schema: z.AnyZodObject, bootstrap: EirDefinition | undefined): EirReferenceKey[] {
+function keysOf(schema: z.ZodObject, bootstrap: EirDefinition | undefined): EirReferenceKey[] {
   const keys: EirReferenceKey[] = [];
-  const walk = (object: z.AnyZodObject, prefix: string) => {
+  const walk = (object: z.ZodObject, prefix: string) => {
     for (const [name, child] of Object.entries(object.shape as Record<string, Schema>)) {
       const path = prefix ? `${prefix}.${name}` : name;
       const info = (KEYS as Record<string, KeyInfo | undefined>)[path];
@@ -857,7 +890,7 @@ function keysOf(schema: z.AnyZodObject, bootstrap: EirDefinition | undefined): E
  * if any key, value, operator, disposition or code has no meaning.
  */
 export function eirSchemaReference(
-  schema: z.AnyZodObject = EIR_DEFINITION_SCHEMA,
+  schema: z.ZodObject = EIR_DEFINITION_SCHEMA,
 ): EirSchemaReference {
   const bootstrap = ACTIVE_EIR_DEFINITION.ok ? ACTIVE_EIR_DEFINITION.definition : undefined;
   const versions = EIR_VERSION_TOPICS.map((topic): EirReferenceVersionNote => {

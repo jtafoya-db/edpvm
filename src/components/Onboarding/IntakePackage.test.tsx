@@ -62,29 +62,32 @@ const STRANGER = profile({ principalId: "scim-stranger", name: "Sam Else" });
 /** Every wizard step filled in, with an architecture outside the approved patterns. */
 const FILLED: IntakeState = {
   dataName: "Collections case signals",
-  initiativeOwner: { kind: "someone-else", name: "Sam Else", email: "sam.else@example.test" },
+  initiativeOwner: { kind: "someone-else", name: "Sam Else", email: "sam.else@example.gov" },
   sourceSystem: "BMF / Business Master File",
   domain: "individual-filing",
   sensitivity: "SBU",
   steward: "A. Reyes, RPO Analytics",
-  pattern: "other",
   access: "tableau",
   engModel: "full",
+  deliverySupportDetails: "EDP should build the ingestion connector.",
   levers: ["taxgap", "cost"],
   useCase: "Prioritize balance-due cases across treatment streams.",
   outcome: "taxgap",
-  priority: "High",
   annualBenefit: "1,250,000",
   hoursSaved: "2,400",
   datasets: [
     {
       name: "Case signals",
+      sourceSystem: "BMF / Business Master File",
       domain: "individual-filing",
+      ingestionMethod: "other",
+      ingestionDetails: "Query a partner API each morning.",
       datasetTag: "case_signals",
-      owners: [{ name: "Olive Owner", email: "olive.owner@example.test" }],
+      owners: [{ name: "Olive Owner", email: "olive.owner@example.gov" }],
     },
   ],
-  isolation: "Yes — it must be isolated from other tenants",
+  isolation: "Yes — code, notebook or dashboard names or contents must be hidden",
+  isolationReason: "Investigative methods must remain within the named team.",
   teamSize: "6",
   sizeGb: "2,500.5",
   freq: "Weekly",
@@ -99,22 +102,23 @@ const FILLED: IntakeState = {
  */
 const SHOWN: Record<string, string> = {
   dataName: "Collections case signals",
-  initiativeOwner: "Sam Else (sam.else@example.test)",
+  initiativeOwner: "Sam Else (sam.else@example.gov)",
   sourceSystem: "BMF / Business Master File",
   domain: "Individual Filing",
   sensitivity: "SBU",
   steward: "A. Reyes, RPO Analytics",
-  pattern: "Something else (needs consultation)",
   access: "Tableau",
+  accessConsultDetails: "Not answered",
   engModel: "We need data engineering support",
+  deliverySupportDetails: "EDP should build the ingestion connector.",
   levers: "Reduce the tax gap; Reduce cost and contractor support",
   useCase: "Prioritize balance-due cases across treatment streams.",
   outcome: "Reduce the tax gap",
-  priority: "High",
   annualBenefit: "$1.3M",
   hoursSaved: "2,400",
   datasets: "Case signals",
-  isolation: "Yes — it must be isolated from other tenants",
+  isolation: "Yes — code, notebook or dashboard names or contents must be hidden",
+  isolationReason: "Investigative methods must remain within the named team.",
   teamSize: "6",
   sizeGb: "2,500.5",
   freq: "Weekly",
@@ -233,7 +237,8 @@ describe("the full intake package: schema coverage", () => {
   });
 
   it("shows an older request's steward read-only, marked as from older requests", async () => {
-    const intake = toOnboardingIntake({ ...FILLED, steward: "A. Reyes, RPO Analytics" });
+    const intake = toOnboardingIntake(FILLED);
+    intake.answers["steward"] = "A. Reyes, RPO Analytics";
     renderAs(memoryStore(), BUSINESS_OFFICE, <IntakePackage request={{ id: "ONB-1", intake }} />);
     await domainsNamed();
     const { content } = packageIn(document.body).step(stepLabel("source"));
@@ -274,16 +279,24 @@ describe("the full intake package: schema coverage", () => {
   });
 
   it("shows a blank answer as Not answered rather than leaving it out", async () => {
-    const intake = toOnboardingIntake({ ...FILLED, hoursSaved: "", sourceSystem: "" });
+    const intake = toOnboardingIntake({
+      ...FILLED,
+      sourceSystem: "",
+      hoursSaved: "",
+      datasets: [
+        {
+          ...(FILLED["datasets"] as OnboardingIntake["datasets"])[0]!,
+          sourceSystem: "",
+        },
+      ],
+    });
     renderAs(memoryStore(), BUSINESS_OFFICE, <IntakePackage request={{ id: "ONB-1", intake }} />);
     await domainsNamed();
     const pkg = packageIn(document.body);
     expect(row(pkg.step("Business case").content, "Staff hours saved per year")).toHaveTextContent(
       "Not answered",
     );
-    expect(row(pkg.step("Source profile").content, "Source system")).toHaveTextContent(
-      "Not answered",
-    );
+    expect(pkg.step("Datasets").content).toHaveTextContent("Source systemNot answered");
     // A request stored before the raw answers were kept still shows every question.
     cleanup();
     renderAs(
@@ -294,7 +307,7 @@ describe("the full intake package: schema coverage", () => {
     await domainsNamed();
     const old = packageIn(document.body);
     expect(
-      row(old.step("Architecture").content, "How does the data get into EDP?"),
+      row(old.step("Architecture").content, "How will your team access this data?"),
     ).toHaveTextContent("Not answered");
     expect(old.step("Architecture").button).toHaveTextContent("0 of 2 answered");
   });
@@ -304,43 +317,80 @@ describe("the full intake package: schema coverage", () => {
     renderAs(memoryStore(), BUSINESS_OFFICE, <IntakePackage request={{ id: "ONB-1", intake }} />);
     await domainsNamed();
     expect(packageIn(document.body).step("Business case").button).toHaveTextContent(
-      "5 of 6 answered",
+      "4 of 5 answered",
     );
   });
 });
 
 describe("the full intake package: architecture", () => {
-  it("shows the pattern, access, diagram and the consultation the wizard asks for", async () => {
+  it("shows initiative access while dataset ingestion stays with the dataset", async () => {
     renderAs(
       memoryStore(),
       BUSINESS_OFFICE,
       <IntakePackage request={{ id: "ONB-1", intake: toOnboardingIntake(FILLED) }} />,
     );
     await domainsNamed();
-    const { content } = packageIn(document.body).step("Architecture");
-    expect(within(content).getByText("Architecture diagram")).toBeInTheDocument();
-    // The diagram's boxes, as the wizard draws them.
-    for (const box of ["BMF / Business Master File", "Custom path", "EDP — Individual Filing"]) {
-      expect(within(content).getByText(box)).toBeInTheDocument();
-    }
-    expect(within(content).getAllByText("Tableau").length).toBeGreaterThan(1);
-    expect(content).toHaveTextContent(
-      "Requires an EDP architecture consultation. Outside the approved patterns: Something else (needs consultation).",
+    const pkg = packageIn(document.body);
+    const architecture = pkg.step("Datasets").content;
+    expect(within(architecture).getByText("Architecture diagram")).toBeInTheDocument();
+    expect(within(architecture).getAllByText("BMF / Business Master File")).toHaveLength(2);
+    expect(within(architecture).getByText("Custom path")).toBeInTheDocument();
+    expect(architecture).toHaveTextContent("Requires an EDP architecture consultation");
+    expect(architecture).toHaveTextContent("Tableau");
+    expect(pkg.step("Datasets").content).toHaveTextContent(
+      "I don’t know or need something else — consultation required",
     );
+    expect(pkg.step("Datasets").content).toHaveTextContent("Query a partner API each morning.");
   });
 
-  it("says no consultation is needed for approved patterns", async () => {
+  it("shows an approved ingestion method on its dataset", async () => {
     renderAs(
       memoryStore(),
       BUSINESS_OFFICE,
       <IntakePackage
-        request={{ id: "ONB-1", intake: toOnboardingIntake({ ...FILLED, pattern: "eftu" }) }}
+        request={{
+          id: "ONB-1",
+          intake: toOnboardingIntake({
+            ...FILLED,
+            datasets: [
+              {
+                ...(FILLED["datasets"] as OnboardingIntake["datasets"])[0]!,
+                ingestionMethod: "eftu",
+              },
+            ],
+          }),
+        }}
       />,
     );
     await domainsNamed();
-    const { content } = packageIn(document.body).step("Architecture");
-    expect(content).toHaveTextContent("Approved patterns only, so no architecture consultation");
-    expect(within(content).getByText("EFTU")).toBeInTheDocument();
+    const { content } = packageIn(document.body).step("Datasets");
+    expect(content).toHaveTextContent("Enterprise File Transfer Utility (EFTU)");
+  });
+
+  it("withholds the architecture diagram and verdict until every dataset is complete", async () => {
+    const dataset = (FILLED["datasets"] as OnboardingIntake["datasets"])[0]!;
+    renderAs(
+      memoryStore(),
+      BUSINESS_OFFICE,
+      <IntakePackage
+        request={{
+          id: "ONB-1",
+          intake: toOnboardingIntake({
+            ...FILLED,
+            datasets: [{ ...dataset, sourceSystem: "", ingestionMethod: "" }],
+          }),
+        }}
+      />,
+    );
+    await domainsNamed();
+    const architecture = packageIn(document.body).step("Datasets").content;
+    expect(architecture).toHaveTextContent(
+      "The architecture diagram appears once each dataset has a source system and ingestion method.",
+    );
+    expect(within(architecture).queryByText("Architecture diagram")).not.toBeInTheDocument();
+    expect(architecture).not.toHaveTextContent("no architecture consultation");
+    expect(architecture).not.toHaveTextContent("Requires an EDP architecture consultation");
+    expect(architecture).not.toHaveTextContent("EFTU");
   });
 
   it("shows the delivery and sizing notes the wizard derives", async () => {
@@ -393,7 +443,7 @@ describe("the full intake package: sections", () => {
       expect(pkg.step(step.label).button).toHaveAttribute("aria-expanded", "true");
     }
     fireEvent.click(screen.getByRole("button", { name: "Close all steps" }));
-    expect(pkg.step("Source profile").button).toHaveAttribute("aria-expanded", "false");
+    expect(pkg.step("Initiative").button).toHaveAttribute("aria-expanded", "false");
   });
 });
 
@@ -412,15 +462,13 @@ describe.each(BACKENDS)("who sees the full package ($label backend)", ({ make })
       const { content } = pkg.step(stepLabel(field.step));
       if (field.type === "dataset-list") {
         expect(row(content, "Dataset owner 1")).toHaveTextContent(
-          "Olive Owner (olive.owner@example.test)",
+          "Olive Owner (olive.owner@example.gov)",
         );
         continue;
       }
       expect(row(content, field.label), field.id).toHaveTextContent(SHOWN[field.id]!);
     }
-    expect(pkg.step("Architecture").content).toHaveTextContent(
-      "Requires an EDP architecture consultation",
-    );
+    expect(pkg.step("Datasets").content).toHaveTextContent("Query a partner API each morning.");
   }
 
   it("the business & ROI reviewer sees every answer", async () => {
@@ -448,8 +496,8 @@ describe.each(BACKENDS)("who sees the full package ($label backend)", ({ make })
     const { store, created } = await submitted();
     expect((await as(store, STRANGER).get(created.id)) ?? null).toBeNull();
     expect(await as(store, STRANGER).listMine()).toEqual([]);
-    renderAs(store, STRANGER, <OnboardingInbox role="business-office" />);
-    expect(await screen.findByText(/members of the configured/)).toBeInTheDocument();
+    renderAs(store, STRANGER, <MyOnboardingRequests />);
+    await screen.findByText(/haven't submitted an onboarding request/i);
     expect(screen.queryByText("Collections case signals")).not.toBeInTheDocument();
   });
 
@@ -479,7 +527,7 @@ describe.each(BACKENDS)("who sees the full package ($label backend)", ({ make })
     expect(within(datasets.content).getAllByText("Dataset name")).toHaveLength(2);
     expect(datasets.content).toHaveTextContent("Datasets: 2 of 2Added in the resubmission");
     expect(row(datasets.content, "Removed owner")).toHaveTextContent(
-      "Otto Second (otto.second@example.test)Removed in the resubmission",
+      "Otto Second (otto.second@example.gov)Removed in the resubmission",
     );
     expect(row(datasets.content, "Dataset owner 1")).not.toHaveTextContent("Changed");
     const workspace = pkg.step("Workspace");
@@ -487,8 +535,14 @@ describe.each(BACKENDS)("who sees the full package ($label backend)", ({ make })
       row(workspace.content, "How many people will work on this initiative?"),
     ).toHaveTextContent("9Changed in the resubmission, was “6”");
     expect(
-      row(workspace.content, "Does this work need to be isolated from other tenants?"),
+      row(
+        workspace.content,
+        "Must your team's code or work products be hidden from other EDP teams?",
+      ),
     ).not.toHaveTextContent("Changed");
+    expect(row(workspace.content, "Workspace separation reason or constraint")).toHaveTextContent(
+      "Investigative methods must remain within the named team.",
+    );
     expect(pkg.step("Architecture").button).toHaveAttribute("aria-expanded", "false");
   });
 
@@ -512,7 +566,7 @@ describe.each(BACKENDS)("who sees the full package ($label backend)", ({ make })
     await domainsNamed(item);
     const { content } = packageIn(item).step("Datasets");
     expect(content).toHaveTextContent(
-      "Removed in the resubmissionCollections ledger (collections_ledger); owners: Lee Ledger (lee.ledger@example.test)",
+      "Removed in the resubmissionCollections ledger (collections_ledger); owners: Lee Ledger (lee.ledger@example.gov)",
     );
     expect(item).toHaveTextContent("Removed dataset: Collections ledger (collections_ledger).");
   });
@@ -523,16 +577,18 @@ const FILLED_DATASETS = [
   {
     ...(FILLED["datasets"] as OnboardingIntake["datasets"])[0]!,
     owners: [
-      { name: "Olive Owner", email: "olive.owner@example.test" },
-      { name: "Otto Second", email: "otto.second@example.test" },
+      { name: "Olive Owner", email: "olive.owner@example.gov" },
+      { name: "Otto Second", email: "otto.second@example.gov" },
     ],
   },
 ];
 const LEDGER = {
   name: "Collections ledger",
+  sourceSystem: "IMF / Individual Master File",
   domain: "individual-filing",
+  ingestionMethod: "eftu",
   datasetTag: "collections_ledger",
-  owners: [{ name: "Lee Ledger", email: "lee.ledger@example.test" }],
+  owners: [{ name: "Lee Ledger", email: "lee.ledger@example.gov" }],
 };
 
 /**
@@ -652,7 +708,7 @@ describe("both backends show the same package", () => {
       text.push(packageIn(item).section.textContent ?? "");
       cleanup();
     }
-    expect(text[0]).toContain("Something else (needs consultation)");
+    expect(text[0]).toContain("I don’t know or need something else — consultation required");
     expect(text[1]).toBe(text[0]);
   });
 });

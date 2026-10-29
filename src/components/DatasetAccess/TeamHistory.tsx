@@ -16,7 +16,9 @@ function describeEvent(event: TeamEvent, roles: RoleDescriptions): string {
     case "member-removed":
       return `Removed ${who}'s ${roles.roles[event.role].label} role`;
     case "owner-added":
-      return `Made ${who} an owner`;
+      return event.replacedRole
+        ? `Made ${who} an owner and replaced their ${roles.roles[event.replacedRole].label} role with ${roles.roles.manager.label}`
+        : `Made ${who} an owner`;
     case "owner-removed":
       return `Removed ${who} as an owner`;
   }

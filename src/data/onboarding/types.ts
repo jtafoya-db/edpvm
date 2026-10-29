@@ -22,7 +22,7 @@ export type OnboardingRequestStage = OnboardingStage | OnboardingTerminalStage;
 /** The two review stages, each with exactly one reviewer role. */
 export type OnboardingReviewStage = "business-roi-review" | "ccb";
 
-/** Membership of a configured reviewer group, derived server-side from SCIM groups. */
+/** Reviewer role held by a direct member of the EDP admin group, derived server-side from SCIM groups. */
 export type OnboardingReviewerRole = "business-office" | "ccb";
 
 /** Owner contact data from intake; resolved to a SCIM id at standup (#89), never an ownership record itself. */
@@ -37,6 +37,55 @@ export type InitiativeOwnerChoice = IntakeInitiativeOwner;
  * has confirmed who they are yet (staff matching is #103's next slice).
  */
 export type OwnerVerification = "verified" | "not-verified";
+
+/**
+ * Whether EDP staff know which Databricks principal an owner is (#103, slice
+ * 103-B). `matched`: a principal is recorded, from Myself or entered by
+ * staff. `onboarding-requested`: staff marked the owner not a Databricks user
+ * yet and an onboard-user change-list entry for their email is pending.
+ * `unmatched`: neither.
+ */
+export type OwnerMatchState = "matched" | "unmatched" | "onboarding-requested";
+
+/**
+ * How a matched owner's principal was recorded. `self`: Myself, the
+ * provider's own signed-in session, verified. `staff`: entered by EDP staff
+ * by hand, not verified (the app has no user directory to check it against).
+ */
+export type OwnerMatchedBy =
+  | { kind: "self" }
+  | {
+      kind: "staff";
+      /** Who entered it and when: on EDP staff's reads only, never the provider's (#103). */
+      principalId?: string;
+      name?: string;
+      at?: string;
+    };
+
+/** One owner of an onboarding request and their match state, as staff and the provider read it. */
+export interface OnboardingOwnerMatch {
+  /** `initiative` for the initiative owner, else the dataset owner contact's ID. */
+  ownerId: string;
+  role: "initiative" | "dataset";
+  /** The intake dataset the owner is on; null for the initiative owner. */
+  datasetId: string | null;
+  name: string;
+  /** Normalised. Display and matching data, never a key (ADR-0006). */
+  email: string;
+  state: OwnerMatchState;
+  /** The recorded principal when matched, on EDP staff's reads; null otherwise, and always on the provider's. */
+  principalId: string | null;
+  matchedBy: OwnerMatchedBy | null;
+  /** The pending onboard-user entry (`CL-…`) when onboarding is requested, on EDP staff's reads; null otherwise. */
+  onboardingEntryId: string | null;
+}
+
+/** EDP staff's match of one owner to a principal they entered (#103, 103-B). */
+export interface OwnerMatchInput {
+  ownerId: string;
+  /** A Databricks principal ID: digits only. */
+  principalId: string;
+}
 
 /** The initiative owner as the request stores it. */
 export interface InitiativeOwner {
@@ -141,6 +190,8 @@ export interface OnboardingRequestRecord {
   initiativeOwner: InitiativeOwner | null;
   /** Each dataset owner contact's verification, by the contact's ID (#103). */
   ownerVerification: Record<string, OwnerVerification>;
+  /** Every owner, initiative owner first, with their match state (#103, 103-B). */
+  ownerMatches: OnboardingOwnerMatch[];
 }
 
 /** What every read returns: the record plus its current stage's SLA state (null off review stages). */

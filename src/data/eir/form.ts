@@ -29,6 +29,8 @@ import {
   type EirFormConfig,
   type EirSectionConfig,
 } from "./config.ts";
+import { isPersonName } from "../person-name.ts";
+import type { NameSource } from "../types.ts";
 import type { EirFormValues } from "./types.ts";
 import { definitionLabel, eirFormName } from "./definition/identity.ts";
 
@@ -89,12 +91,25 @@ export interface EirSessionPrefill {
   givenName?: string;
   familyName?: string;
   email?: string;
+  /** Where `name` came from; only a SCIM name is a person's name to split. */
+  nameSource?: NameSource;
+}
+
+/**
+ * Whether the session's display name is a person's name to split into first
+ * and last: a SCIM `displayName` (or, for a session without a source, any
+ * name) that isn't an identifier (`person-name.ts`). A `scim-parts` name is
+ * the parts themselves, so it isn't split again.
+ */
+function splitsDisplayName(session: EirSessionPrefill): boolean {
+  if (session.nameSource !== undefined && session.nameSource !== "scim-display") return false;
+  return isPersonName(session.name, { email: session.email });
 }
 
 /**
  * A blank form with what the session knows: the work email and the first and
- * last name (SCIM's name parts, else the display name split at its first
- * space). All stay editable.
+ * last name (SCIM's name parts, else a real SCIM display name split at its
+ * first space; never an email, username or numeric id). All stay editable.
  */
 export function prefilledEirAnswers(session: EirSessionPrefill): EirFormValues {
   return prefilledAnswersOn(EIR_FORM, session);
@@ -113,9 +128,12 @@ export function emptyAnswersOn(form: EirFormConfig): EirFormValues {
 /** {@link prefilledEirAnswers} on a given form. */
 export function prefilledAnswersOn(form: EirFormConfig, session: EirSessionPrefill): EirFormValues {
   const answers = emptyAnswersOn(form);
-  const words = session.name?.trim().split(/\s+/).filter(Boolean) ?? [];
-  const first = session.givenName?.trim() || words[0] || "";
-  const last = session.familyName?.trim() || (session.givenName ? "" : words.slice(1).join(" "));
+  const identifiers = { email: session.email };
+  const givenName = isPersonName(session.givenName, identifiers) ? session.givenName.trim() : "";
+  const familyName = isPersonName(session.familyName, identifiers) ? session.familyName.trim() : "";
+  const words = splitsDisplayName(session) ? (session.name ?? "").trim().split(/\s+/) : [];
+  const first = givenName || words[0] || "";
+  const last = familyName || (givenName ? "" : words.slice(1).join(" "));
   for (const field of fieldsOf(form)) {
     if (field.prefill === "email" && session.email) answers[field.id] = session.email;
     if (field.prefill === "first-name") answers[field.id] = first;

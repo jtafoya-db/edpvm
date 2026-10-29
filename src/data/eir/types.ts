@@ -1,4 +1,5 @@
 import type { SlaStatus } from "../sla";
+import type { EirAutomaticValidity } from "./approval-mode";
 import type { EirDisposition, EirOutcome } from "./definition/types";
 
 export type EirStage =
@@ -25,7 +26,14 @@ export interface EirEvaluation {
   evaluatedDraftVersion: number;
   outcome: EirOutcome;
   outcomes: EirRuleOutcome[];
+  /** Whether the outcome is one the deploy names as qualifying for automatic validity (#204). */
   automaticValidityEligible: boolean;
+  /**
+   * Its place among the draft's recorded pre-checks (#204): a later one is
+   * higher, even in the same millisecond. Absent until it's recorded, and on
+   * pre-checks recorded before the sequence existed.
+   */
+  sequence?: number;
   actorPrincipalId: "system";
   actorDisplay: "EDP Vending Machine";
   actorApp: "system";
@@ -54,6 +62,12 @@ export interface EirAction {
    * Set only by the rules (`self-decision.ts`); stored as the action's payload.
    */
   selfDecisionTestMode?: true;
+  /**
+   * On the system's `valid` action in automatic approval mode (#204): the
+   * upload-time pre-check it rests on. Set only by the rules; stored as the
+   * action's payload.
+   */
+  automaticValidity?: EirAutomaticValidity;
 }
 
 export interface EirRenewal {

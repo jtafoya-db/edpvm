@@ -71,7 +71,9 @@ export function EdpAdminScreen({ ctx, params, chrome = {} }: EdpAdminScreenProps
     return (
       <Page>
         <Trail items={[home, { label: "EDP Admin" }]} />
-        <NotAvailable>This page is for EDP staff, the members of the EDP admin group.</NotAvailable>
+        <NotAvailable>
+          This page is for EDP staff: direct members of the EDP admin group.
+        </NotAvailable>
       </Page>
     );
   }

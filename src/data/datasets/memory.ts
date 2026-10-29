@@ -13,7 +13,11 @@
  */
 import { reconcileMembership } from "../change-list/reconciler";
 import type { ChangeListStore } from "../change-list/store";
-import type { AddMemberEntry, ChangeListEntry } from "../change-list/types";
+import { memoryOnboardUserEntries, type OnboardUserEntries } from "../change-list/onboard-user";
+import { entryDatasetId, type AddMemberEntry, type ChangeListEntry } from "../change-list/types";
+import { applyObservedMemberships } from "../change-list/snapshot-match";
+import { applySupersession } from "../change-list/supersession";
+import type { GroupMembershipReader } from "../group-membership";
 import type { UserProfile } from "../types";
 import { ActionRefusedError } from "./errors";
 import { validateGroupNames, validateGroupNaming, type GroupNamingConfig } from "./group-naming";
@@ -51,6 +55,7 @@ export interface MemoryAccessStoreConfig {
   /** Resolves the signed-in user; every write is attributed to them. */
   currentUser: () => Promise<UserProfile>;
   now: () => Date;
+  groupMembershipReader?: GroupMembershipReader;
 }
 
 export interface MemoryAccessStores {
@@ -58,6 +63,8 @@ export interface MemoryAccessStores {
   datasetRoles: DatasetRoleStore;
   datasetTeam: DatasetTeamStore;
   changeList: ChangeListStore;
+  /** Where the memory onboarding store lists onboard-user entries: this same change list (#103). */
+  onboardUserEntries: OnboardUserEntries;
 }
 
 function clone<T>(value: T): T {
@@ -73,8 +80,8 @@ export function createMemoryAccessStores(config: MemoryAccessStoreConfig): Memor
     loaded ??= config.loadSeed().then((seed) => {
       const datasets = clone(seed.datasets);
       validateGroupNames(naming, datasets);
-      // ADR-0005: every owner holds the manager role. Standup puts intake
-      // owners in the manager group, outside the app, so the seed records
+      // ADR-0005: every owner holds the Maintainer (stored as `manager`) role. Standup puts
+      // intake owners in its group, outside the app, so the seed records
       // their role without listing it. An owner with no email is identified
       // by SCIM id.
       const at = config.now().toISOString();
@@ -280,11 +287,31 @@ export function createMemoryAccessStores(config: MemoryAccessStoreConfig): Memor
     listEntries: async () => {
       const { datasets } = await seeded();
       const user = await config.currentUser();
-      if (user.isAdmin) return clone(entries);
+      if (user.isAdmin) {
+        const visible = config.groupMembershipReader
+          ? await applyObservedMemberships(
+              entries,
+              datasets,
+              config.groupMembershipReader,
+              config.now(),
+            )
+          : clone(entries);
+        return applySupersession(visible);
+      }
       const owned = new Set(
         datasets.filter((d) => isDatasetOwner(d, user, ownerBindings)).map((d) => d.id),
       );
-      return clone(entries.filter((e) => owned.has(e.target.datasetId)));
+      // An entry on no dataset (onboard-user, #103) is EDP staff's only.
+      const visible = entries.filter((e) => owned.has(entryDatasetId(e) ?? ""));
+      const observed = config.groupMembershipReader
+        ? await applyObservedMemberships(
+            visible,
+            datasets,
+            config.groupMembershipReader,
+            config.now(),
+          )
+        : clone(visible);
+      return applySupersession(observed);
     },
     markApplied: async (entryId) => {
       await seeded();
@@ -301,6 +328,9 @@ export function createMemoryAccessStores(config: MemoryAccessStoreConfig): Memor
           "already-applied",
           `${entry.id} was already marked applied by ${entry.applied.by} at ${entry.applied.at}.`,
         );
+      }
+      if (applySupersession(entries).find((candidate) => candidate.id === entryId)?.supersededBy) {
+        throw new ActionRefusedError("superseded", "This change is no longer pending.");
       }
       entry.applied = { by: user.principalId, at: config.now().toISOString() };
       return clone(entry);
@@ -320,5 +350,11 @@ export function createMemoryAccessStores(config: MemoryAccessStoreConfig): Memor
     now: config.now,
   });
 
-  return { datasets: datasetStore, datasetRoles, datasetTeam, changeList };
+  return {
+    datasets: datasetStore,
+    datasetRoles,
+    datasetTeam,
+    changeList,
+    onboardUserEntries: memoryOnboardUserEntries(entries, nextEntryId),
+  };
 }

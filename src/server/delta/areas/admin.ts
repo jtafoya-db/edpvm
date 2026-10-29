@@ -127,9 +127,7 @@ export function registerAdminArea(registry: Registry): void {
     area: "admin",
     name: "confirm-write-check",
     app: "staff",
-    payload: z
-      .object({ writeCheckId: z.string().uuid(), note: z.string().max(500).optional() })
-      .strict(),
+    payload: z.object({ writeCheckId: z.guid(), note: z.string().max(500).optional() }).strict(),
     leadActionTable: WRITE_CHECK_ACTIONS,
     authorize: requireEdpStaff,
     async plan(ctx) {
@@ -167,7 +165,7 @@ export function registerAdminArea(registry: Registry): void {
     area: "admin",
     name: "write-checks",
     app: "staff",
-    query: z.object({ id: z.string().uuid().optional() }).strict(),
+    query: z.object({ id: z.guid().optional() }).strict(),
     authorize: requireEdpStaff,
     snapshot({ query, snapshot }) {
       const rows = snapshotWriteChecks(snapshot, query.id);
@@ -197,7 +195,7 @@ export function registerAdminArea(registry: Registry): void {
     area: "audit",
     name: "record-history",
     app: "staff",
-    query: z.object({ recordId: z.string().uuid() }).strict(),
+    query: z.object({ recordId: z.guid() }).strict(),
     authorize: requireEdpStaff,
     snapshot: ({ query, snapshot }) =>
       snapshot

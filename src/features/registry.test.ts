@@ -7,7 +7,7 @@ describe("FEATURES", () => {
     const entries = Object.values(FEATURES);
     const ids = entries.map((feature) => feature.id);
 
-    expect(entries).toHaveLength(26);
+    expect(entries).toHaveLength(29);
     expect(new Set(ids).size).toBe(ids.length);
     expect(Object.keys(FEATURES)).toEqual(ids);
   });
@@ -38,10 +38,12 @@ describe("FEATURES", () => {
       "eir-form-fields",
       "eir-lifecycle",
       "group-membership-reader",
+      "intake-owners",
       "onboarding-request-persistence",
       "onboarding-request-status",
       "onboarding-review",
       "onboarding-wizard",
+      "owner-matching",
     ]);
 
     // Session-only access request state remains an explicit stub.

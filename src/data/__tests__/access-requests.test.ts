@@ -253,7 +253,7 @@ describe("approving an access request", () => {
     const direct = await store.datasetRoles.addMember({
       datasetId: DATASET_ID,
       name: "Tess Tester",
-      email: "tess@example.test",
+      email: "tess@example.gov",
       role: "tester",
     });
     expect(Object.keys(direct.entries[0]!).sort()).toEqual(Object.keys(entries[0]!).sort());
@@ -441,7 +441,7 @@ describe("configuration", () => {
     expect(await store.accessRequests.describeSettings()).toEqual({
       requestableRoles: ["tester", "developer"],
       nonRequestableNote: expect.stringMatching(
-        /manager role .*granted directly by a dataset owner/i,
+        /^The Maintainer role can't be requested\..*granted directly by a dataset owner/,
       ),
       sla: {
         targetBusinessDays: 3,
@@ -600,7 +600,7 @@ describe("an owner deciding their own request", () => {
 });
 
 describe("an owner record with no principal id (owners added by email, #110)", () => {
-  const emailOnlyOwner = { displayName: "Ellen Emailed", email: "ellen.emailed@example.test" };
+  const emailOnlyOwner = { displayName: "Ellen Emailed", email: "ellen.emailed@example.gov" };
 
   it("matches an email-added owner by session email, never by two missing ids", () => {
     const dataset = { owners: [emailOnlyOwner] };
@@ -611,7 +611,7 @@ describe("an owner record with no principal id (owners added by email, #110)", (
     expect(
       isDatasetOwner(dataset, {
         principalId: "scim-ellen-1",
-        email: "ELLEN.EMAILED@example.test",
+        email: "ELLEN.EMAILED@example.gov",
       }),
     ).toBe(true);
     const ownerWithNoIdentity = { owners: [{ displayName: "Blank" }] };
@@ -656,7 +656,7 @@ describe("an owner record with no principal id (owners added by email, #110)", (
       ...OWNER,
       principalId: "scim-ellen-1",
       name: "Ellen Emailed",
-      email: "ellen.emailed@example.test",
+      email: "ellen.emailed@example.gov",
     };
 
     actAs(ellen);
@@ -664,7 +664,7 @@ describe("an owner record with no principal id (owners added by email, #110)", (
 
     expect(result.added.created).toBe(true);
     expect((await store.datasets.getDataset(DATASET_ID))?.owners[0]).toMatchObject({
-      email: "ellen.emailed@example.test",
+      email: "ellen.emailed@example.gov",
       matchedPrincipalId: "scim-ellen-1",
     });
   });
@@ -678,7 +678,7 @@ describe("an owner record with no principal id (owners added by email, #110)", (
       ...OWNER,
       principalId: "scim-ellen-1",
       name: "Ellen Emailed",
-      email: "ellen.emailed@example.test",
+      email: "ellen.emailed@example.gov",
     });
 
     const rejected = await store.accessRequests.reject(request.id, "Not needed");
@@ -688,7 +688,7 @@ describe("an owner record with no principal id (owners added by email, #110)", (
       outcome: { by: "scim-ellen-1", note: "Not needed" },
     });
     expect((await store.datasets.getDataset(DATASET_ID))?.owners[0]).toMatchObject({
-      email: "ellen.emailed@example.test",
+      email: "ellen.emailed@example.gov",
       matchedPrincipalId: "scim-ellen-1",
     });
   });
@@ -702,14 +702,14 @@ describe("an owner record with no principal id (owners added by email, #110)", (
       ...OWNER,
       principalId: "scim-ellen-1",
       name: "Ellen Emailed",
-      email: "ellen.emailed@example.test",
+      email: "ellen.emailed@example.gov",
     });
     expect(await store.datasets.claimOwnership(DATASET_ID)).toBe(true);
     actAs({
       ...OWNER,
       principalId: "scim-impostor-2",
       name: "Ellen Impostor",
-      email: "ellen.emailed@example.test",
+      email: "ellen.emailed@example.gov",
     });
 
     await expect(store.accessRequests.reject(request.id)).rejects.toMatchObject({

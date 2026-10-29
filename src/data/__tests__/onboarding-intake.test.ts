@@ -40,7 +40,6 @@ describe("intakeAnswers — the package a reviewer reads (#229)", () => {
   it("is every answer the provider gave, as the wizard holds them", () => {
     const intake = toOnboardingIntake({
       dataName: "Case signals",
-      pattern: "other",
       access: "tableau",
       sizeGb: "750",
       teamSize: "6",
@@ -49,7 +48,6 @@ describe("intakeAnswers — the package a reviewer reads (#229)", () => {
     });
     expect(intakeAnswers(intake)).toMatchObject({
       dataName: "Case signals",
-      pattern: "other",
       access: "tableau",
       sizeGb: 750,
       teamSize: 6,
@@ -60,12 +58,12 @@ describe("intakeAnswers — the package a reviewer reads (#229)", () => {
   it("reads the fields a resubmission can edit from the request, not the answers at submit", () => {
     const intake = toOnboardingIntake({ isolation: "Not sure", teamSize: 6, datasets: [] });
     intake.workspaceNeeds = {
-      isolation: "Yes — it must be isolated from other tenants",
+      isolation: "Yes — code, notebook or dashboard names or contents must be hidden",
       teamSize: 9,
     };
     intake.datasets = [{ name: "Renamed", domain: "other", datasetTag: "renamed", owners: [] }];
     expect(intakeAnswers(intake)).toMatchObject({
-      isolation: "Yes — it must be isolated from other tenants",
+      isolation: "Yes — code, notebook or dashboard names or contents must be hidden",
       teamSize: 9,
       datasets: [{ name: "Renamed" }],
     });

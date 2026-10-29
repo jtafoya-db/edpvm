@@ -13,6 +13,7 @@ import {
   resubmissionStage,
 } from "../../../data/onboarding/lifecycle.ts";
 import {
+  findDatasetOptionIdProblem,
   findResubmittedIdProblem,
   findSubmittedIdProblem,
   normalizeIntake,
@@ -24,14 +25,31 @@ import {
   type IntakeProblem,
 } from "../../../data/onboarding/resubmission.ts";
 import {
+  INITIATIVE_OWNER_ID,
+  NO_MATCH,
   initiativeOwnerChoice,
   initiativeOwnerFor,
+  matchSourceFor,
   normalizeOwnerEmail,
-  ownerPrincipalId,
+  normalizePrincipalId,
+  onboardingRequestProblem,
+  ownerMatchStageOpen,
+  ownerMatchesFor,
   ownerVerificationFor,
+  resubmittedMatch,
+  selfMatch,
+  staffMatch,
+  stateOnlyOwners,
+  staffMatchProblem,
   withSessionOwners,
+  type OwnerMatchProblem,
+  type OwnerMatchRecord,
+  type OwnerMatchSource,
+  type OwnerMatchSubject,
   type OwnerSession,
+  type PendingOnboarding,
 } from "../../../data/onboarding/owners.ts";
+import { onboardUserPayload } from "../../../data/change-list/onboard-user.ts";
 import type {
   InitiativeOwner,
   OnboardingDecision,
@@ -53,20 +71,25 @@ import {
 } from "../../../schema/index.ts";
 import { configuredSlaConfig } from "../../sla-config.ts";
 import { DomainError } from "../errors.ts";
-import type {
-  CommandContext,
-  ReadFn,
-  Registry,
-  ResultRowContext,
-  SessionUser,
+import {
+  requireEdpStaff,
+  type CommandContext,
+  type ReadFn,
+  type Registry,
+  type ResultRowContext,
+  type SessionUser,
 } from "../registry.ts";
 import type { DeltaSnapshot } from "../snapshot-cache.ts";
 import type { StoreNames } from "../sql-builder.ts";
+import { APPLICATIONS, ENTRIES, ENTRY_ACTIONS, entryLabel } from "./teams-model.ts";
 import {
   NO_DISPLAY_NUMBER,
   allocateDisplayCode,
+  allocateDisplayNumber,
   expectRow,
   followOn,
+  insertAction,
+  insertCurrentState,
   insertRow,
   json,
   stringArray,
@@ -101,7 +124,12 @@ const workspaceNeeds = z.object({ isolation: z.string(), teamSize: z.number() })
 const recordId = z.string().min(1).optional();
 // `self`: the provider picked Myself; the server fills the identity from the session (#103).
 const owner = z
-  .object({ id: recordId, self: z.literal(true).optional(), name: z.string(), email: z.string() })
+  .object({
+    id: recordId,
+    self: z.literal(true, { error: "Invalid literal value, expected true" }).optional(),
+    name: z.string(),
+    email: z.string(),
+  })
   .strict();
 const initiativeOwner = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("self") }).strict(),
@@ -111,7 +139,10 @@ const dataset = z
   .object({
     id: recordId,
     name: z.string(),
+    sourceSystem: z.string(),
     domain: z.string(),
+    ingestionMethod: z.string(),
+    ingestionDetails: z.string().optional(),
     datasetTag: z.string(),
     owners: z.array(owner),
   })
@@ -137,7 +168,13 @@ const decisionPayload = z
     decision: z.discriminatedUnion("type", [
       z.object({ type: z.literal("approve"), note: z.string().optional() }).strict(),
       z
-        .object({ type: z.literal("send-back"), to: z.literal("submitted"), note: z.string() })
+        .object({
+          type: z.literal("send-back"),
+          to: z.literal("submitted", {
+            error: 'Invalid literal value, expected "submitted"',
+          }),
+          note: z.string(),
+        })
         .strict(),
       z.object({ type: z.literal("reject"), note: z.string() }).strict(),
     ]),
@@ -156,6 +193,14 @@ const resubmitPayload = z
   .strict();
 const withdrawPayload = z
   .object({ requestId: z.string().min(1), note: z.string().optional() })
+  .strict();
+// Staff owner matching (#103, 103-B): the owner by its ID, the principal as staff typed it.
+const ownerRef = z.string().min(1).max(200);
+const matchOwnerPayload = z
+  .object({ requestId: z.string().min(1), ownerId: ownerRef, principalId: z.string().max(100) })
+  .strict();
+const requestOwnerOnboardingPayload = z
+  .object({ requestId: z.string().min(1), ownerId: ownerRef })
   .strict();
 
 type RequestRow = {
@@ -186,13 +231,20 @@ type RequestRow = {
   initiative_owner_display: string | null;
   initiative_owner_email: string | null;
   initiative_owner_principal_id: string | null;
+  initiative_owner_match_source?: OwnerMatchSource | null;
+  initiative_owner_matched_by_principal_id?: string | null;
+  initiative_owner_matched_by_display?: string | null;
+  initiative_owner_matched_at?: string | null;
 };
 type DatasetRow = {
   id: string;
   onboarding_request_id: string;
   position: number;
   name: string;
+  source_system: string | null;
   domain: string;
+  ingestion_method: string | null;
+  ingestion_details: string | null;
   dataset_tag: string;
 };
 type OwnerRow = {
@@ -202,6 +254,10 @@ type OwnerRow = {
   person_display: string;
   person_email: string;
   person_principal_id: string | null;
+  person_match_source?: OwnerMatchSource | null;
+  person_matched_by_principal_id?: string | null;
+  person_matched_by_display?: string | null;
+  person_matched_at?: string | null;
 };
 type ActionRow = {
   action_id: string;
@@ -219,7 +275,41 @@ type ActionRow = {
 
 /** The request row's columns, as every onboarding read selects them (exported for the read-parity test). */
 export const REQUEST_COLUMNS =
-  "id AS uuid, coalesce(display_code, concat('ONB-', CAST(display_number AS STRING))) AS id, display_number, display_code, version, title, provider_principal_id, provider_display, CAST(submitted_at AS STRING) AS submitted_at, stage, CAST(stage_entered_at AS STRING) AS stage_entered_at, CAST(sla_due_at AS STRING) AS sla_due_at, CAST(sla_due_soon_at AS STRING) AS sla_due_soon_at, initiative_name, business_case, annual_benefit, levers, workspace_isolation, workspace_team_size, intake_answers, open_send_back_from_stage, open_send_back_action_id, initiative_owner_kind, initiative_owner_display, initiative_owner_email, initiative_owner_principal_id";
+  "id AS uuid, coalesce(display_code, concat('ONB-', CAST(display_number AS STRING))) AS id, display_number, display_code, version, title, provider_principal_id, provider_display, CAST(submitted_at AS STRING) AS submitted_at, stage, CAST(stage_entered_at AS STRING) AS stage_entered_at, CAST(sla_due_at AS STRING) AS sla_due_at, CAST(sla_due_soon_at AS STRING) AS sla_due_soon_at, initiative_name, business_case, annual_benefit, levers, workspace_isolation, workspace_team_size, intake_answers, open_send_back_from_stage, open_send_back_action_id, initiative_owner_kind, initiative_owner_display, initiative_owner_email, initiative_owner_principal_id, initiative_owner_match_source, initiative_owner_matched_by_principal_id, initiative_owner_matched_by_display, CAST(initiative_owner_matched_at AS STRING) AS initiative_owner_matched_at";
+
+/** An owner row's match columns, as every owner read selects them (with `o.` or bare). */
+const OWNER_MATCH_STRUCT = (o: string) =>
+  `'person_match_source', ${o}person_match_source, 'person_matched_by_principal_id', ${o}person_matched_by_principal_id, 'person_matched_by_display', ${o}person_matched_by_display, 'person_matched_at', CAST(${o}person_matched_at AS STRING)`;
+
+/**
+ * The pending onboard-user entries (#103) for any of request `r`'s owners'
+ * emails, as JSON: the entry ID, its `CL-` number and the person's email.
+ * Pending is "no application row" (ADR-0008 decision 3), so marking the
+ * entry applied returns the owner to unmatched with no write here.
+ */
+function pendingOnboardingJson(
+  names: StoreNames,
+  request: string,
+  initiativeEmail: string,
+): string {
+  const entries = names.table(ENTRIES.schema, ENTRIES.table);
+  const applications = names.table(APPLICATIONS.schema, APPLICATIONS.table);
+  const owners = names.table("onboarding", "onboarding_intake_owners");
+  return (
+    `(SELECT to_json(collect_list(named_struct('id', e.id, 'display_number', e.display_number, 'person_email', e.person_email))) FROM ${entries} e ` +
+    `WHERE e.kind = 'onboard-user' AND NOT EXISTS (SELECT 1 FROM ${applications} ap WHERE ap.change_list_entry_id = e.id) ` +
+    `AND (e.person_email = ${initiativeEmail} OR e.person_email IN (SELECT po.person_email FROM ${owners} po WHERE po.onboarding_request_id = ${request})))`
+  );
+}
+
+type PendingRow = { id: string; display_number: number; person_email: string };
+
+function pendingFrom(rows: PendingRow[]): PendingOnboarding[] {
+  return rows.map((row) => ({
+    entryId: entryLabel(Number(row.display_number)),
+    email: row.person_email,
+  }));
+}
 
 function parseLevers(value: string[] | string): string[] {
   return Array.isArray(value) ? value : JSON.parse(value || "[]");
@@ -230,7 +320,10 @@ function assertIntake(value: OnboardingIntake): void {
   // its own code, so a bypassed form can't store it.
   const tagProblem = findDatasetTagProblem(value.datasets);
   if (tagProblem) throw new DomainError(tagProblem.code, tagProblem.message, 400);
+  const schema = loadSchema();
+  refuseOn(findDatasetOptionIdProblem(value, schema));
   const state: IntakeState = {
+    ...value.answers,
     dataName: value.initiativeName,
     useCase: value.businessCase,
     annualBenefit: value.annualBenefit,
@@ -241,12 +334,13 @@ function assertIntake(value: OnboardingIntake): void {
     initiativeOwner: value.initiativeOwner,
   };
   const issues = [
-    ...validateStep(loadSchema(), "source", state).filter(
-      ({ field }) => field === "dataName" || field === "initiativeOwner",
+    ...validateStep(schema, "source", state),
+    ...validateStep(schema, "delivery", state),
+    ...validateStep(schema, "business", state).filter(
+      ({ field }) => field !== "outcome" && field !== "priority" && field !== "hoursSaved",
     ),
-    ...validateStep(loadSchema(), "business", state),
-    ...validateStep(loadSchema(), "datasets", state),
-    ...validateStep(loadSchema(), "workspace", state),
+    ...validateStep(schema, "datasets", state),
+    ...validateStep(schema, "workspace", state),
   ].map(({ message }) => message);
   if (issues.length)
     throw new DomainError(
@@ -316,7 +410,7 @@ async function loadRequest(
   });
   // The statement's WHERE already scopes it; this is the same rule, kept as a second check.
   if (!row || !canSee(user, row)) return undefined;
-  return toRequest(row, row.datasets, row.owners, row.actions, slaConfig);
+  return toRequest(row, row.datasets, row.owners, row.actions, slaConfig, row.pending);
 }
 
 /** A request row with its intake children and history aggregated in, as one statement returns it. */
@@ -324,6 +418,7 @@ type RequestWithChildren = RequestRow & {
   datasets: DatasetRow[];
   owners: OwnerRow[];
   actions: ActionRow[];
+  pending: PendingOnboarding[];
 };
 
 /** A `to_json(collect_list(...))` column: JSON text, `[]`, or null for no rows. */
@@ -351,32 +446,39 @@ async function readRequests(
   const owners = names.table("onboarding", "onboarding_intake_owners");
   const actions = names.table("onboarding", "onboarding_request_actions");
   const rows = await read<
-    RequestRow & { datasets_json: unknown; owners_json: unknown; actions_json: unknown }
+    RequestRow & {
+      datasets_json: unknown;
+      owners_json: unknown;
+      actions_json: unknown;
+      pending_json: unknown;
+    }
   >({
     statement:
       `SELECT ${REQUEST_COLUMNS}, ` +
-      `(SELECT to_json(collect_list(named_struct('id', d.id, 'onboarding_request_id', d.onboarding_request_id, 'position', d.position, 'name', d.name, 'domain', d.domain, 'dataset_tag', d.dataset_tag))) FROM ${datasets} d WHERE d.onboarding_request_id = r.id) AS datasets_json, ` +
-      `(SELECT to_json(collect_list(named_struct('id', o.id, 'intake_dataset_id', o.intake_dataset_id, 'onboarding_request_id', o.onboarding_request_id, 'position', o.position, 'person_display', o.person_display, 'person_email', o.person_email, 'person_principal_id', o.person_principal_id))) FROM ${owners} o WHERE o.onboarding_request_id = r.id) AS owners_json, ` +
+      `(SELECT to_json(collect_list(named_struct('id', d.id, 'onboarding_request_id', d.onboarding_request_id, 'position', d.position, 'name', d.name, 'source_system', d.source_system, 'domain', d.domain, 'ingestion_method', d.ingestion_method, 'ingestion_details', d.ingestion_details, 'dataset_tag', d.dataset_tag))) FROM ${datasets} d WHERE d.onboarding_request_id = r.id) AS datasets_json, ` +
+      `(SELECT to_json(collect_list(named_struct('id', o.id, 'intake_dataset_id', o.intake_dataset_id, 'onboarding_request_id', o.onboarding_request_id, 'position', o.position, 'person_display', o.person_display, 'person_email', o.person_email, 'person_principal_id', o.person_principal_id, ${OWNER_MATCH_STRUCT("o.")}))) FROM ${owners} o WHERE o.onboarding_request_id = r.id) AS owners_json, ` +
+      `${pendingOnboardingJson(names, "r.id", "r.initiative_owner_email")} AS pending_json, ` +
       `(SELECT to_json(collect_list(named_struct('action_id', a.action_id, 'action', a.action, 'from_stage', a.from_stage, 'to_stage', a.to_stage, 'record_version', a.record_version, 'actor_principal_id', a.actor_principal_id, 'actor_display', a.actor_display, 'occurred_at', CAST(a.occurred_at AS STRING), 'note', a.note, 'payload', a.payload))) FROM ${actions} a WHERE a.onboarding_request_id = r.id) AS actions_json ` +
       `FROM ${names.table("onboarding", "onboarding_requests")} r WHERE ${query.where} ORDER BY ${query.orderBy}`,
     parameters: query.parameters,
   });
-  return rows.map(({ datasets_json, owners_json, actions_json, ...row }) => ({
+  return rows.map(({ datasets_json, owners_json, actions_json, pending_json, ...row }) => ({
     ...row,
     datasets: jsonList<DatasetRow>(datasets_json),
     owners: jsonList<OwnerRow>(owners_json),
     actions: jsonList<ActionRow>(actions_json),
+    pending: pendingFrom(jsonList<PendingRow>(pending_json)),
   }));
 }
 
 async function children(names: StoreNames, read: ReadFn, uuid: string) {
   const [datasets, owners, actions] = await Promise.all([
     read<DatasetRow>({
-      statement: `SELECT id, onboarding_request_id, position, name, domain, dataset_tag FROM ${names.table("onboarding", "onboarding_intake_datasets")} WHERE onboarding_request_id = :id ORDER BY position`,
+      statement: `SELECT id, onboarding_request_id, position, name, source_system, domain, ingestion_method, ingestion_details, dataset_tag FROM ${names.table("onboarding", "onboarding_intake_datasets")} WHERE onboarding_request_id = :id ORDER BY position`,
       parameters: { id: uuid },
     }),
     read<OwnerRow>({
-      statement: `SELECT id, intake_dataset_id, position, person_display, person_email, person_principal_id FROM ${names.table("onboarding", "onboarding_intake_owners")} WHERE onboarding_request_id = :id ORDER BY intake_dataset_id, position`,
+      statement: `SELECT id, intake_dataset_id, position, person_display, person_email, person_principal_id, person_match_source, person_matched_by_principal_id, person_matched_by_display, CAST(person_matched_at AS STRING) AS person_matched_at FROM ${names.table("onboarding", "onboarding_intake_owners")} WHERE onboarding_request_id = :id ORDER BY intake_dataset_id, position`,
       parameters: { id: uuid },
     }),
     read<ActionRow>({
@@ -388,13 +490,32 @@ async function children(names: StoreNames, read: ReadFn, uuid: string) {
 }
 
 /** The fields of each child row the request view needs, from a read or a result row. */
-type DatasetPart = Pick<DatasetRow, "id" | "position" | "name" | "domain" | "dataset_tag">;
+type DatasetPart = Pick<
+  DatasetRow,
+  | "id"
+  | "position"
+  | "name"
+  | "source_system"
+  | "domain"
+  | "ingestion_method"
+  | "ingestion_details"
+  | "dataset_tag"
+>;
 type OwnerPart = Pick<
   OwnerRow,
   "id" | "intake_dataset_id" | "position" | "person_display" | "person_email"
 > &
   // `to_json` drops a null field, so an aggregated row may have none.
-  Partial<Pick<OwnerRow, "person_principal_id">>;
+  Partial<
+    Pick<
+      OwnerRow,
+      | "person_principal_id"
+      | "person_match_source"
+      | "person_matched_by_principal_id"
+      | "person_matched_by_display"
+      | "person_matched_at"
+    >
+  >;
 type ActionPart = Pick<
   ActionRow,
   | "action_id"
@@ -408,6 +529,9 @@ type ActionPart = Pick<
   | "note"
   | "payload"
 >;
+
+/** The staff owner-matching verbs (#103, 103-B): history, not decisions. */
+const OWNER_ACTIONS: ReadonlySet<string> = new Set(["owner-matched", "owner-onboarding-requested"]);
 
 /** Action verb (as stored) → decision kind in the request view. */
 const DECISION_KIND: Readonly<Record<string, OnboardingDecision["kind"]>> = {
@@ -455,6 +579,7 @@ function intakeFrom(
   datasets: DatasetPart[],
   owners: OwnerPart[],
 ): OnboardingIntake {
+  const answers = JSON.parse(row.intake_answers || "{}") as Record<string, unknown>;
   const orderedDatasets = [...datasets].sort((a, b) => Number(a.position) - Number(b.position));
   const owner = storedInitiativeOwner(row);
   const orderedOwners = [...owners].sort(
@@ -470,15 +595,21 @@ function intakeFrom(
     datasets: orderedDatasets.map((dataset) => ({
       id: dataset.id,
       name: dataset.name,
+      sourceSystem: dataset.source_system ?? "",
       domain: dataset.domain,
+      ...(dataset.ingestion_method ? { ingestionMethod: dataset.ingestion_method } : {}),
+      ...(dataset.ingestion_details ? { ingestionDetails: dataset.ingestion_details } : {}),
       datasetTag: dataset.dataset_tag,
       owners: orderedOwners
         .filter((owner) => owner.intake_dataset_id === dataset.id)
         .map((owner) => ({
           id: owner.id,
-          // Only Myself stores the provider's own principal on an owner (#103).
-          ...(ownerVerificationFor(owner.person_principal_id, row.provider_principal_id) ===
-          "verified"
+          // Only Myself is verified; a staff match never is (#103).
+          ...(ownerVerificationFor(
+            owner.person_principal_id,
+            row.provider_principal_id,
+            owner.person_match_source,
+          ) === "verified"
             ? { self: true as const }
             : {}),
           name: owner.person_display,
@@ -489,7 +620,7 @@ function intakeFrom(
       isolation: row.workspace_isolation,
       teamSize: Number(row.workspace_team_size),
     },
-    answers: JSON.parse(row.intake_answers || "{}") as Record<string, unknown>,
+    answers,
     ...(owner ? { initiativeOwner: initiativeOwnerChoice(owner) } : {}),
   };
 }
@@ -504,18 +635,139 @@ function storedInitiativeOwner(row: RequestRow): InitiativeOwner | null {
     name: row.initiative_owner_display ?? "",
     email: row.initiative_owner_email ?? "",
     principalId,
-    verification: ownerVerificationFor(principalId, row.provider_principal_id),
+    verification: ownerVerificationFor(
+      principalId,
+      row.provider_principal_id,
+      row.initiative_owner_match_source,
+    ),
   };
 }
 
-/** The request row's initiative owner columns for a stored owner. */
-function initiativeOwnerColumns(owner: InitiativeOwner | null): Record<string, ColumnValue> {
+/** A stored match from its columns, a row from before staff matching read as Myself or none. */
+function matchFrom(
+  principalId: string | null | undefined,
+  providerId: string,
+  source: OwnerMatchSource | null | undefined,
+  by: {
+    principalId?: string | null | undefined;
+    name?: string | null | undefined;
+    at?: string | null | undefined;
+  },
+): OwnerMatchRecord {
+  const resolved = matchSourceFor(principalId, providerId, source);
+  if (!resolved || !principalId) return NO_MATCH;
+  return {
+    principalId,
+    source: resolved,
+    by:
+      resolved === "staff"
+        ? {
+            principalId: by.principalId ?? "",
+            name: by.name ?? "",
+            at: by.at ? new Date(by.at).toISOString() : "",
+          }
+        : null,
+  };
+}
+
+function initiativeMatch(row: RequestRow): OwnerMatchRecord {
+  return matchFrom(
+    row.initiative_owner_principal_id,
+    row.provider_principal_id,
+    row.initiative_owner_match_source,
+    {
+      principalId: row.initiative_owner_matched_by_principal_id,
+      name: row.initiative_owner_matched_by_display,
+      at: row.initiative_owner_matched_at,
+    },
+  );
+}
+
+function ownerMatch(row: RequestRow, owner: OwnerPart): OwnerMatchRecord {
+  return matchFrom(
+    owner.person_principal_id,
+    row.provider_principal_id,
+    owner.person_match_source,
+    {
+      principalId: owner.person_matched_by_principal_id,
+      name: owner.person_matched_by_display,
+      at: owner.person_matched_at,
+    },
+  );
+}
+
+/** Every owner of a request, initiative owner first, as the match rules read them. */
+function ownerSubjects(
+  row: RequestRow,
+  datasets: DatasetPart[],
+  owners: OwnerPart[],
+): OwnerMatchSubject[] {
+  const initiative = storedInitiativeOwner(row);
+  const datasetOrder = [...datasets].sort((a, b) => Number(a.position) - Number(b.position));
+  return [
+    ...(initiative
+      ? [
+          {
+            ownerId: INITIATIVE_OWNER_ID,
+            role: "initiative" as const,
+            datasetId: null,
+            name: initiative.name,
+            email: initiative.email,
+            match: initiativeMatch(row),
+          },
+        ]
+      : []),
+    ...datasetOrder.flatMap((dataset) =>
+      owners
+        .filter((owner) => owner.intake_dataset_id === dataset.id)
+        .sort((a, b) => Number(a.position) - Number(b.position))
+        .map((owner) => ({
+          ownerId: owner.id,
+          role: "dataset" as const,
+          datasetId: dataset.id,
+          name: owner.person_display,
+          email: owner.person_email,
+          match: ownerMatch(row, owner),
+        })),
+    ),
+  ];
+}
+
+/** The request row's initiative owner columns for a stored owner and its match. */
+function initiativeOwnerColumns(
+  owner: InitiativeOwner | null,
+  match: OwnerMatchRecord = NO_MATCH,
+): Record<string, ColumnValue> {
   return {
     initiative_owner_kind: owner?.kind ?? null,
     initiative_owner_display: owner?.name ?? null,
     initiative_owner_email: owner?.email ?? null,
-    initiative_owner_principal_id: owner?.principalId ?? null,
+    initiative_owner_principal_id: owner ? (match.principalId ?? owner.principalId) : null,
+    ...matchColumns("initiative_owner_", owner ? match : NO_MATCH),
   };
+}
+
+/** A match's source and staff-match columns, prefixed `initiative_owner_` or `person_`. */
+function matchColumns(
+  prefix: "initiative_owner_" | "person_",
+  match: OwnerMatchRecord,
+): Record<string, ColumnValue> {
+  const by = match.source === "staff" ? match.by : null;
+  return {
+    [`${prefix}match_source`]: match.source,
+    [`${prefix}matched_by_principal_id`]: by?.principalId ?? null,
+    [`${prefix}matched_by_display`]: by?.name ?? null,
+    [`${prefix}matched_at`]: by ? timestamp(new Date(by.at)) : null,
+  };
+}
+
+/** A new owner row's match: Myself from the session, nobody else. */
+function newOwnerMatchColumns(
+  contact: { self?: boolean | undefined },
+  session: OwnerSession,
+): Record<string, ColumnValue> {
+  const match = contact.self === true ? selfMatch(session) : NO_MATCH;
+  return { person_principal_id: match.principalId, ...matchColumns("person_", match) };
 }
 
 /** Who Myself is on the server: the session the request came in on. */
@@ -534,12 +786,17 @@ function assembleRequest(
   owners: OwnerPart[],
   actions: ActionPart[],
   slaConfig: EffectiveSlaConfig,
+  pending: PendingOnboarding[],
 ): OnboardingRequest {
-  const orderedActions = [...actions].sort(
-    (a, b) =>
-      Number(a.record_version) - Number(b.record_version) ||
-      a.occurred_at.localeCompare(b.occurred_at),
-  );
+  // A staff owner match or onboarding request (103-B) is on the history table
+  // for the audit trail, but it's not a review decision.
+  const orderedActions = actions
+    .filter((action) => !OWNER_ACTIONS.has(action.action))
+    .sort(
+      (a, b) =>
+        Number(a.record_version) - Number(b.record_version) ||
+        a.occurred_at.localeCompare(b.occurred_at),
+    );
   const intake = intakeFrom(row, datasets, owners);
   const decisions: OnboardingDecision[] = orderedActions.map((action) => {
     const resubmission = resubmissionRecord(action);
@@ -583,9 +840,14 @@ function assembleRequest(
     ownerVerification: Object.fromEntries(
       owners.map((owner) => [
         owner.id,
-        ownerVerificationFor(owner.person_principal_id, row.provider_principal_id),
+        ownerVerificationFor(
+          owner.person_principal_id,
+          row.provider_principal_id,
+          owner.person_match_source,
+        ),
       ]),
     ),
+    ownerMatches: ownerMatchesFor(ownerSubjects(row, datasets, owners), pending),
   };
   // The deadlines stored at stage entry win, so a redeploy with new targets
   // doesn't move an open request's due date.
@@ -609,8 +871,9 @@ export function toRequest(
   owners: OwnerRow[],
   actions: ActionRow[],
   slaConfig: EffectiveSlaConfig,
+  pending: PendingOnboarding[] = [],
 ): OnboardingRequest {
-  return assembleRequest(row, datasets, owners, actions, slaConfig);
+  return assembleRequest(row, datasets, owners, actions, slaConfig, pending);
 }
 
 function text(value: unknown): string {
@@ -657,6 +920,14 @@ function requestRowFromSnapshot(row: Record<string, unknown>): RequestRow {
     initiative_owner_display: nullableText(row["initiative_owner_display"]),
     initiative_owner_email: nullableText(row["initiative_owner_email"]),
     initiative_owner_principal_id: nullableText(row["initiative_owner_principal_id"]),
+    initiative_owner_match_source: nullableText(
+      row["initiative_owner_match_source"],
+    ) as OwnerMatchSource | null,
+    initiative_owner_matched_by_principal_id: nullableText(
+      row["initiative_owner_matched_by_principal_id"],
+    ),
+    initiative_owner_matched_by_display: nullableText(row["initiative_owner_matched_by_display"]),
+    initiative_owner_matched_at: nullableText(row["initiative_owner_matched_at"]),
   };
 }
 
@@ -689,6 +960,7 @@ function childrenFromSnapshot(snapshot: DeltaSnapshot, uuid: string) {
   const owners = snapshot
     .table<OwnerRow & { onboarding_request_id: string }>("onboarding", "onboarding_intake_owners")
     .filter((row) => row.onboarding_request_id === uuid)
+    .map((row) => ({ ...row, person_matched_at: nullableText(row.person_matched_at) }))
     .sort(
       (a, b) =>
         a.intake_dataset_id.localeCompare(b.intake_dataset_id) ||
@@ -706,12 +978,42 @@ function childrenFromSnapshot(snapshot: DeltaSnapshot, uuid: string) {
   return [datasets, owners, actions] as const;
 }
 
+/** The pending onboard-user entries in a snapshot (#103): those with no application row. */
+function pendingFromSnapshot(snapshot: DeltaSnapshot): PendingRow[] {
+  const applied = new Set(
+    snapshot
+      .table<Record<string, unknown>>("change_list", "change_list_applications")
+      .map((row) => text(row["change_list_entry_id"])),
+  );
+  return snapshot
+    .table<Record<string, unknown>>("change_list", "change_list_entries")
+    .filter((row) => row["kind"] === "onboard-user" && !applied.has(text(row["id"])))
+    .map((row) => ({
+      id: text(row["id"]),
+      display_number: Number(row["display_number"]),
+      person_email: text(row["person_email"]),
+    }));
+}
+
 function requestFromSnapshot(
   snapshot: DeltaSnapshot,
   row: RequestRow,
   slaConfig: EffectiveSlaConfig,
+  pending: PendingRow[] = pendingFromSnapshot(snapshot),
 ): OnboardingRequest {
-  return toRequest(row, ...childrenFromSnapshot(snapshot, row.uuid), slaConfig);
+  const [datasets, owners, actions] = childrenFromSnapshot(snapshot, row.uuid);
+  const emails = new Set([
+    ...owners.map((owner) => owner.person_email),
+    ...(row.initiative_owner_email ? [row.initiative_owner_email] : []),
+  ]);
+  return toRequest(
+    row,
+    datasets,
+    owners,
+    actions,
+    slaConfig,
+    pendingFrom(pending.filter((entry) => emails.has(entry.person_email))),
+  );
 }
 
 /**
@@ -759,7 +1061,7 @@ function assertReviewerRole(user: SessionUser, role: OnboardingReviewerRole): vo
   if (!user.onboardingReviewerRoles.includes(role))
     throw new DomainError(
       "forbidden",
-      `${user.displayName} is not a member of the configured ${REVIEWER_LABEL[role]} group.`,
+      `${user.displayName} is not a direct member of the EDP admin group.`,
       403,
     );
 }
@@ -804,8 +1106,9 @@ function resultRow({
     `CAST(${block.bind(json(leadAction.payload))} AS STRING) AS payload`;
   return (
     `SELECT ${REQUEST_COLUMNS}, ` +
-    `(SELECT collect_list(named_struct('id', id, 'position', position, 'name', name, 'domain', domain, 'dataset_tag', dataset_tag)) FROM ${datasets} WHERE onboarding_request_id = ${id}) AS datasets, ` +
-    `(SELECT collect_list(named_struct('id', id, 'intake_dataset_id', intake_dataset_id, 'position', position, 'person_display', person_display, 'person_email', person_email, 'person_principal_id', person_principal_id)) FROM ${owners} WHERE onboarding_request_id = ${id}) AS owners, ` +
+    `(SELECT collect_list(named_struct('id', id, 'position', position, 'name', name, 'source_system', source_system, 'domain', domain, 'ingestion_method', ingestion_method, 'ingestion_details', ingestion_details, 'dataset_tag', dataset_tag)) FROM ${datasets} WHERE onboarding_request_id = ${id}) AS datasets, ` +
+    `(SELECT collect_list(named_struct('id', id, 'intake_dataset_id', intake_dataset_id, 'position', position, 'person_display', person_display, 'person_email', person_email, 'person_principal_id', person_principal_id, ${OWNER_MATCH_STRUCT("")})) FROM ${owners} WHERE onboarding_request_id = ${id}) AS owners, ` +
+    `${pendingOnboardingJson(names, id, `(SELECT initiative_owner_email FROM ${requests} WHERE id = ${id})`)} AS pending, ` +
     `(SELECT collect_list(named_struct('action_id', action_id, 'action', action, 'from_stage', from_stage, 'to_stage', to_stage, 'record_version', record_version, 'actor_principal_id', actor_principal_id, 'actor_display', actor_display, 'occurred_at', occurred_at, 'note', note, 'payload', payload)) FROM (` +
     `SELECT action_id, action, from_stage, to_stage, record_version, actor_principal_id, actor_display, CAST(occurred_at AS STRING) AS occurred_at, note, payload FROM ${actions} WHERE onboarding_request_id = ${id} ` +
     `UNION ALL ${leadRow}` +
@@ -819,6 +1122,7 @@ function result(row: Record<string, unknown>, slaConfig: EffectiveSlaConfig): On
     datasets?: unknown;
     owners?: unknown;
     actions?: unknown;
+    pending?: unknown;
   };
   return assembleRequest(
     value,
@@ -826,6 +1130,7 @@ function result(row: Record<string, unknown>, slaConfig: EffectiveSlaConfig): On
     jsonList<OwnerPart>(value.owners),
     jsonList<ActionPart>(value.actions),
     slaConfig,
+    pendingFrom(jsonList<PendingRow>(value.pending)),
   );
 }
 
@@ -852,7 +1157,16 @@ function slaColumns(
 function updateIntakeDataset(
   ctx: CommandContext<unknown>,
   id: string,
-  set: Pick<DatasetRow, "position" | "name" | "domain" | "dataset_tag">,
+  set: Pick<
+    DatasetRow,
+    | "position"
+    | "name"
+    | "source_system"
+    | "domain"
+    | "ingestion_method"
+    | "ingestion_details"
+    | "dataset_tag"
+  >,
 ): void {
   const target = ctx.names.table(DATASETS.schema, DATASETS.table);
   const idParam = ctx.block.bind(id);
@@ -861,7 +1175,10 @@ function updateIntakeDataset(
       [
         `position = ${ctx.block.bind(set.position)}`,
         `name = ${ctx.block.bind(set.name)}`,
+        `source_system = ${ctx.block.bind(set.source_system)}`,
         `domain = ${ctx.block.bind(set.domain)}`,
+        `ingestion_method = ${ctx.block.bind(set.ingestion_method)}`,
+        `ingestion_details = ${ctx.block.bind(set.ingestion_details)}`,
         `dataset_tag = ${ctx.block.bind(set.dataset_tag)}`,
       ].join(", ") +
       ` WHERE ${"`id`"} = ${idParam}`,
@@ -876,18 +1193,21 @@ function updateIntakeDataset(
 function updateIntakeOwner(
   ctx: CommandContext<unknown>,
   id: string,
-  set: Pick<OwnerRow, "position" | "person_display" | "person_email" | "person_principal_id">,
+  set: Partial<Pick<OwnerRow, "position" | "person_display" | "person_email">>,
+  match: OwnerMatchRecord,
 ): void {
   const target = ctx.names.table(OWNERS.schema, OWNERS.table);
   const idParam = ctx.block.bind(id);
+  const columns: Record<string, ColumnValue> = {
+    ...set,
+    person_principal_id: match.principalId,
+    ...matchColumns("person_", match),
+  };
   ctx.block.add(
     `UPDATE ${target} SET ` +
-      [
-        `position = ${ctx.block.bind(set.position)}`,
-        `person_display = ${ctx.block.bind(set.person_display)}`,
-        `person_email = ${ctx.block.bind(set.person_email)}`,
-        `person_principal_id = ${ctx.block.bind(set.person_principal_id)}`,
-      ].join(", ") +
+      Object.entries(columns)
+        .map(([column, value]) => `${column} = ${bindColumn(ctx, value)}`)
+        .join(", ") +
       ` WHERE ${"`id`"} = ${idParam}`,
   );
   ctx.effects.push({
@@ -895,6 +1215,13 @@ function updateIntakeOwner(
     id,
     check: `(SELECT count(*) FROM ${target} WHERE id = ${idParam})`,
   });
+}
+
+/** A column value as SQL: a bound value, or an expression such as a timestamp. */
+function bindColumn(ctx: CommandContext<unknown>, value: ColumnValue): string {
+  return value !== null && typeof value === "object" && "sql" in value
+    ? value.sql
+    : ctx.block.bind(value as Exclude<ColumnValue, { sql: string }>);
 }
 
 /** Delete an intake row the resubmission removed; the block refuses to commit if it's still there. */
@@ -921,7 +1248,9 @@ async function writeIntakeChildren(
   requestId: string,
   stored: OnboardingIntake,
   next: OnboardingIntake,
+  storedMatches: ReadonlyMap<string, OwnerMatchSubject>,
 ): Promise<void> {
+  const session = ownerSession(ctx.user);
   // Follow-on positions from 10, as on submit; the lead action's own IDs never collide with them.
   let reserved = 10;
   const keptDatasets = new Set<string>();
@@ -932,7 +1261,10 @@ async function writeIntakeChildren(
       updateIntakeDataset(ctx, datasetId, {
         position,
         name: item.name,
+        source_system: item.sourceSystem ?? null,
         domain: item.domain,
+        ingestion_method: item.ingestionMethod ?? null,
+        ingestion_details: item.ingestionDetails ?? null,
         dataset_tag: item.datasetTag,
       });
     } else {
@@ -942,7 +1274,10 @@ async function writeIntakeChildren(
         onboarding_request_id: requestId,
         position,
         name: item.name,
+        source_system: item.sourceSystem ?? null,
         domain: item.domain,
+        ingestion_method: item.ingestionMethod ?? null,
+        ingestion_details: item.ingestionDetails ?? null,
         dataset_tag: item.datasetTag,
       });
       expectRow(ctx, DATASETS, "id", datasetId);
@@ -951,14 +1286,18 @@ async function writeIntakeChildren(
     for (const [ownerPosition, contact] of item.owners.entries()) {
       if (contact.id) {
         keptOwners.add(contact.id);
-        // Myself keeps the session's principal; switching to a typed contact clears it (#103).
-        // Only Myself sets one in 103-A; staff matching (103-B) must keep its match here.
-        updateIntakeOwner(ctx, contact.id, {
-          position: ownerPosition,
-          person_display: contact.name,
-          person_email: contact.email,
-          person_principal_id: ownerPrincipalId(contact, ownerSession(ctx.user)),
-        });
+        // Myself keeps the session's principal; a staff match stays while the
+        // email does; anything else clears it (#103).
+        updateIntakeOwner(
+          ctx,
+          contact.id,
+          { position: ownerPosition, person_display: contact.name, person_email: contact.email },
+          resubmittedMatch(
+            storedMatches.get(contact.id),
+            { email: contact.email, self: contact.self === true },
+            session,
+          ),
+        );
         continue;
       }
       const ownerId = await followOn(ctx, reserved++);
@@ -969,7 +1308,7 @@ async function writeIntakeChildren(
         position: ownerPosition,
         person_display: contact.name,
         person_email: contact.email,
-        person_principal_id: ownerPrincipalId(contact, ownerSession(ctx.user)),
+        ...newOwnerMatchColumns(contact, session),
       });
       expectRow(ctx, OWNERS, "id", ownerId);
     }
@@ -999,6 +1338,8 @@ export function registerOnboardingArea(
   const deps: OnboardingAreaDeps = { ...defaultDeps, ...overrides };
   const sla = () => cloneEffectiveSlaConfig(deps.slaConfig());
   const commandResult = (row: Record<string, unknown>) => result(row, sla());
+  // The provider's own writes and reads carry match state only (#103, 103-B).
+  const providerResult = (row: Record<string, unknown>) => stateOnlyOwners(result(row, sla()));
 
   registry.command({
     area: "onboarding",
@@ -1041,7 +1382,10 @@ export function registerOnboardingArea(
         intake_answers: json(submittedAnswers(ctx.payload.intake.answers)),
         open_send_back_from_stage: null,
         open_send_back_action_id: null,
-        ...initiativeOwnerColumns(initiativeOwnerFor(ctx.payload.intake.initiativeOwner, session)),
+        ...initiativeOwnerColumns(
+          initiativeOwnerFor(ctx.payload.intake.initiativeOwner, session),
+          ctx.payload.intake.initiativeOwner?.kind === "self" ? selfMatch(session) : NO_MATCH,
+        ),
         version: 2,
         created_at: timestamp(ctx.occurredAt),
         created_by_principal_id: ctx.user.principalId,
@@ -1067,7 +1411,10 @@ export function registerOnboardingArea(
           onboarding_request_id: requestId,
           position: index,
           name: item.name.trim(),
+          source_system: item.sourceSystem?.trim() || null,
           domain: item.domain.trim(),
+          ingestion_method: item.ingestionMethod?.trim() || null,
+          ingestion_details: item.ingestionDetails?.trim() || null,
           dataset_tag: item.datasetTag.trim(),
         });
         expectRow(ctx, DATASETS, "id", datasetId);
@@ -1080,7 +1427,7 @@ export function registerOnboardingArea(
             position: ownerIndex,
             person_display: contact.name.trim(),
             person_email: normalizeOwnerEmail(contact.email),
-            person_principal_id: ownerPrincipalId(contact, session),
+            ...newOwnerMatchColumns(contact, session),
           });
           expectRow(ctx, OWNERS, "id", ownerId);
         }
@@ -1113,7 +1460,7 @@ export function registerOnboardingArea(
       };
     },
     resultRow,
-    result: commandResult,
+    result: providerResult,
   });
 
   registry.command({
@@ -1227,6 +1574,17 @@ export function registerOnboardingArea(
       const note = resubmitNote(answer, stored, merged);
       const storedOwner = storedInitiativeOwner(current);
       const owner = sent ? initiativeOwnerFor(sent.initiativeOwner, session) : storedOwner;
+      // A staff match stays while the provider leaves that owner's email as it was (103-B).
+      const storedMatches = new Map(
+        ownerSubjects(current, datasets, owners).map((subject) => [subject.ownerId, subject]),
+      );
+      const ownerMatchNow = owner
+        ? resubmittedMatch(
+            storedMatches.get(INITIATIVE_OWNER_ID),
+            { email: owner.email, self: owner.kind === "self" },
+            session,
+          )
+        : NO_MATCH;
       const resubmission: OnboardingResubmissionRecord = {
         answer,
         changes: resubmissionChanges(stored, merged, undefined, {
@@ -1257,13 +1615,13 @@ export function registerOnboardingArea(
               workspace_isolation: merged.workspaceNeeds.isolation,
               workspace_team_size: merged.workspaceNeeds.teamSize,
               intake_answers: json(merged.answers),
-              ...initiativeOwnerColumns(owner),
+              ...initiativeOwnerColumns(owner, ownerMatchNow),
             }
           : {}),
         open_send_back_from_stage: null,
         open_send_back_action_id: null,
       });
-      if (sent) await writeIntakeChildren(ctx, current.uuid, stored, merged);
+      if (sent) await writeIntakeChildren(ctx, current.uuid, stored, merged, storedMatches);
       return {
         recordId: current.uuid,
         recordVersion: version,
@@ -1276,7 +1634,7 @@ export function registerOnboardingArea(
       };
     },
     resultRow,
-    result: commandResult,
+    result: providerResult,
   });
 
   registry.command({
@@ -1307,29 +1665,189 @@ export function registerOnboardingArea(
       };
     },
     resultRow,
+    result: providerResult,
+  });
+
+  // ---- staff owner matching (#103, slice 103-B) ----------------------------
+  //
+  // EDP staff (the EDP admin group, server-resolved) record the principal an
+  // owner is, as they found it by hand, or mark the owner not a Databricks
+  // user yet. The rules are owners.ts's, shared with the memory store, so the
+  // user directory (#249) can replace manual matching there. Neither command
+  // writes an ADR-0006 email binding.
+
+  /** The request and owner a staff command names, refused as the memory store refuses it. */
+  async function ownerCommandTarget(
+    ctx: CommandContext<{ requestId: string; ownerId: string }>,
+  ): Promise<{ current: RequestRow; subject: OwnerMatchSubject | undefined }> {
+    const current = await loadByDisplay(ctx.names, ctx.read, ctx.payload.requestId);
+    if (!current || !ownerMatchStageOpen(current.stage)) throw notFound();
+    const [datasets, owners] = await children(ctx.names, ctx.read, current.uuid);
+    const subject = ownerSubjects(current, datasets, owners).find(
+      (candidate) => candidate.ownerId === ctx.payload.ownerId,
+    );
+    return { current, subject };
+  }
+
+  const refuseOwner = (problem: OwnerMatchProblem | null): void => {
+    if (problem) throw new DomainError(problem.code, problem.message, problem.status);
+  };
+
+  registry.command({
+    area: "onboarding",
+    name: "match-owner",
+    app: "staff",
+    payload: matchOwnerPayload,
+    leadActionTable: ACTIONS,
+    authorize: requireEdpStaff,
+    async plan(ctx) {
+      const { current, subject } = await ownerCommandTarget(ctx);
+      const principalId = normalizePrincipalId(ctx.payload.principalId);
+      refuseOwner(staffMatchProblem(subject, principalId));
+      const match = staffMatch(
+        principalId,
+        { principalId: ctx.user.principalId, name: ctx.user.displayName },
+        ctx.occurredAt.toISOString(),
+      );
+      const initiative = subject!.ownerId === INITIATIVE_OWNER_ID;
+      const version = updateCurrentState(
+        ctx,
+        REQUESTS,
+        current.uuid,
+        ctx.expectedVersion,
+        initiative
+          ? {
+              initiative_owner_principal_id: principalId,
+              ...matchColumns("initiative_owner_", match),
+            }
+          : {},
+      );
+      if (!initiative) updateIntakeOwner(ctx, subject!.ownerId, {}, match);
+      return {
+        recordId: current.uuid,
+        recordVersion: version,
+        leadAction: {
+          action: "owner-matched",
+          change: { stage: [current.stage, current.stage] },
+          note: `Matched ${subject!.name} (${normalizeOwnerEmail(subject!.email)}) to Databricks principal ${principalId}: entered by staff, not verified.`,
+          payload: { ownerId: subject!.ownerId, principalId },
+        },
+      };
+    },
+    resultRow,
+    result: commandResult,
+  });
+
+  registry.command({
+    area: "onboarding",
+    name: "request-owner-onboarding",
+    app: "staff",
+    payload: requestOwnerOnboardingPayload,
+    leadActionTable: ACTIONS,
+    authorize: requireEdpStaff,
+    async plan(ctx) {
+      const { current, subject } = await ownerCommandTarget(ctx);
+      refuseOwner(onboardingRequestProblem(subject));
+      const email = normalizeOwnerEmail(subject!.email);
+      const entries = ctx.names.table(ENTRIES.schema, ENTRIES.table);
+      const applications = ctx.names.table(APPLICATIONS.schema, APPLICATIONS.table);
+      const pendingFor = (bound: string) =>
+        `SELECT e.id, e.display_number FROM ${entries} e WHERE e.kind = 'onboard-user' AND e.person_email = ${bound} ` +
+        `AND NOT EXISTS (SELECT 1 FROM ${applications} ap WHERE ap.change_list_entry_id = e.id)`;
+      // One pending entry per person (ADR-0005 decision 6): reuse it if listed.
+      const [existing] = await ctx.read<{ id: string; display_number: number }>({
+        statement: pendingFor(":email"),
+        parameters: { email },
+      });
+      let entryRef: string;
+      if (existing) {
+        entryRef = entryLabel(Number(existing.display_number));
+      } else {
+        const bound = ctx.block.bind(email);
+        ctx.block.guard(
+          `EXISTS (${pendingFor(bound)})`,
+          new DomainError(
+            "version-conflict",
+            "Someone listed onboarding for this person just now. Reload and try again.",
+            409,
+          ),
+        );
+        const entryId = await followOn(ctx, 0);
+        const target = {
+          person: { name: subject!.name, email },
+          initiative: { onboardingRequestId: current.id, name: current.title },
+        };
+        insertCurrentState(
+          ctx,
+          ENTRIES,
+          entryId,
+          {
+            kind: "onboard-user",
+            reason: "owner-not-a-databricks-user",
+            caused_by_action_id: ctx.actionId,
+            dataset_id: null,
+            group_name: null,
+            role: null,
+            person_display: subject!.name,
+            person_email: email,
+            person_principal_id: null,
+            // Typed: a warehouse won't cast a STRING-typed null parameter to an array.
+            grants: { sql: "CAST(NULL AS ARRAY<STRING>)" },
+            target_payload: json(onboardUserPayload(target)),
+          },
+          { displayNumber: allocateDisplayNumber(ctx, "CL") },
+        );
+        insertAction(ctx, ENTRY_ACTIONS, {
+          actionId: await followOn(ctx, 1),
+          recordId: entryId,
+          action: "listed",
+          recordVersion: 1,
+          change: { stage: [null, "pending"] },
+          causedByActionId: ctx.actionId,
+        });
+        entryRef = "a new change-list entry";
+      }
+      const version = updateCurrentState(ctx, REQUESTS, current.uuid, ctx.expectedVersion, {});
+      return {
+        recordId: current.uuid,
+        recordVersion: version,
+        leadAction: {
+          action: "owner-onboarding-requested",
+          change: { stage: [current.stage, current.stage] },
+          note: `${subject!.name} (${email}) isn't a Databricks user yet: onboarding requested on ${entryRef}.`,
+          payload: { ownerId: subject!.ownerId },
+        },
+      };
+    },
+    resultRow,
     result: commandResult,
   });
 
   registry.read({
     area: "onboarding",
     name: "request",
+    // The match state reads pending onboard-user entries off the change list (#103).
+    dependsOn: ["change-list"],
     app: "tenant",
     query: z.object({ id: z.string().min(1) }).strict(),
     async run({ query, names, read, user }) {
-      return (await loadRequest(names, read, user, query.id, sla())) ?? null;
+      const found = await loadRequest(names, read, user, query.id, sla());
+      return found ? stateOnlyOwners(found) : null;
     },
     snapshot({ query, snapshot, user }) {
       const lookup = displayLookup(query.id);
       if (!lookup) return null;
       const row = requestRowsFromSnapshot(snapshot).find((item) => item.id === lookup.label);
       if (!row || !canSee(user, row)) return null;
-      return requestFromSnapshot(snapshot, row, sla());
+      return stateOnlyOwners(requestFromSnapshot(snapshot, row, sla()));
     },
   });
 
   registry.read({
     area: "onboarding",
     name: "mine",
+    // The match state reads pending onboard-user entries off the change list (#103).
+    dependsOn: ["change-list"],
     app: "tenant",
     query: z.object({}).strict(),
     async run({ names, read, user }) {
@@ -1339,25 +1857,36 @@ export function registerOnboardingArea(
         orderBy: "r.submitted_at DESC",
       });
       const slaConfig = sla();
-      return rows.map((row) => toRequest(row, row.datasets, row.owners, row.actions, slaConfig));
+      return rows.map((row) =>
+        stateOnlyOwners(
+          toRequest(row, row.datasets, row.owners, row.actions, slaConfig, row.pending),
+        ),
+      );
     },
     snapshot({ snapshot, user }) {
       const slaConfig = sla();
+      const pending = pendingFromSnapshot(snapshot);
       return requestRowsFromSnapshot(snapshot)
         .filter((row) => row.provider_principal_id === user.principalId)
         .sort((a, b) => b.submitted_at.localeCompare(a.submitted_at))
-        .map((row) => requestFromSnapshot(snapshot, row, slaConfig));
+        .map((row) => stateOnlyOwners(requestFromSnapshot(snapshot, row, slaConfig, pending)));
     },
   });
 
   registry.read({
     area: "onboarding",
     name: "inbox",
+    // The match state reads pending onboard-user entries off the change list (#103).
+    dependsOn: ["change-list"],
     app: "staff",
     query: z.object({ role: reviewRole }).strict(),
     authorize(user) {
       if (!user.onboardingReviewerRoles.length && !user.isAdmin)
-        throw new DomainError("forbidden", "Only onboarding reviewers can do this.", 403);
+        throw new DomainError(
+          "forbidden",
+          `${user.displayName} is not a direct member of the EDP admin group.`,
+          403,
+        );
     },
     async run({ query, names, read, user }) {
       const role = query.role as OnboardingReviewerRole;
@@ -1369,17 +1898,20 @@ export function registerOnboardingArea(
         orderBy: "r.stage_entered_at",
       });
       const slaConfig = sla();
-      return rows.map((row) => toRequest(row, row.datasets, row.owners, row.actions, slaConfig));
+      return rows.map((row) =>
+        toRequest(row, row.datasets, row.owners, row.actions, slaConfig, row.pending),
+      );
     },
     snapshot({ query, snapshot, user }) {
       const role = query.role as OnboardingReviewerRole;
       assertReviewerRole(user, role);
       const stage = STAGE_FOR_REVIEWER[role];
       const slaConfig = sla();
+      const pending = pendingFromSnapshot(snapshot);
       return requestRowsFromSnapshot(snapshot)
         .filter((row) => row.stage === stage)
         .sort((a, b) => a.stage_entered_at.localeCompare(b.stage_entered_at))
-        .map((row) => requestFromSnapshot(snapshot, row, slaConfig));
+        .map((row) => requestFromSnapshot(snapshot, row, slaConfig, pending));
     },
   });
 }

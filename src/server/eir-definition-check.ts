@@ -11,6 +11,7 @@
  */
 import { z } from "zod";
 
+import { ZOD3_PARSE_OPTIONS } from "../zod-compat.ts";
 import { canAuthorEirDefinitions } from "../data/eir/definition/access.ts";
 import { resolveSessionIdentity, toSessionUser } from "./session";
 import { DeltaConfigError, readSurfaces } from "./delta/config.ts";
@@ -54,7 +55,7 @@ export async function handleEirDefinitionCheckRequest(
     } catch {
       throw new DomainError("invalid-request", "The request body must be JSON.", 400);
     }
-    const { sourceYaml } = checkBody.parse(body);
+    const { sourceYaml } = checkBody.parse(body, ZOD3_PARSE_OPTIONS);
     try {
       refuseOversizedDefinition(sourceYaml);
     } catch (error) {

@@ -15,7 +15,9 @@
  */
 import { z } from "zod";
 
+import { ZOD3_PARSE_OPTIONS, zod3IssueMessage } from "../../zod-compat.ts";
 import { IdentityResolutionError } from "../identity";
+import { AccessMatrixError } from "../access-matrix.ts";
 import { BusyError, DomainError, OutcomeUnknownError } from "./errors.ts";
 import { newId as defaultNewId } from "./ids.ts";
 import type {
@@ -47,9 +49,9 @@ export interface DeltaApiDeps {
 /** The command envelope. `.strict()`: a body naming the actor, or anything else, is refused. */
 export const commandBody = z
   .object({
-    idempotencyKey: z.string().uuid(),
+    idempotencyKey: z.guid(),
     expectedVersion: z.number().int().min(0),
-    payload: z.unknown(),
+    payload: z.unknown().optional(),
   })
   .strict();
 
@@ -57,7 +59,7 @@ export const commandBody = z
  * The legacy write envelope: the payload and nothing else. `.strict()`, so an
  * `idempotencyKey` or `expectedVersion` is refused, not silently ignored.
  */
-export const legacyWriteBody = z.object({ payload: z.unknown() }).strict();
+export const legacyWriteBody = z.object({ payload: z.unknown().optional() }).strict();
 
 const COMMAND_PATH = /^\/api\/commands\/([a-z][a-z0-9-]*)\/([a-z][a-z0-9-]*)$/;
 const LEGACY_WRITE_PATH = /^\/api\/legacy-writes\/([a-z][a-z0-9-]*)\/([a-z][a-z0-9-]*)$/;
@@ -90,6 +92,10 @@ export function json(body: unknown, status = 200, headers: Record<string, string
 
 /** Map any failure to a response. Unknown errors are logged and hidden. */
 export function errorResponse(error: unknown, context: string): Response {
+  if (error instanceof AccessMatrixError) {
+    console.error(`[access-matrix] ${context}: ${error.issues.join("; ")}`);
+    return json({ code: error.code }, 503);
+  }
   if (error instanceof DomainError) {
     return json({ error: { code: error.code, message: error.message } }, error.status);
   }
@@ -113,7 +119,7 @@ export function errorResponse(error: unknown, context: string): Response {
           message: "The request doesn't match what this endpoint accepts.",
           issues: error.issues.map((issue) => ({
             path: issue.path.join("."),
-            message: issue.message,
+            message: zod3IssueMessage(issue),
           })),
         },
       },
@@ -207,9 +213,9 @@ async function runCommand(
   user: SessionUser,
 ) {
   const started = Date.now();
-  const body = commandBody.parse(await bodyOf(request));
+  const body = commandBody.parse(await bodyOf(request), ZOD3_PARSE_OPTIONS);
   definition.authorize?.(user);
-  const payload = definition.payload.parse(body.payload);
+  const payload = definition.payload.parse(body.payload, ZOD3_PARSE_OPTIONS);
   const outcome = await deps.runner.runCommand(definition, {
     user,
     actor: { principalId: user.principalId, display: user.displayName, app: definition.app },
@@ -239,9 +245,9 @@ async function runLegacyWrite(
   user: SessionUser,
 ) {
   const started = Date.now();
-  const body = legacyWriteBody.parse(await bodyOf(request));
+  const body = legacyWriteBody.parse(await bodyOf(request), ZOD3_PARSE_OPTIONS);
   definition.authorize?.(user);
-  const payload = definition.payload.parse(body.payload);
+  const payload = definition.payload.parse(body.payload, ZOD3_PARSE_OPTIONS);
   const actionId = (deps.newId ?? defaultNewId)();
   const result = await definition.run({
     payload,
@@ -309,7 +315,7 @@ export async function handleDeltaApiRequest(
         await requireEirPrivacyAcknowledgment(user);
       }
       definition.authorize?.(user);
-      const query = definition.query.parse(Object.fromEntries(searchParams));
+      const query = definition.query.parse(Object.fromEntries(searchParams), ZOD3_PARSE_OPTIONS);
       const readId = (deps.newId ?? defaultNewId)();
       const read = deps.runner.reader({ readId });
       const snapshotRun = definition.snapshot;
@@ -328,6 +334,7 @@ export async function handleDeltaApiRequest(
           user,
           names: deps.names,
           snapshot,
+          snapshotRead: read,
         });
         logDeltaTiming("read", definition.area, definition.name, {
           source: "snapshot",

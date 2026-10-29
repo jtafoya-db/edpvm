@@ -177,7 +177,7 @@ function ProfileScreen({ ctx }) {
               flexShrink: 0,
             }}
           >
-            {D.user.initials}
+            {D.user.initials || <AppIcon name="person" size={30} color="#fff" />}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <h1

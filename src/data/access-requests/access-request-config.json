@@ -1,6 +1,6 @@
 {
   "requestableRoles": ["tester", "developer"],
-  "nonRequestableNote": "The manager role can't be requested. It's granted directly by a dataset owner on the dataset's team page.",
+  "nonRequestableNote": "The Maintainer role can't be requested. It's granted directly by a dataset owner on the dataset's team page.",
   "sla": {
     "targetBusinessDays": 3,
     "dueSoonBusinessDays": 1,

@@ -1,5 +1,5 @@
 // Adding a person to a dataset's team (#87, #114): one form for a dataset
-// role (tester, developer, manager) or for an owner. The team page's Add team
+// role (tester, developer, Maintainer) or for an owner. The team page's Add team
 // member panel offers every choice to owners; the Owners section offers Owner
 // only. Choosing Owner is the Owners section's add, not a second one: the same
 // save (addOwnerSave → store.datasetTeam.addOwner), validation and refusals,
@@ -281,8 +281,8 @@ const personOf = (draft: AddDraft) => `${draft.name.trim()} (${normalizeEmail(dr
 
 /**
  * What making someone an owner does, in plain words (ADR-0005, ADR-0007
- * decision 11): they act alone, they hold the manager role, and a person
- * holds one role, so an existing member is refused until their role goes.
+ * decision 11): they act alone, they hold the Maintainer role, and a person
+ * holds one role, so making an existing member an owner replaces their role.
  */
 function OwnerReview({
   dataset,
@@ -303,10 +303,9 @@ function OwnerReview({
   return (
     <div style={{ display: "grid", gap: 14 }}>
       {held ? (
-        <Notice kind="warning" chrome={chrome} title="This will be refused">
-          {held.person.name} already holds {roles.roles[held.role].label} on {dataset.name}, so this
-          will be refused. Remove their {roles.roles[held.role].label} role first, then make them an
-          owner.
+        <Notice kind="warning" chrome={chrome} title="Their role will be replaced">
+          Making {held.person.name} an owner will replace their {roles.roles[held.role].label} role
+          with {manager.label} in one step.
         </Notice>
       ) : null}
       <div style={s.summaryBox}>
@@ -317,8 +316,8 @@ function OwnerReview({
         </p>
         <p style={{ margin: "0 0 10px", fontSize: "var(--font-size-sm)" }}>
           Every owner holds the {manager.label} role, and the change list will say to add them to
-          the {manager.label} group. A person holds one role on a dataset, so someone who already
-          holds another role here must have it removed first. They'll get:
+          the {manager.label} group. If they already hold another role here, EDP staff will apply
+          the listed role replacement. They'll get:
         </p>
         <GrantList grants={manager.grants} chrome={chrome} />
       </div>

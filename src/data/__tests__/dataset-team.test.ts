@@ -17,7 +17,7 @@ import {
 } from "./dataset-fixture";
 import { makeSnapshot } from "./fixture";
 import { BACKENDS, createTeamStore, type TeamStoreOptions } from "./team-backends";
-import type { AddMemberEntry } from "../change-list/types";
+import { isMembershipEntry, type AddMemberEntry } from "../change-list/types";
 
 // The same scenarios on the memory adapter and on the Delta path (#123). Tests
 // that build the memory store directly check its own configuration handling;
@@ -53,10 +53,10 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
   const ADD_TESTER = {
     datasetId: DATASET_ID,
     name: " Tess Tester ",
-    email: " Tess.Tester@example.test ",
+    email: " Tess.Tester@example.gov ",
     role: "tester",
   } as const;
-  const TESS = { name: "Tess Tester", email: "tess.tester@example.test" };
+  const TESS = { name: "Tess Tester", email: "tess.tester@example.gov" };
 
   describe("datasets and their owners", () => {
     it("lists initiatives and datasets with domain tag, dataset tag and owners", async () => {
@@ -104,7 +104,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       { label: "owner", user: OWNER, counts: COUNTS, expectedRoles: ["manager"] },
       {
         label: "member",
-        user: { ...STRANGER, name: "Tess Tester", email: "tess.tester@example.test" },
+        user: { ...STRANGER, name: "Tess Tester", email: "tess.tester@example.gov" },
         counts: WITHHELD,
         expectedRoles: ["tester"],
       },
@@ -210,7 +210,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       const again = await store.datasetRoles.addMember({
         ...ADD_TESTER,
         name: "T. Tester",
-        email: "tess.tester@example.test",
+        email: "tess.tester@example.gov",
       });
 
       expect(again.created).toBe(false);
@@ -227,7 +227,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       await expect(
         store.datasetRoles.addMember({
           ...ADD_TESTER,
-          email: "TESS.TESTER@example.test",
+          email: "TESS.TESTER@example.gov",
           role: "developer",
         }),
       ).rejects.toMatchObject({ code: "duplicate" });
@@ -235,7 +235,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       expect((await addedMembers(store, DATASET_ID)).map((m) => m.role)).toEqual(["tester"]);
       const entries = await addEntries(store);
       expect(entries.map((e) => [e.target.person.email, e.target.role])).toEqual([
-        ["tess.tester@example.test", "tester"],
+        ["tess.tester@example.gov", "tester"],
       ]);
     });
 
@@ -250,7 +250,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
 
       actAs(STRANGER);
       await expect(
-        store.datasetRoles.addMember({ ...ADD_TESTER, email: "someone.else@example.test" }),
+        store.datasetRoles.addMember({ ...ADD_TESTER, email: "someone.else@example.gov" }),
       ).rejects.toMatchObject({ code: "not-owner" });
       expect(await addedMembers(store, DATASET_ID)).toHaveLength(1);
     });
@@ -259,7 +259,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       const { store } = setup();
 
       await store.datasetRoles.addMember(ADD_TESTER);
-      await store.datasetRoles.addMember({ ...ADD_TESTER, email: "tess.tester2@example.test" });
+      await store.datasetRoles.addMember({ ...ADD_TESTER, email: "tess.tester2@example.gov" });
 
       expect(await addedMembers(store, DATASET_ID)).toHaveLength(2);
       expect(await store.changeList.listEntries()).toHaveLength(2);
@@ -306,7 +306,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       await expect(
         store.datasetRoles.addMember({ ...ADD_TESTER, name: "  " }),
       ).rejects.toMatchObject({ code: "invalid" });
-      for (const email of ["", "tess", "tess@", "@example.test", "tess tester@example.test", "tess@irs"]) {
+      for (const email of ["", "tess", "tess@", "@example.gov", "tess tester@example.gov", "tess@irs"]) {
         await expect(store.datasetRoles.addMember({ ...ADD_TESTER, email })).rejects.toMatchObject({
           code: "invalid",
         });
@@ -336,7 +336,10 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       expect(switched.changed).toBe(true);
       expect((await addedMembers(store, DATASET_ID)).map((m) => m.role)).toEqual(["developer"]);
       // The switch lists the tester group's removal and the developer group's add.
-      expect(switched.entries.map((e) => [e.kind, e.target.group])).toEqual([
+      expect(
+        // Every entry, not a filtered view: a non-membership entry would show as its kind alone.
+        switched.entries.map((e) => (isMembershipEntry(e) ? [e.kind, e.target.group] : [e.kind])),
+      ).toEqual([
         ["remove-member", "edp-refund_anomalies-tester"],
         ["add-member", "edp-refund_anomalies-developer"],
       ]);
@@ -368,7 +371,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       await store.datasetRoles.addMember({
         ...ADD_TESTER,
         name: "Dana Dev",
-        email: "dana.dev@example.test",
+        email: "dana.dev@example.gov",
         role: "developer",
       });
 
@@ -487,7 +490,7 @@ describe.each(BACKENDS)("on the %s backend", (backend) => {
       const result = await store.datasetRoles.addMember({
         datasetId: dataset!.id,
         name: "Dev Person",
-        email: "dev.person@example.test",
+        email: "dev.person@example.gov",
         role: "developer",
       });
       expect(result.entries).toHaveLength(1);

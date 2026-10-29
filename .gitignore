@@ -35,12 +35,6 @@ dist-ssr
 *.sln
 *.sw?
 
-# Lovable sandbox workspace directory
-.workspace/
-
-# Lovable editor metadata (not needed for the real build)
-.lovable/
-
 # npm is the canonical package manager; prevent accidental Bun lockfiles.
 bun.lock
 bun.lockb

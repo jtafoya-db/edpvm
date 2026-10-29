@@ -5,7 +5,12 @@ import type { CSSProperties } from "react";
 
 import { SavingTag } from "@/components/SaveStatus";
 import type { RoleDescriptions } from "@/data/datasets/role-descriptions";
-import { personContact, type Dataset, type DatasetRoleName } from "@/data/datasets/types";
+import {
+  DATASET_ROLES,
+  personContact,
+  type Dataset,
+  type DatasetRoleName,
+} from "@/data/datasets/types";
 import type { SaveView } from "@/data/optimistic-save";
 import type { DatasetAccessChrome, ScreenCtx } from "./resolveChrome";
 import { matchesFilter, type TeamFilter, type TeamPerson } from "./teamPeople";
@@ -15,13 +20,12 @@ import * as s from "./styles";
 /** The id of the table's scroll region: where focus goes when a row's button has gone. */
 export const TEAM_TABLE_ID = "team-members-table";
 
-const FILTER_WORDS: Record<TeamFilter, string> = {
-  everyone: "everyone",
-  tester: "testers",
-  developer: "developers",
-  manager: "managers",
-  pending: "people with pending changes",
-};
+/** What the filter status says it's showing; roles use their configured plural labels. */
+function filterWords(filter: TeamFilter, roles: RoleDescriptions): string {
+  if (filter === "everyone") return "everyone";
+  if (filter === "pending") return "people with pending changes";
+  return roles.roles[filter].pluralLabel.toLowerCase();
+}
 
 const people = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
 
@@ -36,12 +40,14 @@ export function KpiCards({
   pending,
   filter,
   onFilter,
+  roles,
   chrome,
 }: {
   team: TeamPerson[];
   pending: number | null;
   filter: TeamFilter;
   onFilter: (filter: TeamFilter) => void;
+  roles: RoleDescriptions;
   chrome: DatasetAccessChrome;
 }) {
   const current = team.filter((p) => p.member);
@@ -49,9 +55,12 @@ export function KpiCards({
     current.filter((p) => matchesFilter(p, role, undefined)).length;
   const cards: { id: TeamFilter; n: number; label: string; icon: string; warn?: boolean }[] = [
     { id: "everyone", n: current.length, label: "Members", icon: "group" },
-    { id: "tester", n: count("tester"), label: "Testers", icon: "group" },
-    { id: "developer", n: count("developer"), label: "Developers", icon: "group" },
-    { id: "manager", n: count("manager"), label: "Managers", icon: "group" },
+    ...DATASET_ROLES.map((role) => ({
+      id: role,
+      n: count(role),
+      label: roles.roles[role].pluralLabel,
+      icon: "group",
+    })),
     ...(pending === null
       ? []
       : [
@@ -102,16 +111,18 @@ export function FilterStatus({
   shown,
   total,
   onClear,
+  roles,
 }: {
   filter: TeamFilter;
   shown: number;
   total: number;
   onClear: () => void;
+  roles: RoleDescriptions;
 }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
       <p role="status" aria-label="Table filter" style={{ margin: 0 }}>
-        Showing <strong>{FILTER_WORDS[filter]}</strong>:{" "}
+        Showing <strong>{filterWords(filter, roles)}</strong>:{" "}
         {filter === "everyone" ? people(total) : `${shown} of ${people(total)}`}
       </p>
       {filter === "everyone" ? null : (
@@ -234,9 +245,17 @@ export function PeopleTable({
                           style={{ textDecoration: "none" }}
                         >
                           <Pill
-                            icon="schedule"
-                            bg="var(--theme-warning-lighter)"
-                            fg="var(--theme-warning-darker)"
+                            icon={person.status.kind === "snapshot-seen" ? "verified" : "schedule"}
+                            bg={
+                              person.status.kind === "snapshot-seen"
+                                ? "var(--theme-success-lighter)"
+                                : "var(--theme-warning-lighter)"
+                            }
+                            fg={
+                              person.status.kind === "snapshot-seen"
+                                ? "var(--theme-success-darker)"
+                                : "var(--theme-warning-darker)"
+                            }
                           >
                             {statusWords(person)} · {person.status.entry.id}
                           </Pill>
@@ -249,9 +268,13 @@ export function PeopleTable({
                       {save ? (
                         <span style={s.muted}>Available once saved</span>
                       ) : removed ? (
-                        <span style={s.muted}>Removal waiting on EDP staff</span>
+                        <span style={s.muted}>
+                          {person.status.kind === "snapshot-seen"
+                            ? "Removal seen in snapshot"
+                            : "Removal waiting on EDP staff"}
+                        </span>
                       ) : person.isOwner && person.roles.includes("manager") ? (
-                        <span style={s.muted}>Owner: holds manager</span>
+                        <span style={s.muted}>Owner: holds {roles.roles.manager.label}</span>
                       ) : (
                         <button
                           type="button"
@@ -276,6 +299,7 @@ export function PeopleTable({
 }
 
 function statusWords(person: TeamPerson) {
+  if (person.status.kind === "snapshot-seen") return "Seen in snapshot";
   return person.status.kind === "pending-removal" ? "Pending removal" : "Pending add";
 }
 

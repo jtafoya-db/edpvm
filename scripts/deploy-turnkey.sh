@@ -73,6 +73,7 @@ PRODUCTION=no
 APPLY_GRANTS=1
 GRANTS_ONLY=0
 GRANT_VALIDATOR_VOLUME=0
+EXPLICIT_APP_NAME=""
 PASSTHROUGH=() # args forwarded verbatim to databricks and deploy.sh (-t, -p, --var ...)
 VAR_ARGS=()    # just the --var pairs, for the preflight
 
@@ -149,6 +150,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --var)
       need_value "$1" "$#"
+      [[ "$2" == app_name=* ]] && EXPLICIT_APP_NAME="${2#app_name=}"
       VAR_ARGS+=("--var" "$2")
       PASSTHROUGH+=("--var" "$2")
       shift 2
@@ -168,6 +170,10 @@ done
 if [[ "$GRANTS_ONLY" -eq 1 && "$APPLY_GRANTS" -eq 0 ]]; then
   echo "deploy-turnkey: --grants-only and --skip-grants contradict each other; pass one." >&2
   usage
+fi
+if [[ "$GRANTS_ONLY" -eq 1 && "$TARGET" != prod && -z "$EXPLICIT_APP_NAME" ]]; then
+  echo "deploy-turnkey: the ${TARGET} target needs an explicit --var app_name=<name> for --grants-only recovery." >&2
+  exit 2
 fi
 [[ "${EDP_DEPLOY_PRODUCTION:-}" == yes ]] && PRODUCTION=yes
 if [[ "$TARGET" == "prod" && -z "$PROFILE" ]]; then
@@ -400,7 +406,7 @@ quote_name() {
 CHECKED_OBJECTS=$'\n'
 MISSING_OBJECTS=()
 require_object() {
-  local securable="$1" name="$2" key="$1 $2" lookup
+  local securable="$1" name="$2" key="$1 $2" lookup stderr_file stderr_text
   [[ "$CHECKED_OBJECTS" == *$'\n'"$key"$'\n'* ]] && return 0
   CHECKED_OBJECTS+="$key"$'\n'
   case "$securable" in
@@ -409,8 +415,12 @@ require_object() {
     VOLUME) lookup=(volumes read) ;;
     TABLE) lookup=(tables get) ;;
   esac
-  databricks "${lookup[@]}" "$name" "${PROFILE_ARG[@]}" -o json >/dev/null ||
-    MISSING_OBJECTS+=("$key")
+  stderr_file="$(mktemp)"
+  if ! databricks "${lookup[@]}" "$name" "${PROFILE_ARG[@]}" -o json >/dev/null 2>"$stderr_file"; then
+    stderr_text="$(<"$stderr_file")"
+    MISSING_OBJECTS+=("${key}: ${stderr_text:-Databricks CLI returned no error detail}")
+  fi
+  rm -f "$stderr_file"
 }
 
 if [[ "$APPLY_GRANTS" -eq 1 ]]; then

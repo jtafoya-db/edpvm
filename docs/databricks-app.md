@@ -8,7 +8,7 @@ by a **TanStack Query** cache. Lakebase is deferred (not in GovCloud).
 > for previews and dev; the `prod` target builds on Delta. `bundle validate`
 > and `bundle deploy` create no table. `scripts/deploy-turnkey.sh` runs the
 > `provision_store` job after the deploy. What production still needs is in
-> [`production-checklist.md`](production-checklist.md).
+> `production-checklist.md` (private source document; not published).
 
 ## The data-access seam (state layer)
 
@@ -70,14 +70,65 @@ it for Databricks Apps (which run a process and route HTTP to it):
 npm run build:databricks   # NITRO_PRESET=node-server vite build
 ```
 
-If a managed network blocks a minified JavaScript asset during content
-inspection, build the same Databricks artifact without minification:
+To get readable generated JavaScript and stack traces during local debugging,
+build the Databricks artifact locally without client minification:
 
 ```bash
-VITE_EDP_UNMINIFIED_BUILD=1 npm run build:databricks
+EDP_UNMINIFIED_BUILD=1 npm run build:databricks
 ```
 
-The switch affects only minification; the normal build remains minified.
+The shell switch is only for local `npm run build:databricks` builds and affects
+only the client bundle; server output is unchanged. Deployed builds ignore this
+shell setting: the wrappers clear it for non-production targets and refuse a
+production deploy when it is present.
+
+Deployment minification is committed target policy in `databricks.yml` through
+`minify_client`. Preview, govdev and prod set it to `false` because IRS
+security scanning flags minified client code as malware; this lets IRS CSIRC
+scan the same unminified client-build form before production, and keeps a
+GovCloud managed network from blocking a minified asset. Dev keeps the default
+`true` because it is a development target, not the production-parity scan
+artifact. Change that policy by editing the target in `databricks.yml` through
+a reviewed PR. The deploy wrapper compares the resolved value with that
+committed target/default value and refuses overrides from `--var`,
+`BUNDLE_VAR_minify_client` or
+`.databricks/bundle/<target>/variable-overrides.json`. Preview and production
+still differ in target data, runtime configuration and server resources; their
+client minification policy now matches.
+
+### Deploying from Windows (Git Bash)
+
+Configure npm to run scripts with Git Bash's `bash.exe`, because
+`build:databricks` starts with the POSIX-style
+`NITRO_PRESET=node-server vite build` environment assignment that `cmd.exe`
+rejects. For example, run
+`npm config set script-shell "C:\Program Files\Git\bin\bash.exe"`. Run
+`export MSYS_NO_PATHCONV=1` in the Git Bash session before the deploy script so
+MSYS does not rewrite Databricks CLI arguments as Windows paths. Keep Git
+Bash's `/usr/bin` ahead of `C:\Windows\System32` on `PATH` (the Git Bash
+default), because the deploy script uses Git Bash's `find`, `sort`, and
+`env -u`.
+
+The repository requires LF line endings for shell scripts; `.gitattributes`
+preserves them even when Git is configured with `core.autocrlf=true`. Existing
+clones keep any CRLF shell scripts after `git pull`, and `git checkout` alone
+won't rewrite them. To fix them, delete the scripts and restore them from Git
+Bash with `rm scripts/*.sh && git checkout -- scripts/*.sh`, or use a fresh
+clone.
+
+`build-info.json` records whether the staged client is minified, while the
+bundle passes the target policy as `EDP_CLIENT_MINIFIED`. At startup,
+`serve.mjs` refuses an artifact whose metadata disagrees with that target
+policy. This catches stale or mismatched artifacts shipped by a hand-run
+`bundle deploy`. It cannot distinguish a deliberate hand-run override that
+also rebuilds matching metadata; the deploy wrapper is the in-repository
+control that compares resolved settings with committed policy and must remain
+the deployment entry point.
+
+Unminifying removes the roughly 203,000-character lines that triggered the
+initial alert, but not every long literal. The current client still has inlined
+EIR-definition YAML lines of 13,598 and 10,012 characters, with 11 lines over
+1,000 characters. Whether those residual lines matter depends on CSIRC's rule.
 
 This emits a Nitro node-server bundle at `.output/server/index.mjs` that
 listens on `PORT` / `NITRO_PORT`.
@@ -108,7 +159,7 @@ databricks-app/
   serve.mjs         launcher                 (committed)
   server/           .output/server, the Nitro node-server bundle  (staged, gitignored)
   public/           .output/public, the static assets              (staged, gitignored)
-  build-info.json   { dataBackend, commit, builtAt }               (staged, gitignored)
+  build-info.json   { dataBackend, minified, commit, builtAt }     (staged, gitignored)
 ```
 
 The Nitro node-server build is self-contained. Its server bundle imports only
@@ -141,7 +192,8 @@ will fail on the container. Check `node --version` in the container before
 relying on one, or wait until Databricks Apps ship Node 24.
 
 **Build toolchain.** The build toolchain (`vite`, `nitro`,
-`@lovable.dev/vite-tanstack-config`, `@vitejs/plugin-react`) is still declared
+`@tanstack/react-start`, `@vitejs/plugin-react`, `@tailwindcss/vite`, and
+`vite-tsconfig-paths`) is still declared
 in `dependencies`, so a production install (`NODE_ENV=production npm install`)
 can still build. The runtime no longer needs it, because nothing is installed
 in the app compute. The deployer's machine still needs `npm ci`, from a
@@ -196,7 +248,7 @@ and to the store schemas.
 runbook (#139, open):
 
 - create the catalog, the SQL warehouse, the account groups, their members or
-  the governed tags (see [`production-checklist.md`](production-checklist.md));
+  the governed tags (see `production-checklist.md` (private source document; not published));
 - create the prod bundle root (see [Production bundle root](#production-bundle-root));
 - get the membership jobs ready to run. The wrapper provisions the membership
   tables and grants the app `USE CATALOG`, `USE SCHEMA`, and table-level
@@ -221,9 +273,14 @@ build uses this checkout's `node_modules`.
 The `govdev` target is development-only, uses the CLI profile's workspace host,
 and forces the Delta backend. The target and its separate workspace/catalog
 carry the environment identity; app and EIR resource names are free-form, but
-must resolve to explicit, nonempty values. Preflight still rejects the production
-app name `edp-vending-machine` and a missing numeric EDP admin-group SCIM id
-before any workspace mutation.
+must resolve to explicit, nonempty values. The committed defaults
+(`edp-vm-govdev-unset`, `edp_vm_govdev_unset_`, `eir_govdev_unset`,
+`configure-edp-admin-group-id`) are deliberately unusable sentinels. Preflight
+rejects the production app name `edp-vending-machine`, a missing app name,
+store schema prefix, EIR volume name or numeric EDP admin-group SCIM id, and a
+non-Delta backend before any workspace mutation. The resolved-config gate
+repeats those checks on what `bundle validate` rendered, including an empty or
+whitespace-only EIR volume schema.
 
 ```bash
 npm ci
@@ -245,6 +302,12 @@ not pass the display name. The profile supplies authentication and the GovCloud
 workspace host, while the bundle emits `EDP_ADMIN_GROUP_ID` and the isolated
 `EDP_STORE_SCHEMA_PREFIX` into the app runtime. The resolved EIR volume schema
 and name must also be nonempty.
+
+The govdev client is unminified by committed target policy
+(`minify_client: "false"`; see [Build target](#build-target)), so set nothing
+to get an unminified build. The wrapper clears `EDP_UNMINIFIED_BUILD` for this
+target and refuses a `--var`/`BUNDLE_VAR_minify_client` override. The older
+`VITE_EDP_UNMINIFIED_BUILD=1` switch no longer exists and has no effect.
 
 ### The build-and-ship step — `scripts/deploy.sh`
 
@@ -313,12 +376,13 @@ It passes `--auto-approve` only to the deploy step, and only once these checks
 and the plan gate pass. For production that means only with the
 acknowledgement. Because the deploy is auto-approved, the CLI's own
 destructive-action prompt never fires; the plan gate stands in for it (see
-[Destroy and redeploy](./eir-volume.md#destroy-and-redeploy)).
+Destroy and redeploy (private source document; not published)).
 
-`build-info.json` records the target's `dataBackend`, the commit and the build
-time. The commit is marked `<sha>-dirty` when the checkout has uncommitted or
-untracked changes, so the app's start log shows a build that isn't a commit.
-`serve.mjs` refuses to start if any of the three fields is missing.
+`build-info.json` records the target's `dataBackend`, whether the client bundle
+is `minified`, the commit and the build time. The commit is marked `<sha>-dirty`
+when the checkout has uncommitted or untracked changes, so the app's start log
+shows a build that isn't a commit. `serve.mjs` refuses to start if any required
+runtime field is missing.
 
 The script clears the previous staged build before it builds, so a failed build
 leaves nothing to ship. After staging, and before `bundle deploy`, it validates
@@ -355,7 +419,7 @@ that didn't exist, so no store table was ever created.)
 
 Human prerequisites a DAB cannot create — the catalog, the SQL warehouse, and
 the SCIM account groups — stay documented in
-[`production-checklist.md`](production-checklist.md). The `prod` host comes from
+`production-checklist.md` (private source document; not published). The `prod` host comes from
 the CLI profile you deploy with (`-p <prod-profile>`); it can't be a `--var`
 because `workspace.host` is resolved during auth, before variable interpolation.
 
@@ -390,6 +454,10 @@ a full run applies. A full run and `--grants-only` read one grant list in the
 script, so the two can't drift apart. Running it again is safe, because `GRANT`
 is idempotent.
 
+If a `GRANT` fails partway through, grants earlier in the shared list may
+already be applied. Fix the reported error and re-run `--grants-only`; the
+idempotent statements safely restore the complete set.
+
 It fails, and applies no grant, when:
 
 - the app or its service principal doesn't exist;
@@ -421,7 +489,14 @@ scripts/deploy-turnkey.sh -t prod --production -p <prod-profile> \
   the EDP admin group. In the MVP its members hold every staff role: EDP staff,
   Safeguards validator, EDP business office and CCB (#226, ADR-0008). Prod emits
   it as `EDP_ADMIN_GROUP_ID`; without a real id nobody holds a staff role in
-  production.
+  production. Add each staff member directly to this group. The app grants no
+  staff role for an indirect membership through a nested group; membership in
+  the workspace `admins` group does not grant EDP staff access. Platform
+  permissions are separate: Databricks can still apply the staff app's
+  `CAN_USE`, and Unity Catalog group grants, to nested members. Keep the EDP
+  admin group free of nested groups, especially when using
+  `--grant-validator-volume-read`. A deploy preflight that rejects nested
+  groups is a possible follow-up; this PR adds no such enforcement.
 - `safeguards_validator_group_id`, `business_office_group_id` and
   `ccb_group_id` are reserved for a later role split. The app ignores them, the
   bundle renders no env entry for them, and the preflight warns if one is
@@ -506,7 +581,22 @@ startup error and stop the app process instead of falling back per request.
 | `sla_due_soon_business_days`                | `EDP_SLA_DUE_SOON_BUSINESS_DAYS`                | `1`                                          | integer, 0-60 business days                                    |
 | `sla_holidays`                              | `EDP_SLA_HOLIDAYS`                              | `[]` (or comma-separated `YYYY-MM-DD` dates) | `[]` or comma-separated real ISO dates, for example 2026-10-14 |
 | `eir_validity_days`                         | `EDP_EIR_VALIDITY_DAYS`                         | `365`                                        | integer, 1-3650 calendar days                                  |
+| `eir_approval_mode`                         | `EDP_EIR_APPROVAL_MODE`                         | `manual-validator`                           | `manual-validator` or `automatic` (#204)                       |
+| `eir_automatic_validity_outcomes`           | `EDP_EIR_AUTOMATIC_VALIDITY_OUTCOMES`           | `pass`                                       | `pass`, `warning` or `pass,warning`; never `blocking` (#148)   |
 | `access_request_sla_provisional`            | `EDP_ACCESS_REQUEST_SLA_PROVISIONAL`            | `true`                                       | `true` or `false`                                              |
+
+**EIR approval mode (#204).** With `manual-validator` (the default) every
+signed-PDF upload waits for a Safeguards validator. With `automatic` the
+server runs the pre-check again at the upload, on the published definition
+the draft is pinned to; when the result is one `eir_automatic_validity_outcomes`
+names, the same transaction records the upload and the app's own validity
+decision (actor `system`), with the validity period from `eir_validity_days`.
+A warning goes to a validator unless the setting names it; `manual-review`,
+a built-in definition (`bootstrap`, `bootstrap-2`) or any evaluation failure
+always takes the manual path. Either setting with any other value stops the
+app at startup. Setting `automatic` is not Safeguards authorization: the first
+pilot's production deploy stays on `manual-validator` until Safeguards signs
+off (#148). Previews can set it to try the behavior with synthetic data.
 
 ### One-time Delta store setup
 
@@ -531,7 +621,7 @@ injects. Those credentials are never passed to the browser.
 its parent schema are declared as bundle resources (`resources.schemas`,
 `resources.volumes`) with `lifecycle.prevent_destroy`, so `bundle deploy -t
 prod` creates them and no bundle command can drop them (see
-[Destroy and redeploy](./eir-volume.md#destroy-and-redeploy)). Grants aren't
+Destroy and redeploy (private source document; not published)). Grants aren't
 declared in the bundle; the wrapper applies them. They're declared only on `prod`
 because `mode: development` (preview/dev) rewrites a UC schema/volume name to
 `dev_<user>_<name>`, which would no longer match the fixed `EIR_VOLUME_SCHEMA`
@@ -543,7 +633,10 @@ grants to a broad group, and gives the EDP admin group (which holds the
 Safeguards validator role in the MVP) direct volume access only with
 `--grant-validator-volume-read`. It grants to the one app service principal
 that exists today; per-principal rights for ADR-0008's tenant app, staff app and
-Apply job are a known limitation until those principals exist.
+Apply job are a known limitation until those principals exist. Unity Catalog
+applies a group grant to nested members too, even though the app gives those
+members no staff role. Therefore the EDP admin group must contain no nested
+groups when this opt-in grant is enabled.
 
 ### Per-PR preview deployments
 
@@ -551,7 +644,7 @@ EIR previews use an isolated Unity Catalog volume named with an explicit
 `--var eir_volume_name=eir_pr<N>`. The wrapper **creates that volume (and its
 parent schema) and applies the app service principal's grants automatically** via idempotent
 `CREATE ... IF NOT EXISTS` / `GRANT` — there is no manual pre-step. See
-[EIR Unity Catalog volume](./eir-volume.md#per-pr-preview-volume) for the exact
+EIR Unity Catalog volume (private source document; not published) for the exact
 statements and the cleanup procedure; `bundle destroy` does not drop that volume.
 
 Give each PR its own Databricks App name and isolated bundle state by supplying
@@ -577,6 +670,17 @@ scripts/deploy-turnkey.sh -t preview -p example-workspace \
   --var seed_dataset_owner_ids=<your SCIM user id>
 ```
 
+A preview has no sample access requests unless the deploy adds
+`--var sample_access_requests=true` (#312). That gives the sample dataset's
+owner two requests from sample people to decide; approving one adds a real
+member to the preview's store. The server honours it only with a PR preview's
+`store_schema_prefix`, so it does nothing in production.
+
+Keep the PR's own `store_schema_prefix`. Store upgrades are forward-only: once
+a store holds a change-list entry of a kind added later (`onboard-user`, #103),
+an older `store-teams.sql` re-adds the narrower kind check and fails on it. Never
+provision an older branch, or roll back, onto a store a newer one has written.
+
 Add `--var data_backend=delta` for a Delta preview. The build uses it, and the
 app's log shows the baked value at start:
 `[serve] prebuilt server: commit <sha>, VITE_DATA_BACKEND=delta, …`. The
@@ -590,7 +694,32 @@ The deploy log (`databricks apps logs edp-vm-pr<N> -p example-workspace`) should
 show `No dependencies file found. Skipping installation.` and
 `Starting app with command: [node serve.mjs]`, with no npm lines.
 
-Stop an idle preview and destroy its bundle resources when the PR closes:
+Stop an idle preview with `databricks apps stop edp-vm-pr<N> -p example-workspace`.
+
+When the PR merges or closes, run the guarded teardown script from inside a
+checkout that contains `databricks.yml` (normally current `main`):
+
+```bash
+scripts/destroy-preview.sh <N>
+```
+
+It stops and destroys `edp-vm-pr<N>`, lists the exact PR-owned Unity Catalog
+leftovers, drops only those leftovers, and verifies that nothing for the PR
+remains. Use `--dry-run` to print the complete plan without deleting anything.
+The defaults are profile `example-workspace`, catalog `example_catalog`
+and SQL warehouse `1111111111111111`; override them with `-p`, `--catalog` and
+`--sql-warehouse-id`. Add `--local` to remove the PR's local branch and clean
+worktree too. A dirty worktree is always refused.
+
+The job re-check resolves the preview target in the current checkout, so it
+sees the current CLI user's `[dev <user>]` job names. A preview deployed by a
+different workspace user must be torn down by that user (or with their bundle
+identity) for the job-name verification to cover those jobs.
+
+The manual fallback is the same two-step procedure below.
+
+**1. Destroy the bundle resources.** Run this from a checkout of the PR's code
+or of current `main`:
 
 ```bash
 databricks apps stop edp-vm-pr<N> -p example-workspace
@@ -599,6 +728,59 @@ databricks bundle destroy -p example-workspace -t preview --var app_name=edp-vm-
 
 `catalog` and `sql_warehouse_id` are required for every `bundle` command on a
 target (they resolve into the app/job config), so `destroy` needs them too.
+
+On the preview target the bundle owns only the app, its four jobs, and the
+bundle workspace folder, so this step removes only those.
+
+**2. Drop what the bundle doesn't own.** The `provision_store` job and the
+deploy wrapper create these outside the bundle, so `bundle destroy` leaves them
+behind:
+
+| Leftover           | Name                                               | Created by                    |
+| ------------------ | -------------------------------------------------- | ----------------------------- |
+| Store schemas (12) | `example_catalog.edp_vm_pr<N>_*`           | `provision_store`             |
+| Preview EIR volume | `example_catalog.edp_vm_preview.eir_pr<N>` | the wrapper's post-deploy SQL |
+
+List them first, then drop only names with the exact `edp_vm_pr<N>_` prefix or
+the exact `eir_pr<N>` volume name. The underscore is literal, so
+`edp_vm_pr29_*` doesn't match `edp_vm_pr290_*`.
+
+```sql
+SHOW SCHEMAS IN example_catalog LIKE 'edp_vm_pr<N>_*';
+SHOW VOLUMES IN example_catalog.edp_vm_preview LIKE 'eir_pr<N>';
+
+DROP SCHEMA example_catalog.edp_vm_pr<N>_<name> CASCADE;   -- once per schema listed
+DROP VOLUME example_catalog.edp_vm_preview.eir_pr<N>;
+```
+
+**Shared resources stay.** These are used by every preview, so never drop or
+change them during a PR teardown:
+
+- **The `edp_vm_preview` schema.** Every preview's EIR volume lives in it.
+- **The membership snapshot schema.** It's shared, at
+  `example_catalog.membership` by default (`membership_schema`), and the
+  preview target doesn't prefix it. Drop a membership schema only if that
+  preview deployed it under its own `edp_vm_pr<N>_` name.
+- **Everything else shared.** That means the catalog, the warehouse, the
+  `edp-admins` group and any demo schema.
+
+**Notes:**
+
+- **Preview PDFs are disposable.** They're synthetic test uploads, so dropping
+  a preview volume is fine. The prod volume is protected by `prevent_destroy`
+  and follows the retention procedure in
+  `eir-volume.md` (private source document; not published).
+- **Some grants on shared objects can remain.** These are the app service
+  principal's `USE CATALOG`, its `USE SCHEMA` on `edp_vm_preview` and on the
+  membership schema, and its `SELECT` on the membership tables. With `--grant-validator-volume-read`, the
+  admin group's grants on the catalog and `edp_vm_preview` remain too. Grants on
+  the dropped schemas and volume go with them. The remaining grants are
+  expected; they give access only to shared objects.
+
+**Check what's left.** Re-run both `SHOW` statements and
+`databricks apps get edp-vm-pr<N>`. All three should come back empty or not
+found. That confirms the preview's own resources are gone. The shared
+resources above are meant to remain.
 
 The per-PR procedure is verified through preview deployments. Production
 workspace configuration remains environment-specific and must be verified at

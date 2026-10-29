@@ -318,10 +318,12 @@ describe("provisioning DDL files", () => {
 
   it("generates each onboarding ALTER only while its column is missing", () => {
     const text = readFileSync(join(DIR, "store-onboarding.sql"), "utf8");
-    const generated = generatedExecutableSql(text).filter((sql) =>
-      sql.includes("ADD COLUMN initiative_owner_"),
-    );
-    const columns = new Set(FIRST_SHAPES["onboarding.onboarding_requests"]);
+    const owners = /ADD COLUMN (initiative_owner_|person_match)/;
+    const generated = generatedExecutableSql(text).filter((sql) => owners.test(sql));
+    const columns = new Set([
+      ...FIRST_SHAPES["onboarding.onboarding_requests"],
+      ...FIRST_SHAPES["onboarding.onboarding_intake_owners"],
+    ]);
 
     const run = () => {
       const executed: string[] = [];
@@ -335,15 +337,24 @@ describe("provisioning DDL files", () => {
       return executed;
     };
 
-    expect(generated).toHaveLength(4);
+    // The initiative owner (103-A) and how each owner was matched (103-B).
+    expect(generated).toHaveLength(12);
     expect(run()).toEqual(generated);
-    expect([...columns].filter((column) => column.startsWith("initiative_owner_"))).toEqual([
+    expect([...columns].filter((column) => owners.test(`ADD COLUMN ${column}`))).toEqual([
       "initiative_owner_kind",
       "initiative_owner_display",
       "initiative_owner_email",
       "initiative_owner_principal_id",
+      "initiative_owner_match_source",
+      "initiative_owner_matched_by_principal_id",
+      "initiative_owner_matched_by_display",
+      "initiative_owner_matched_at",
+      "person_match_source",
+      "person_matched_by_principal_id",
+      "person_matched_by_display",
+      "person_matched_at",
     ]);
-    expect(run()).toEqual(["SELECT 1", "SELECT 1", "SELECT 1", "SELECT 1"]);
+    expect(run()).toEqual(Array(12).fill("SELECT 1"));
   });
 
   it.each(dynamicSqlFiles)("%s generates valid SQL for every EXECUTE IMMEDIATE source", (file) => {

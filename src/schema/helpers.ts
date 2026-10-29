@@ -47,7 +47,15 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** An empty dataset row with one empty owner, as a `dataset-list` field starts. */
 export function blankDataset(): IntakeDatasetInput {
-  return { name: "", domain: "", datasetTag: "", owners: [{ name: "", email: "" }] };
+  return {
+    name: "",
+    sourceSystem: "",
+    domain: "",
+    ingestionMethod: "",
+    ingestionDetails: "",
+    datasetTag: "",
+    owners: [{ name: "", email: "" }],
+  };
 }
 
 function blank(value: unknown): boolean {
@@ -77,7 +85,10 @@ export function datasetIssues(value: unknown): Array<{ key: string; message: str
     const at = `Dataset ${i + 1}`;
     const push = (part: string, message: string) => issues.push({ key: `${i}:${part}`, message });
     if (blank(dataset.name)) push("name", `${at}: enter a dataset name.`);
+    if (blank(dataset.sourceSystem)) push("sourceSystem", `${at}: enter a source system.`);
     if (blank(dataset.domain)) push("domain", `${at}: choose a domain, or "Other".`);
+    if (blank(dataset.ingestionMethod))
+      push("ingestionMethod", `${at}: choose how this dataset gets into EDP.`);
     // The tag becomes a UC tag value and group names, so it must be identifier-safe
     // and unique within the request (dataset-tag.ts).
     const tag = typeof dataset.datasetTag === "string" ? dataset.datasetTag.trim() : "";
@@ -132,11 +143,11 @@ export function initiativeOwnerIssues(value: unknown): Array<{ key: string; mess
     return [{ key: "kind", message: "Choose who owns the initiative." }];
   const issues: Array<{ key: string; message: string }> = [];
   if (blank(owner.name))
-    issues.push({ key: "name", message: "Enter the initiative owner's name." });
+    issues.push({ key: "name", message: "Enter the initiative point of contact's name." });
   if (typeof owner.email !== "string" || !EMAIL.test(owner.email.trim()))
     issues.push({
       key: "email",
-      message: "Enter a valid email address for the initiative owner.",
+      message: "Enter a valid email address for the initiative point of contact.",
     });
   return issues;
 }
@@ -323,7 +334,16 @@ export function estimateSizing(schema: IntakeSchema, input: SizingInput): Sizing
   const gb = Math.max(1, Number(input.sizeGb) || 1);
   const u = Math.max(1, Number(input.users) || 1);
   const f = schema.sizing.freqFactor[input.freq] ?? 1;
-  const c = schema.sizing.cplxFactor[input.complexity] ?? 1;
+  const complexityKey = input.complexity.startsWith("Light —")
+    ? "Light"
+    : input.complexity.startsWith("Moderate —")
+      ? "Moderate"
+      : input.complexity.startsWith("Heavy —")
+        ? "Heavy"
+        : input.complexity.startsWith("Machine learning —")
+          ? "Very heavy / ML features"
+          : input.complexity;
+  const c = schema.sizing.cplxFactor[complexityKey] ?? 1;
 
   const storageTb = Math.max(0.1, Math.round(((gb * 1.6) / 1024) * 10) / 10); // bronze/silver/gold copies
   const dbu = Math.round((gb / 100) * f * c * 60 + u * 8 + 120);
@@ -378,7 +398,15 @@ export function fmtUsd(n: number): string {
 // ---- selection resolution -------------------------------------------------
 
 function findPattern(list: PatternOption[], id: unknown): PatternOption {
-  return list.find((p) => p.id === id) ?? (list[0] as PatternOption);
+  return (
+    list.find((p) => p.id === id) ?? {
+      id: "",
+      name: "Not chosen",
+      desc: "No option was chosen.",
+      approved: false,
+      box: "",
+    }
+  );
 }
 
 /**
@@ -387,14 +415,22 @@ function findPattern(list: PatternOption[], id: unknown): PatternOption {
  */
 export function resolveSelections(schema: IntakeSchema, values: IntakeState): ResolvedSelections {
   const { ingestPatterns, accessPatterns, engModels, roiLevers } = schema.optionLists;
-  const patternDef = findPattern(ingestPatterns, values["pattern"]);
+  const datasets = Array.isArray(values["datasets"])
+    ? (values["datasets"] as IntakeDatasetInput[])
+    : [];
+  const datasetPatterns = datasets
+    .map((dataset) => ingestPatterns.find((pattern) => pattern.id === dataset.ingestionMethod))
+    .filter((pattern): pattern is PatternOption => Boolean(pattern));
+  const patternDef = datasetPatterns[0] ?? findPattern(ingestPatterns, values["pattern"]);
   const accessDef = findPattern(accessPatterns, values["access"]);
   const engDef = findPattern(engModels, values["engModel"]);
-  const outcomeDef =
-    roiLevers.find((l) => l.id === values["outcome"]) ?? (roiLevers[0] as LeverOption);
+  const outcomeDef = roiLevers.find((l) => l.id === values["outcome"]) ?? null;
   const levers = Array.isArray(values["levers"]) ? (values["levers"] as string[]) : [];
   const leverLabels = roiLevers.filter((l) => levers.includes(l.id)).map((l) => l.name);
-  const needsConsult = !patternDef.approved || !accessDef.approved;
+  const needsConsult =
+    datasetPatterns.some((pattern) => !pattern.approved) ||
+    (!datasetPatterns.length && !patternDef.approved) ||
+    !accessDef.approved;
   return { patternDef, accessDef, engDef, outcomeDef, leverLabels, needsConsult };
 }
 
@@ -428,7 +464,7 @@ function resolveTemplate(value: TemplateValue, ctx: Ctx, flags: Flags): string {
  * previous hardcoded assembly.
  */
 export function assembleRequest(schema: IntakeSchema, input: AssembleInput): OnboardingRequest {
-  const { values, domainName, num } = input;
+  const { values, domainName, domainNames = {}, num } = input;
   const req = schema.request;
   const sel = resolveSelections(schema, values);
 
@@ -440,25 +476,53 @@ export function assembleRequest(schema: IntakeSchema, input: AssembleInput): Onb
   const users = readNumber(raw("users")) || 0;
   const freq = String(raw("freq") ?? "");
   const complexity = String(raw("complexity") ?? "");
-
   const sizing = estimateSizing(schema, { sizeGb, freq, complexity, users });
   const roi = computeRoi(annualBenefit, sizing.annualCost);
+  const datasets = Array.isArray(values["datasets"])
+    ? (values["datasets"] as IntakeDatasetInput[])
+    : [];
+  const ingestionNames = datasets.flatMap((dataset) => {
+    const pattern = schema.optionLists.ingestPatterns.find(
+      (candidate) => candidate.id === dataset.ingestionMethod,
+    );
+    return pattern ? [pattern.name] : [];
+  });
+  const sourceSystems = [
+    ...new Set(datasets.map((dataset) => dataset.sourceSystem?.trim()).filter(Boolean)),
+  ];
+  const datasetDomains = [
+    ...new Set(
+      datasets
+        .map((dataset) => domainNames[dataset.domain ?? ""]?.trim())
+        .filter((name): name is string => Boolean(name)),
+    ),
+  ];
+  const resolvedDomains = datasetDomains.length ? datasetDomains : domainName ? [domainName] : [];
 
   // Interpolation context: raw scalars + values derived from the selections
   // and computed sizing/ROI. Template tokens in the config resolve from here.
   const ctx: Ctx = {
     dataName: String(raw("dataName") ?? ""),
-    sourceSystem: String(raw("sourceSystem") ?? ""),
+    sourceSystem: sourceSystems.length
+      ? sourceSystems.join("; ")
+      : String(raw("sourceSystem") ?? ""),
     useCase: String(raw("useCase") ?? ""),
     freq,
     complexity,
     sizeGb,
     users,
     domainName,
-    patternName: sel.patternDef.name,
+    domainPhrase:
+      resolvedDomains.length === 1
+        ? `the ${resolvedDomains[0]} domain`
+        : resolvedDomains.length > 1
+          ? `the ${resolvedDomains.join("; ")} domains`
+          : "domains not chosen",
+    patternName: ingestionNames.length ? ingestionNames.join("; ") : sel.patternDef.name,
     accessName: sel.accessDef.name,
     engName: sel.engDef.name,
-    outcomeName: sel.outcomeDef.name,
+    outcomeName: sel.outcomeDef?.name ?? "not chosen",
+    outcomeSummary: sel.outcomeDef?.name ?? "Primary outcome: not chosen",
     leverLabelsComma: sel.leverLabels.join(", "),
     leverLabelsDot: sel.leverLabels.join(" · "),
     sizingTier: sizing.tier,

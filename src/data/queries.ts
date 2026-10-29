@@ -7,6 +7,7 @@
  * nothing here or in the components that use these hooks.
  */
 import {
+  keepPreviousData,
   useMutation,
   useQuery,
   useQueryClient,
@@ -16,8 +17,8 @@ import {
 
 import { project, type SaveSpec } from "./optimistic-save";
 import { useStore } from "./store-context";
-import type { EirResponseInput } from "./eir/repository";
-import { isEirReadRefusal } from "./eir/errors";
+import type { EirPdfPreparation, EirResponseInput } from "./eir/repository";
+import { isEirReadRefusal, withReloadWarning } from "./eir/errors";
 import type {
   AccessBundle,
   AccessRequest,
@@ -301,6 +302,31 @@ export function useGenerateEirPdf() {
   });
 }
 
+/**
+ * Download PDF to sign in one call (#235): it waits once for an in-flight
+ * privacy acknowledgment, then the server saves, evaluates and makes the PDF.
+ * The EIR it answers with replaces the cached one (its draft version is what
+ * the next Download sends).
+ */
+/** Download PDF to sign's mutations, for watching their refusals as they settle. */
+export const prepareEirPdfKey = ["eir", "prepare-pdf"] as const;
+
+export function usePrepareEirPdf() {
+  const store = useStore();
+  const client = useQueryClient();
+  return useMutation({
+    mutationKey: prepareEirPdfKey,
+    mutationFn: (input: EirPdfPreparation) =>
+      afterPrivacyAcknowledgment(store, () =>
+        runWithPrivacyAcknowledgmentRefresh(client, () => store.eir.preparePdf(input)),
+      ).catch((error: unknown) => {
+        throw withReloadWarning(error);
+      }),
+    onSuccess: (prepared) =>
+      client.setQueryData(queryKeys.eir(prepared.record.principalId), prepared.record),
+  });
+}
+
 /** The record an EIR save locks: one person's EIR. */
 export const eirRecord = (principalId: string) => `eir:${principalId}`;
 
@@ -328,7 +354,9 @@ export const saveEirDraftSave: SaveSpec<
   run: (store, i) =>
     afterPrivacyAcknowledgment(store, () =>
       store.eir.saveDraft(i.principalId, i.values, i.expectedDraftVersion, i.formVersion),
-    ),
+    ).catch((error: unknown) => {
+      throw withReloadWarning(error);
+    }),
   projections: (i) => [
     project<EirRecord, typeof i, EirRecord>(
       queryKeys.eir(i.principalId),
@@ -632,6 +660,9 @@ export function useEirForms(
       for (const form of [answer.active, ...Object.values(answer.forms)]) registerEirForm(form);
       return answer;
     },
+    // A draft's first save pins its version, which asks again: the form on screen
+    // stays while it does, rather than unmounting for a load (#235).
+    placeholderData: keepPreviousData,
     // No current form is the server's answer, not a glitch: shown at once, not retried.
     retry: (failureCount, error) =>
       (error as { code?: unknown }).code !== "eir-unavailable" && eirReadRetry(failureCount, error),

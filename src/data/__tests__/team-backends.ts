@@ -36,13 +36,20 @@ export type Backend = (typeof BACKENDS)[number];
 
 export type TeamStoreOptions = Pick<
   MemoryStoreOptions,
-  "currentUser" | "now" | "datasetSeed" | "groupNaming" | "roleDescriptions"
+  | "currentUser"
+  | "now"
+  | "datasetSeed"
+  | "groupNaming"
+  | "roleDescriptions"
+  | "groupMembershipReader"
 >;
 
 export interface DeltaHarness {
   store: DataStore;
   warehouse: SqliteWarehouse;
   runner: TransactionRunner;
+  /** Call the real test API directly when a contract needs its HTTP status. */
+  fetch: typeof fetch;
   /** Every API request the browser side made, as `METHOD /path`. */
   requests: string[];
 }
@@ -52,15 +59,25 @@ export interface DeltaHarness {
  * for a second browser session on the same store.
  */
 export function createDeltaHarness(
-  options: TeamStoreOptions & { warehouse?: SqliteWarehouse },
+  options: TeamStoreOptions & {
+    warehouse?: SqliteWarehouse;
+    /** The browser seeds the samples (what `/api/session` would say). */
+    sampleAccessRequests?: boolean;
+    /** The server's own sample mode; off by default, as for this store's empty prefix. */
+    serverSampleAccessRequests?: boolean;
+  },
 ): DeltaHarness {
   const now = options.now ?? (() => new Date());
   const warehouse = options.warehouse ?? createSqliteWarehouse({ now });
   const names = createStoreNames("edp_test", "");
   const registry = createRegistry();
   registerTeamsArea(registry, {
+    ...(options.serverSampleAccessRequests ? { sampleAccessRequests: () => true } : {}),
     ...(options.groupNaming ? { groupNaming: options.groupNaming } : {}),
     ...(options.roleDescriptions ? { roleDescriptions: options.roleDescriptions } : {}),
+    ...(options.groupMembershipReader
+      ? { groupMembershipReader: options.groupMembershipReader, now }
+      : {}),
   });
   const runner = createTransactionRunner({
     client: warehouse.client,
@@ -112,11 +129,11 @@ export function createDeltaHarness(
     accessStores: {
       currentUser,
       now,
-      ...(options.datasetSeed ? { datasetSeed: options.datasetSeed } : {}),
+      ...(options.sampleAccessRequests ? { sampleAccessRequests: true } : {}),
       ...(options.roleDescriptions ? { roleDescriptions: options.roleDescriptions } : {}),
     },
   });
-  return { store, warehouse, runner, requests };
+  return { store, warehouse, runner, fetch: fetchImpl, requests };
 }
 
 /** A store on the given backend, with the same options either way. */

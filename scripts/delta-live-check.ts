@@ -672,7 +672,7 @@ async function main() {
         name: `Code ${tag} ${n}`,
         domain: "individual-filing",
         datasetTag: `code_${tag}_${n}`,
-        owners: [{ name: "Olive Owner", email: "olive.owner@example.test" }],
+        owners: [{ name: "Olive Owner", email: "olive.owner@example.gov" }],
       },
     ],
     workspaceNeeds: { isolation: "shared", teamSize: 4 },
@@ -911,7 +911,7 @@ async function main() {
             name: "Case signals",
             domain: "individual-filing",
             datasetTag: `case_signals_${Date.now() % 100000}`,
-            owners: [{ name: "Olive Owner", email: "Olive.Owner@example.test" }],
+            owners: [{ name: "Olive Owner", email: "Olive.Owner@example.gov" }],
           },
         ],
         workspaceNeeds: { isolation: "shared", teamSize: 6 },
@@ -932,7 +932,7 @@ async function main() {
         { id: requestId },
       );
       const owners = await count(
-        `SELECT count(*) AS n FROM ${names.table("onboarding", "onboarding_intake_owners")} WHERE onboarding_request_id = :id AND person_email = 'olive.owner@example.test'`,
+        `SELECT count(*) AS n FROM ${names.table("onboarding", "onboarding_intake_owners")} WHERE onboarding_request_id = :id AND person_email = 'olive.owner@example.gov'`,
         { id: requestId },
       );
       const actions = (
@@ -986,15 +986,15 @@ async function main() {
             domain: "individual-filing",
             datasetTag: `set_read_${n}_a`,
             owners: [
-              { name: "Olive Owner", email: "olive.owner@example.test" },
-              { name: "Bo Second", email: "bo.second@example.test" },
+              { name: "Olive Owner", email: "olive.owner@example.gov" },
+              { name: "Bo Second", email: "bo.second@example.gov" },
             ],
           },
           {
             name: `Set read ${n}b`,
             domain: "enforcement-collections",
             datasetTag: `set_read_${n}_b`,
-            owners: [{ name: "Cy Third", email: "cy.third@example.test" }],
+            owners: [{ name: "Cy Third", email: "cy.third@example.gov" }],
           },
         ],
         workspaceNeeds: { isolation: "shared", teamSize: 3 + n },
@@ -1183,7 +1183,7 @@ async function main() {
             name: `Resubmit ${n}`,
             domain: "individual-filing",
             datasetTag: `resubmit_${n}`,
-            owners: [{ name: "Olive Owner", email: "olive.owner@example.test" }],
+            owners: [{ name: "Olive Owner", email: "olive.owner@example.gov" }],
           },
         ],
         workspaceNeeds: { isolation: "shared", teamSize: 4 },
@@ -1358,8 +1358,8 @@ async function main() {
             domain: "individual-filing",
             datasetTag: "full_case_signals",
             owners: [
-              { name: "Olive Owner", email: "olive.owner@example.test" },
-              { name: "Otto Second", email: "otto.second@example.test" },
+              { name: "Olive Owner", email: "olive.owner@example.gov" },
+              { name: "Otto Second", email: "otto.second@example.gov" },
             ],
           },
         ],
@@ -1449,7 +1449,7 @@ async function main() {
                   name: "Collections ledger",
                   domain: "enforcement-collections",
                   datasetTag: "full_collections_ledger",
-                  owners: [{ name: "Lee Ledger", email: "lee.ledger@example.test" }],
+                  owners: [{ name: "Lee Ledger", email: "lee.ledger@example.gov" }],
                 },
               ],
             },
@@ -1506,7 +1506,7 @@ async function main() {
         keptOwnerId: ids(after.owners).includes(stored!.owners[0]!.id!),
         removedOwnerGone:
           !ids(after.owners).includes(stored!.owners[1]!.id!) &&
-          !after.owners.some((o) => o["person_email"] === "otto.second@example.test"),
+          !after.owners.some((o) => o["person_email"] === "otto.second@example.gov"),
         roiEdited: back.intake.annualBenefit === 2_000_000,
         changesRecorded:
           last?.resubmission?.changes.some(
@@ -1515,7 +1515,7 @@ async function main() {
           last?.resubmission?.changes.some((c) => c.field === "Dataset 2 added") === true &&
           last?.resubmission?.changes.some((c) => c.field === "Dataset 1 owner 2 removed") === true,
         removalLogged: (last?.note ?? "").includes(
-          "Removed owner from Case signals: Otto Second (otto.second@example.test).",
+          "Removed owner from Case signals: Otto Second (otto.second@example.gov).",
         ),
         snapshotMatchesSql:
           viaSql !== null && JSON.stringify(viaSnapshot) === JSON.stringify(viaSql),

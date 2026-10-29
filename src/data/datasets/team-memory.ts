@@ -34,7 +34,7 @@ import {
   type TeamRowPerson,
 } from "./ownership";
 import type { RoleDescriptions } from "./role-descriptions";
-import type { DatasetTeamStore, TeamEvent } from "./team-store";
+import type { DatasetTeamStore, OwnerChangeResult, TeamEvent } from "./team-store";
 import {
   DATASET_ROLES,
   isValidEmail,
@@ -70,6 +70,7 @@ function clone<T>(value: T): T {
 export function createMemoryTeamStore(state: MemoryTeamState): DatasetTeamStore {
   const { members, entries, naming, roles } = state;
   const events: TeamEvent[] = [];
+  const ownerAddReplays = new Map<string, { command: string; result: OwnerChangeResult }>();
 
   const stamp = () => state.now().toISOString();
 
@@ -143,12 +144,12 @@ export function createMemoryTeamStore(state: MemoryTeamState): DatasetTeamStore 
     return member;
   }
 
-  /** ADR-0005: every dataset owner holds the manager role, so it can't be taken away. */
+  /** ADR-0005: every dataset owner holds the Maintainer (stored as `manager`) role, so it can't be taken away. */
   function guardOwnerManager(dataset: Dataset, member: DatasetMember) {
     if (member.role === "manager" && dataset.owners.some((o) => ownerIsPerson(o, member.person))) {
       throw new ActionRefusedError(
         "owner-holds-manager",
-        `${member.person.name} is an owner of ${dataset.name}, and every owner holds the manager role. ` +
+        `${member.person.name} is an owner of ${dataset.name}, and every owner holds the ${roles.roles.manager.label} role. ` +
           "Remove them as an owner first.",
       );
     }
@@ -219,7 +220,7 @@ export function createMemoryTeamStore(state: MemoryTeamState): DatasetTeamStore 
   }
 
   /**
-   * Remove a former owner's manager role and always list its remove-member
+   * Remove a former owner's Maintainer (stored as `manager`) role and always list its remove-member
    * entry, naming the person by email if known, else by SCIM id. The
    * membership may predate the app (standup), so the entry doesn't depend on
    * an add having been listed.
@@ -358,7 +359,31 @@ export function createMemoryTeamStore(state: MemoryTeamState): DatasetTeamStore 
     },
 
     addOwner: async (input) => {
-      const { datasets, dataset, user } = await asOwnerOrStaff(input.datasetId, "add owners");
+      const loaded = await load(input.datasetId);
+      const { datasets, dataset, user } = loaded;
+      const replayKey = input.idempotencyKey;
+      const replayCommand = JSON.stringify({
+        principalId: user.principalId,
+        datasetId: input.datasetId,
+        name: input.name.trim(),
+        email: normalizeEmail(input.email),
+      });
+      const replay = replayKey ? ownerAddReplays.get(replayKey) : undefined;
+      if (replay) {
+        if (replay.command !== replayCommand) {
+          throw new ActionRefusedError(
+            "invalid",
+            "This change was already submitted. Refresh to see the latest.",
+          );
+        }
+        return clone(replay.result);
+      }
+      if (!claim(loaded) && !user.isAdmin) {
+        throw new ActionRefusedError(
+          "not-owner",
+          `Only an owner of ${dataset.name}, or EDP staff, can add owners.`,
+        );
+      }
       const name = input.name.trim();
       if (!name) throw new ActionRefusedError("invalid", "Enter the new owner's name.");
       const email = normalizeEmail(input.email);
@@ -379,17 +404,11 @@ export function createMemoryTeamStore(state: MemoryTeamState): DatasetTeamStore 
             : `${email} is already an owner of ${dataset.name}, as ${same.displayName}.`,
         );
       }
-      // One role per person per dataset (ADR-0007 decision 11): the owner's
-      // manager role can't be a second role for someone who already holds one.
+      // One role per person per dataset (ADR-0007 decision 11): ownership
+      // replaces an existing tester/developer role with Maintainer (ADR-0005).
       const otherRole = members.find(
         (m) => m.datasetId === dataset.id && m.person.email === email && m.role !== "manager",
       );
-      if (otherRole) {
-        throw new ActionRefusedError(
-          "duplicate",
-          roleTakenMessage(name, roles.roles[otherRole.role].label, dataset.name),
-        );
-      }
 
       const at = state.now().toISOString();
       const owner: DatasetOwner = {
@@ -401,10 +420,20 @@ export function createMemoryTeamStore(state: MemoryTeamState): DatasetTeamStore 
       // A re-added email keeps its binding: only the SCIM id it's bound to can act (ADR-0006).
       applyBinding(owner, state.ownerBindings);
       dataset.owners.push(owner);
-      // ADR-0005: every dataset owner holds the manager role on their dataset.
+      // ADR-0005: every dataset owner holds the Maintainer (stored as `manager`) role on their dataset.
       let manager = members.find(
         (m) => m.datasetId === dataset.id && m.person.email === email && m.role === "manager",
       );
+      const replacedRole = otherRole?.role;
+      if (otherRole) {
+        manager = {
+          ...otherRole,
+          role: "manager",
+          roleChangedBy: user.principalId,
+          roleChangedAt: at,
+        };
+        members[members.indexOf(otherRole)] = manager;
+      }
       if (!manager) {
         manager = {
           datasetId: dataset.id,
@@ -418,22 +447,30 @@ export function createMemoryTeamStore(state: MemoryTeamState): DatasetTeamStore 
       const reason: DatasetOwnerAddedReason = {
         kind: "dataset-owner-added",
         datasetId: dataset.id,
+        ...(replacedRole ? { replacedRole } : {}),
         addedBy: user.principalId,
         addedAt: at,
       };
-      const created = addEntries(datasets, manager, reason, user, at);
+      const created: ChangeListEntry[] = replacedRole
+        ? removeEntries(datasets, dataset, reason, user, at)
+        : [];
+      created.push(...addEntries(datasets, manager, reason, user, at));
       const listed = record(
         {
           datasetId: dataset.id,
           kind: "owner-added",
           person: { name, email },
+          ...(replacedRole ? { replacedRole } : {}),
           by: user.principalId,
           at,
           entryIds: created.map((e) => e.id),
         },
         created,
       );
-      return { dataset: clone(dataset), entries: listed };
+      const result = { dataset: clone(dataset), entries: listed };
+      if (replayKey)
+        ownerAddReplays.set(replayKey, { command: replayCommand, result: clone(result) });
+      return result;
     },
 
     removeOwner: async (input) => {
@@ -464,12 +501,12 @@ export function createMemoryTeamStore(state: MemoryTeamState): DatasetTeamStore 
         throw new ActionRefusedError(
           "invalid",
           `${owner.displayName} has no email or SCIM id on record, so EDP staff couldn't act on ` +
-            "removing them from the manager group. Ask EDP staff to fix the owner record first.",
+            `removing them from the ${roles.roles.manager.label} group. Ask EDP staff to fix the owner record first.`,
         );
       }
 
       const at = state.now().toISOString();
-      // The manager role comes with ownership, so it goes with it (ADR-0005),
+      // The Maintainer role comes with ownership, so it goes with it (ADR-0005),
       // for every owner, intake owners included. Their other roles stay, and
       // so does their email's SCIM binding (ADR-0006).
       const created: ChangeListEntry[] = [];

@@ -28,11 +28,16 @@ import {
   type Responder,
 } from "./fake-sql-client.ts";
 import { createSqliteWarehouse } from "./sqlite-warehouse.ts";
+import {
+  GOVCLOUD_CASES,
+  govCloudSessionUser,
+  leaksIdentifier,
+} from "../../__tests__/govcloud-identity.ts";
 
 const STAFF: SessionUser = {
   principalId: "4055694201057157",
   displayName: "Sam Staff",
-  email: "sam.staff@example.test",
+  email: "sam.staff@example.gov",
   isAdmin: true,
   onboardingReviewerRoles: [],
 };
@@ -150,7 +155,7 @@ const TEAM_MEMBER_ROW = {
   role: "tester",
   source: "app",
   person_display: "Tess Tester",
-  person_email: "tess.tester@example.test",
+  person_email: "tess.tester@example.gov",
   person_principal_id: null,
   version: 1,
   created_at: "2026-10-05T12:00:00.000Z",
@@ -275,6 +280,26 @@ describe("Delta API: commands", () => {
     expect(insertedValue(block, "write_check_actions", "actor_app")).toBe("staff");
   });
 
+  it.each(GOVCLOUD_CASES)(
+    "records a GovCloud no-name actor as %s, never the numeric X-Forwarded-User",
+    async (_label, govCloud, expected) => {
+      const user = { ...(await govCloudSessionUser(govCloud)), isAdmin: true };
+      const { deps: d, fake } = deps(happy, user);
+      const response = await handleDeltaApiRequest(
+        post("/api/commands/admin/record-write-check", {
+          idempotencyKey: KEY,
+          expectedVersion: 0,
+          payload: { name: "smoke" },
+        }),
+        d,
+      );
+      expect(response.status).toBe(200);
+      const actorDisplay = insertedValue(fake.blocks()[0]!, "write_check_actions", "actor_display");
+      expect(actorDisplay).toBe(expected);
+      expect(leaksIdentifier(actorDisplay)).toBe(false);
+    },
+  );
+
   it.each([
     [
       "names the actor in the envelope",
@@ -311,6 +336,328 @@ describe("Delta API: commands", () => {
     expect(response.status).toBe(400);
     expect((await response.json()).error.code).toBe("invalid-request");
     expect(fake.calls).toHaveLength(0);
+  });
+
+  it("keeps the onboarding submit validation error contract stable", async () => {
+    const { deps: d, fake } = deps(happy, TENANT);
+    const response = await handleDeltaApiRequest(
+      post("/api/commands/onboarding/submit", {
+        idempotencyKey: KEY,
+        expectedVersion: 0,
+        payload: {},
+      }),
+      d,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "invalid-request",
+        message: "The request doesn't match what this endpoint accepts.",
+        issues: [{ path: "intake", message: "Required" }],
+      },
+    });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it.each([
+    [
+      "a numeric idempotency key",
+      { idempotencyKey: 42, expectedVersion: 0, payload: { name: "x" } },
+      { path: "idempotencyKey", message: "Expected string, received number" },
+    ],
+    [
+      "a string expected version",
+      { idempotencyKey: KEY, expectedVersion: "0", payload: { name: "x" } },
+      { path: "expectedVersion", message: "Expected number, received string" },
+    ],
+    [
+      "a fractional expected version",
+      { idempotencyKey: KEY, expectedVersion: 1.5, payload: { name: "x" } },
+      { path: "expectedVersion", message: "Expected integer, received float" },
+    ],
+    [
+      "a numeric command payload",
+      { idempotencyKey: KEY, expectedVersion: 0, payload: 42 },
+      { path: "", message: "Expected object, received number" },
+    ],
+    [
+      "a null command payload",
+      { idempotencyKey: KEY, expectedVersion: 0, payload: null },
+      { path: "", message: "Expected object, received null" },
+    ],
+    [
+      "a negative expected version",
+      { idempotencyKey: KEY, expectedVersion: -1, payload: { name: "x" } },
+      { path: "expectedVersion", message: "Number must be greater than or equal to 0" },
+    ],
+    [
+      "an empty write-check name",
+      { idempotencyKey: KEY, expectedVersion: 0, payload: { name: "" } },
+      { path: "name", message: "String must contain at least 1 character(s)" },
+    ],
+    [
+      "an overlong write-check name",
+      { idempotencyKey: KEY, expectedVersion: 0, payload: { name: "x".repeat(121) } },
+      { path: "name", message: "String must contain at most 120 character(s)" },
+    ],
+    [
+      "a missing payload",
+      { idempotencyKey: KEY, expectedVersion: 0 },
+      { path: "", message: "Required" },
+    ],
+    [
+      "an unknown envelope key",
+      { idempotencyKey: KEY, expectedVersion: 0, payload: { name: "x" }, version: 1 },
+      { path: "", message: "Unrecognized key(s) in object: 'version'" },
+    ],
+    [
+      "a malformed UUID",
+      { idempotencyKey: "not-a-uuid", expectedVersion: 0, payload: { name: "x" } },
+      { path: "idempotencyKey", message: "Invalid uuid" },
+    ],
+  ] as const)("keeps Zod 3's exact refusal for %s", async (_label, body, issue) => {
+    const { deps: d, fake } = deps(happy);
+    const response = await handleDeltaApiRequest(
+      post("/api/commands/admin/record-write-check", body),
+      d,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "invalid-request",
+        message: "The request doesn't match what this endpoint accepts.",
+        issues: [issue],
+      },
+    });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("accepts the non-RFC UUIDs that Zod 3 accepted", async () => {
+    const { deps: d } = deps(happy);
+    const response = await handleDeltaApiRequest(
+      post("/api/commands/admin/record-write-check", {
+        idempotencyKey: "00000000-0000-0000-0000-000000000001",
+        expectedVersion: 0,
+        payload: { name: "legacy id" },
+      }),
+      d,
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("keeps enum and 4000-character maximum messages at command payload seams", async () => {
+    const { deps: d, fake } = deps(happy, VALIDATOR);
+    const invalidEnum = await handleDeltaApiRequest(
+      post("/api/commands/eir/decide", {
+        idempotencyKey: KEY,
+        expectedVersion: 1,
+        payload: { principalId: "123", decision: "nickname" },
+      }),
+      d,
+    );
+    expect((await invalidEnum.json()).error.issues).toEqual([
+      {
+        path: "decision",
+        message:
+          "Invalid enum value. Expected 'valid' | 'questions' | 'rejected' | 'revoked', received 'nickname'",
+      },
+    ]);
+
+    const wrongEnumType = await handleDeltaApiRequest(
+      post("/api/commands/eir/decide", {
+        idempotencyKey: KEY,
+        expectedVersion: 1,
+        payload: { principalId: "123", decision: 7 },
+      }),
+      d,
+    );
+    expect((await wrongEnumType.json()).error.issues).toEqual([
+      {
+        path: "decision",
+        message: "Expected 'valid' | 'questions' | 'rejected' | 'revoked', received number",
+      },
+    ]);
+
+    const overlong = await handleDeltaApiRequest(
+      post("/api/commands/eir/decide", {
+        idempotencyKey: KEY,
+        expectedVersion: 1,
+        payload: { principalId: "123", decision: "valid", note: "x".repeat(4001) },
+      }),
+      d,
+    );
+    expect((await overlong.json()).error.issues).toEqual([
+      { path: "note", message: "String must contain at most 4000 character(s)" },
+    ]);
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("keeps Zod 3's record wording for an onboarding intake answers array", async () => {
+    const { deps: d, fake } = deps(happy, TENANT);
+    const response = await handleDeltaApiRequest(
+      post("/api/commands/onboarding/submit", {
+        idempotencyKey: KEY,
+        expectedVersion: 0,
+        payload: {
+          intake: {
+            initiativeName: "Initiative",
+            businessCase: "Case",
+            annualBenefit: 1,
+            levers: [],
+            datasets: [],
+            workspaceNeeds: { isolation: "shared", teamSize: 1 },
+            answers: [],
+          },
+        },
+      }),
+      d,
+    );
+    expect((await response.json()).error.issues).toContainEqual({
+      path: "intake.answers",
+      message: "Expected object, received array",
+    });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("keeps Zod 3's exact literal refusals in onboarding payloads", async () => {
+    const { deps: tenantDeps, fake: tenantSql } = deps(happy, TENANT);
+    const owner = await handleDeltaApiRequest(
+      post("/api/commands/onboarding/submit", {
+        idempotencyKey: KEY,
+        expectedVersion: 0,
+        payload: {
+          intake: {
+            initiativeName: "Initiative",
+            businessCase: "Case",
+            annualBenefit: 1,
+            levers: [],
+            datasets: [
+              {
+                name: "Dataset",
+                domain: "domain",
+                datasetTag: "dataset",
+                owners: [{ self: false, name: "Owner", email: "owner@example.gov" }],
+              },
+            ],
+            workspaceNeeds: { isolation: "shared", teamSize: 1 },
+            answers: {},
+          },
+        },
+      }),
+      tenantDeps,
+    );
+    expect((await owner.json()).error.issues).toContainEqual({
+      path: "intake.datasets.0.owners.0.self",
+      message: "Invalid literal value, expected true",
+    });
+    expect(tenantSql.calls).toHaveLength(0);
+
+    const reviewer = { ...STAFF, onboardingReviewerRoles: ["business-office" as const] };
+    const { deps: reviewerDeps, fake: reviewerSql } = deps(happy, reviewer);
+    const sendBack = await handleDeltaApiRequest(
+      post("/api/commands/onboarding/decide", {
+        idempotencyKey: KEY,
+        expectedVersion: 1,
+        payload: {
+          requestId: "ONB-1",
+          decision: { type: "send-back", to: "draft", note: "Clarify" },
+        },
+      }),
+      reviewerDeps,
+    );
+    expect((await sendBack.json()).error.issues).toEqual([
+      { path: "decision.to", message: 'Invalid literal value, expected "submitted"' },
+    ]);
+    expect(reviewerSql.calls).toHaveLength(0);
+  });
+
+  it("keeps Zod 3's NaN query refusal", async () => {
+    const registry = createAppRegistry(undefined, { catalog: "catalog", schema: "membership" });
+    const { deps: d, fake } = deps(happy, TENANT, ["tenant", "staff"], { registry });
+    const response = await handleDeltaApiRequest(get("/api/reads/membership/history?limit=abc"), d);
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.issues).toEqual([
+      { path: "limit", message: "Expected number, received nan" },
+    ]);
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("keeps Zod 3's exact membership-query literal refusal", async () => {
+    const registry = createAppRegistry(undefined, { catalog: "catalog", schema: "membership" });
+    const { deps: d, fake } = deps(happy, TENANT, ["tenant", "staff"], { registry });
+    const response = await handleDeltaApiRequest(
+      get("/api/reads/membership/memberships?includeRemoved=false"),
+      d,
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.issues).toEqual([
+      { path: "includeRemoved", message: 'Invalid literal value, expected "true"' },
+    ]);
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("accepts a non-RFC UUID in a nested admin command payload", async () => {
+    const { deps: d } = deps(happy);
+    const response = await handleDeltaApiRequest(
+      post("/api/commands/admin/confirm-write-check", {
+        idempotencyKey: KEY,
+        expectedVersion: 1,
+        payload: { writeCheckId: "00000000-0000-0000-0000-000000000001" },
+      }),
+      d,
+    );
+    expect(response.status).not.toBe(400);
+  });
+
+  it("keeps a missing legacy payload at the payload schema's root", async () => {
+    const { deps: d, fake } = deps(happy, TENANT);
+    const response = await handleDeltaApiRequest(
+      post("/api/legacy-writes/requests/append-waiver-attestation", {}),
+      d,
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.issues).toEqual([{ path: "", message: "Required" }]);
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("keeps wrong legacy payload types when rejected input reporting is enabled", async () => {
+    const { deps: d, fake } = deps(happy, TENANT);
+    const response = await handleDeltaApiRequest(
+      post("/api/legacy-writes/requests/append-waiver-attestation", {
+        payload: {
+          id: "ATT-1",
+          requestId: "REQ-1",
+          checklistItemId: "ldw",
+          attested: true,
+          attestedAt: 5,
+          source: "app",
+          createdAt: "2026-10-05T12:00:00Z",
+        },
+      }),
+      d,
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.issues).toContainEqual({
+      path: "attestedAt",
+      message: "Expected string, received number",
+    });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("accepts a non-RFC UUID in the change-list mark-applied payload", async () => {
+    const { deps: d } = deps(happy, STAFF);
+    const response = await handleDeltaApiRequest(
+      post("/api/commands/change-list/mark-applied", {
+        idempotencyKey: KEY,
+        expectedVersion: 1,
+        payload: { entryId: "00000000-0000-0000-0000-000000000001" },
+      }),
+      d,
+    );
+    expect(response.status).not.toBe(400);
   });
 
   it("refuses a body that isn't JSON", async () => {
@@ -408,6 +755,15 @@ describe("Delta API: commands", () => {
 });
 
 describe("Delta API: reads", () => {
+  it.each([
+    "/api/reads/admin/write-checks?id=00000000-0000-0000-0000-000000000001",
+    "/api/reads/audit/record-history?recordId=00000000-0000-0000-0000-000000000001",
+  ])("accepts a non-RFC UUID query at %s", async (path) => {
+    const { deps: d } = deps(happy, STAFF);
+    const response = await handleDeltaApiRequest(get(path), d);
+    expect(response.status).not.toBe(400);
+  });
+
   it("serves a warm repeat read from the per-instance full snapshot", async () => {
     const cache = createDeltaSnapshotCache({
       tables: [{ area: "admin", schema: "admin", table: "write_checks" }],
@@ -521,7 +877,7 @@ describe("Delta API: reads", () => {
         payload: {
           datasetId: "ds1",
           name: "Dev Example",
-          email: "dev.example@example.test",
+          email: "dev.example@example.gov",
           role: "developer",
         },
       }),
@@ -967,7 +1323,7 @@ describe("Delta API: reads", () => {
           bound_at, version, created_at, created_by_principal_id, updated_at,
           updated_by_principal_id, last_action_id
         ) VALUES
-          ('owner1', 'ds1', 'configuration', 'Tia Tenant', 't@example.test', '7001', NULL, 1, '2026-10-01T00:00:00.000Z', 'system', '2026-10-01T00:00:00.000Z', 'system', 'owner-action-1'),
+          ('owner1', 'ds1', 'configuration', 'Tia Tenant', 't@example.gov', '7001', NULL, 1, '2026-10-01T00:00:00.000Z', 'system', '2026-10-01T00:00:00.000Z', 'system', 'owner-action-1'),
           ('owner2', 'ds2', 'configuration', 'Other Tenant', 'other@example.test', '8002', NULL, 1, '2026-10-02T00:00:00.000Z', 'system', '2026-10-02T00:00:00.000Z', 'system', 'owner-action-2')
       `);
       warehouse.query(`
@@ -1166,38 +1522,49 @@ describe("Delta API: reads", () => {
       );
       return warehouse;
     };
-    const apiFor = async (snapshot: boolean, user: SessionUser) => {
-      const warehouse = makeWarehouse();
-      const runner = createTransactionRunner({
-        client: warehouse.client,
-        names,
-        sleep: async () => undefined,
-        random: () => 0,
-      });
-      const apiRunner = {
-        ...runner,
-        reader:
-          (tag: Parameters<typeof runner.reader>[0]) =>
-          async <T extends object>(statement: Parameters<ReturnType<typeof runner.reader>>[0]) => {
-            if (isMarkerCheck(statement.statement)) return allMarkerRows().rows as T[];
-            return runner.reader(tag)<T>(statement);
-          },
-      };
-      const snapshotCache = snapshot
-        ? createDeltaSnapshotCache({ pollIntervalMs: 60_000, maxStaleMs: 60_000 })
-        : undefined;
-      if (snapshotCache)
-        await snapshotCache.start(apiRunner.reader({ readId: crypto.randomUUID() }), names);
-      const deps: DeltaApiDeps = {
-        registry,
-        runner: snapshotCache ? apiRunner : runner,
-        names,
-        serves: ["tenant", "staff"],
-        requirePrivacyAcknowledgment: async () => undefined,
-        resolveUser: async () => user,
-        ...(snapshotCache ? { snapshotCache } : {}),
-      };
-      return (path: string) => handleDeltaApiRequest(get(path), deps);
+    const apiCache = new Map<string, Promise<(path: string) => Promise<Response>>>();
+    const apiFor = (snapshot: boolean, user: SessionUser) => {
+      const key = JSON.stringify([snapshot, user]);
+      const cached = apiCache.get(key);
+      if (cached) return cached;
+
+      const api = (async () => {
+        const warehouse = makeWarehouse();
+        const runner = createTransactionRunner({
+          client: warehouse.client,
+          names,
+          sleep: async () => undefined,
+          random: () => 0,
+        });
+        const apiRunner = {
+          ...runner,
+          reader:
+            (tag: Parameters<typeof runner.reader>[0]) =>
+            async <T extends object>(
+              statement: Parameters<ReturnType<typeof runner.reader>>[0],
+            ) => {
+              if (isMarkerCheck(statement.statement)) return allMarkerRows().rows as T[];
+              return runner.reader(tag)<T>(statement);
+            },
+        };
+        const snapshotCache = snapshot
+          ? createDeltaSnapshotCache({ pollIntervalMs: 60_000, maxStaleMs: 60_000 })
+          : undefined;
+        if (snapshotCache)
+          await snapshotCache.start(apiRunner.reader({ readId: crypto.randomUUID() }), names);
+        const deps: DeltaApiDeps = {
+          registry,
+          runner: snapshotCache ? apiRunner : runner,
+          names,
+          serves: ["tenant", "staff"],
+          requirePrivacyAcknowledgment: async () => undefined,
+          resolveUser: async () => user,
+          ...(snapshotCache ? { snapshotCache } : {}),
+        };
+        return (path: string) => handleDeltaApiRequest(get(path), deps);
+      })();
+      apiCache.set(key, api);
+      return api;
     };
 
     const cases: Array<{ path: string; user: SessionUser }> = [
@@ -1386,7 +1753,7 @@ describe("Delta API: reads", () => {
         }
       }
     }
-  });
+  }, 30_000);
 
   it("runs an allow-listed read with a validated query, tagged with a read ID", async () => {
     const { deps: d, fake } = deps(happy);
@@ -1632,6 +1999,10 @@ describe("Delta API: staff endpoints fail closed", () => {
     const staffWrites = writes.filter((w) => w.app === "staff");
     const staffReads = reads.filter((r) => r.app === "staff");
     expect(staffWrites.length + staffReads.length).toBeGreaterThanOrEqual(6);
+    // Staff owner matching (#103, 103-B) is EDP staff only.
+    expect(staffWrites.map((w) => `${w.area}/${w.name}`)).toEqual(
+      expect.arrayContaining(["onboarding/match-owner", "onboarding/request-owner-onboarding"]),
+    );
     for (const write of staffWrites) {
       const { deps: d, fake } = deps(happy, TENANT);
       const response = await handleDeltaApiRequest(

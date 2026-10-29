@@ -45,6 +45,10 @@ env:
     value: "[]"
   - name: EDP_EIR_VALIDITY_DAYS
     value: "365"
+  - name: EDP_EIR_APPROVAL_MODE
+    value: "manual-validator"
+  - name: EDP_EIR_AUTOMATIC_VALIDITY_OUTCOMES
+    value: "pass"
   - name: EDP_ACCESS_REQUEST_SLA_PROVISIONAL
     value: "true"
   - name: EDP_EIR_SUPPORT_EMAIL

@@ -14,7 +14,7 @@ An alternative such as a direct database link, API, stream, or custom connector 
 
 ## Sensitive data path
 
-SBU data requires appropriate handling. An `SBU (FTI)` selection specifically adds a Publication 1075 safeguards review to the intake path. Challenge an FTI draft that says nothing about its safeguard-relevant scope, intended users, access, or handling, but do not invent controls or assert compliance. The useful next step is to identify missing facts for the safeguards path and the initiative owner—not to provide a compliance determination.
+SBU data requires appropriate handling. An `SBU (FTI)` selection specifically adds a Publication 1075 safeguards review to the intake path. Challenge an FTI draft that says nothing about its safeguard-relevant scope, intended users, access, or handling, but do not invent controls or assert compliance. The useful next step is to identify missing facts for the safeguards path and the initiative point of contact—not to provide a compliance determination.
 
 ## Business value review
 

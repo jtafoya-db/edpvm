@@ -1,0 +1,221 @@
+{
+  "metadata": {
+    "approvalStatus": "approved",
+    "decision": "#145 comment 6385978601",
+    "approvedAt": "2026-10-24"
+  },
+  "layers": ["bronze", "silver", "gold"],
+  "environments": ["dev", "test", "preprod", "prod", "analytics-prod"],
+  "roles": {
+    "tester": {
+      "rules": [
+        {
+          "kind": "uc",
+          "privilege": "USE CATALOG",
+          "grantPointType": "catalog",
+          "directSecurableType": "catalog",
+          "target": "{env.catalog}",
+          "layers": "*",
+          "environments": "*"
+        },
+        {
+          "kind": "uc",
+          "privilege": "USE SCHEMA",
+          "grantPointType": "schema",
+          "directSecurableType": "schema",
+          "target": "{env.catalog}.{datasetTag}_{layer}",
+          "layers": "*",
+          "environments": "*"
+        },
+        {
+          "kind": "uc",
+          "privilege": "SELECT",
+          "grantPointType": "schema",
+          "directSecurableType": "table",
+          "target": "{env.catalog}.{datasetTag}_{layer}",
+          "layers": "*",
+          "environments": "*"
+        },
+        {
+          "kind": "uc",
+          "privilege": "SELECT",
+          "grantPointType": "schema",
+          "directSecurableType": "view",
+          "target": "{env.catalog}.{datasetTag}_{layer}",
+          "layers": "*",
+          "environments": "*"
+        },
+        {
+          "kind": "uc",
+          "privilege": "SELECT",
+          "grantPointType": "schema",
+          "directSecurableType": "materialized-view",
+          "target": "{env.catalog}.{datasetTag}_{layer}",
+          "layers": "*",
+          "environments": "*"
+        },
+        {
+          "kind": "uc",
+          "privilege": "READ VOLUME",
+          "grantPointType": "schema",
+          "directSecurableType": "volume",
+          "target": "{env.catalog}.{datasetTag}_{layer}",
+          "layers": "*",
+          "environments": "*"
+        },
+        {
+          "kind": "uc",
+          "privilege": "EXECUTE",
+          "grantPointType": "schema",
+          "directSecurableType": "function",
+          "target": "{env.catalog}.{datasetTag}_{layer}",
+          "layers": "*",
+          "environments": "*"
+        },
+        {
+          "kind": "job-acl",
+          "accessLevel": "CAN_VIEW",
+          "target": "dataset-job:{datasetTag}",
+          "environments": "*"
+        },
+        {
+          "kind": "folder-acl",
+          "accessLevel": "CAN_READ",
+          "target": "/Workspace/edp/{datasetTag}",
+          "environments": "*"
+        }
+      ]
+    },
+    "developer": {
+      "inherits": "tester",
+      "rules": [
+        {
+          "kind": "uc",
+          "privilege": "MODIFY",
+          "grantPointType": "schema",
+          "directSecurableType": "table",
+          "target": "{env.catalog}.{datasetTag}_{layer}",
+          "layers": "*",
+          "environments": ["dev", "test", "preprod", "prod"]
+        },
+        {
+          "kind": "uc",
+          "privilege": "CREATE TABLE",
+          "grantPointType": "schema",
+          "directSecurableType": "schema",
+          "target": "{env.catalog}.{datasetTag}_{layer}",
+          "layers": "*",
+          "environments": ["dev", "test", "preprod", "prod"]
+        },
+        {
+          "kind": "uc",
+          "privilege": "CREATE MATERIALIZED VIEW",
+          "grantPointType": "schema",
+          "directSecurableType": "schema",
+          "target": "{env.catalog}.{datasetTag}_{layer}",
+          "layers": "*",
+          "environments": ["dev", "test", "preprod", "prod"]
+        },
+        {
+          "kind": "uc",
+          "privilege": "CREATE FUNCTION",
+          "grantPointType": "schema",
+          "directSecurableType": "schema",
+          "target": "{env.catalog}.{datasetTag}_{layer}",
+          "layers": "*",
+          "environments": ["dev", "test", "preprod", "prod"]
+        },
+        {
+          "kind": "uc",
+          "privilege": "CREATE VOLUME",
+          "grantPointType": "schema",
+          "directSecurableType": "schema",
+          "target": "{env.catalog}.{datasetTag}_{layer}",
+          "layers": "*",
+          "environments": ["dev", "test", "preprod", "prod"]
+        },
+        {
+          "kind": "uc",
+          "privilege": "WRITE VOLUME",
+          "grantPointType": "schema",
+          "directSecurableType": "volume",
+          "target": "{env.catalog}.{datasetTag}_{layer}",
+          "layers": "*",
+          "environments": ["dev", "test", "preprod", "prod"]
+        }
+      ]
+    },
+    "manager": {
+      "inherits": "developer",
+      "rules": [
+        {
+          "kind": "job-acl",
+          "accessLevel": "CAN_MANAGE",
+          "target": "dataset-job:{datasetTag}",
+          "environments": "*",
+          "label": "Maintainer manages the dataset jobs; prod permission changes are requested and applied by EDP staff"
+        }
+      ]
+    }
+  },
+  "consumer": {
+    "certificationStatuses": ["certified", "deprecated"],
+    "rules": [
+      {
+        "kind": "uc",
+        "privilege": "USE CATALOG",
+        "grantPointType": "catalog",
+        "directSecurableType": "catalog",
+        "target": "{env.catalog}",
+        "layers": ["silver", "gold"],
+        "environments": ["prod", "analytics-prod"]
+      },
+      {
+        "kind": "uc",
+        "privilege": "USE SCHEMA",
+        "grantPointType": "schema",
+        "directSecurableType": "schema",
+        "target": "{env.catalog}.{datasetTag}_{layer}",
+        "layers": ["silver", "gold"],
+        "environments": ["prod", "analytics-prod"]
+      },
+      {
+        "kind": "uc",
+        "privilege": "SELECT",
+        "grantPointType": "schema",
+        "directSecurableType": "table",
+        "target": "{env.catalog}.{datasetTag}_{layer}",
+        "layers": ["silver", "gold"],
+        "environments": ["prod", "analytics-prod"]
+      },
+      {
+        "kind": "uc",
+        "privilege": "SELECT",
+        "grantPointType": "schema",
+        "directSecurableType": "view",
+        "target": "{env.catalog}.{datasetTag}_{layer}",
+        "layers": ["silver", "gold"],
+        "environments": ["prod", "analytics-prod"]
+      },
+      {
+        "kind": "uc",
+        "privilege": "SELECT",
+        "grantPointType": "schema",
+        "directSecurableType": "materialized-view",
+        "target": "{env.catalog}.{datasetTag}_{layer}",
+        "layers": ["silver", "gold"],
+        "environments": ["prod", "analytics-prod"]
+      }
+    ]
+  },
+  "sensitiveAccess": {
+    "rules": [
+      {
+        "kind": "workspace-assignment",
+        "accessLevel": "USER",
+        "target": "workspace:{environment}",
+        "environments": ["preprod", "prod", "analytics-prod"]
+      }
+    ]
+  }
+}

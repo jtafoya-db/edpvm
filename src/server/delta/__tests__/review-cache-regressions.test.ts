@@ -22,14 +22,14 @@ const names = createStoreNames("edp_vending");
 const TENANT: SessionUser = {
   principalId: "7001",
   displayName: "T",
-  email: "t@example.test",
+  email: "t@example.gov",
   isAdmin: false,
   onboardingReviewerRoles: [],
 };
 const STAFF: SessionUser = {
   principalId: "4055694201057157",
   displayName: "Sam Staff",
-  email: "sam.staff@example.test",
+  email: "sam.staff@example.gov",
   isAdmin: true,
   onboardingReviewerRoles: [],
 };
@@ -1126,6 +1126,7 @@ describe("snapshot cache review regressions", () => {
     );
     expect(registry.findRead("initiatives", "datasets")?.dependsOn).toContain("teams");
     expect(registry.findRead("change-list", "entries")?.dependsOn).toContain("teams");
+    expect(registry.findRead("change-list", "entries")?.dependsOn).toContain("initiatives");
     expect(registry.findRead("teams", "ownership")?.dependsOn).toContain("initiatives");
     expect(registry.findRead("teams", "events")?.dependsOn).toContain("change-list");
   });

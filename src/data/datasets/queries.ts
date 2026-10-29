@@ -253,6 +253,8 @@ export function useMarkChangeApplied(): UseMutationResult<
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: datasetQueryKeys.changeList });
+      // An applied onboard-user entry returns its owner to unmatched (#103).
+      void queryClient.invalidateQueries({ queryKey: ["onboarding"] });
     },
   });
 }

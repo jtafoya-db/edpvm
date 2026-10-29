@@ -38,7 +38,8 @@ export function DatasetsScreen({ ctx, chrome: injected }: ScreenProps) {
           <div>
             <h1 style={s.h1}>Datasets</h1>
             <p style={s.subtitle}>
-              Open a dataset to see its team. Its owners add testers, developers and managers.
+              Open a dataset to see its team. Only its owners and EDP staff decide who holds a role
+              on it.
             </p>
           </div>
         </div>

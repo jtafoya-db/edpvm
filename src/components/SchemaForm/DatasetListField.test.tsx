@@ -12,7 +12,7 @@ import { DatasetListField } from "./DatasetListField";
 
 afterEach(cleanup);
 
-const ME = { name: "Pat Provider", email: "pat.provider@example.test" };
+const ME = { name: "Pat Provider", email: "pat.provider@example.gov" };
 const dataset = (name: string): IntakeDatasetInput => ({
   name,
   domain: "individual-filing",
@@ -61,7 +61,7 @@ function hideTypedOwner(d: number) {
     target: { value: "Hidden Person" },
   });
   fireEvent.change(within(owner(d)).getByLabelText("Owner's email"), {
-    target: { value: "hidden@example.test" },
+    target: { value: "hidden@example.gov" },
   });
   fireEvent.click(within(owner(d)).getByRole("radio", { name: /myself/i }));
 }
@@ -84,7 +84,7 @@ describe("dataset and owner rows keep their own identity", () => {
     expect([datasetName(1), datasetName(2)]).toEqual(["Second", "First"]);
 
     expect(someoneElse(1)).toEqual({ name: "", email: "" });
-    expect(someoneElse(2)).toEqual({ name: "Hidden Person", email: "hidden@example.test" });
+    expect(someoneElse(2)).toEqual({ name: "Hidden Person", email: "hidden@example.gov" });
   });
 
   it("gives fresh copies of the rows fresh owner memory, inheriting nothing", () => {
@@ -97,4 +97,40 @@ describe("dataset and owner rows keep their own identity", () => {
     expect(someoneElse(1)).toEqual({ name: "", email: "" });
     expect(someoneElse(2)).toEqual({ name: "", email: "" });
   });
+});
+
+it("captures source and ingestion for each input dataset", () => {
+  function InputHarness() {
+    const [value, setValue] = React.useState<IntakeDatasetInput[]>([
+      {
+        ...dataset("Signals"),
+        sourceSystem: "",
+        ingestionMethod: "",
+        ingestionDetails: "",
+      },
+    ]);
+    return (
+      <DatasetListField
+        label="Input datasets"
+        value={value}
+        domains={[{ value: "individual-filing", label: "Individual Filing" }]}
+        ingestPatterns={[
+          { id: "eftu", name: "EFTU", desc: "Secure files", approved: true, box: "EFTU" },
+          { id: "other", name: "Another path", desc: "Consult", approved: false, box: "Other" },
+        ]}
+        onChange={setValue}
+        Icon={() => null}
+      />
+    );
+  }
+
+  render(<InputHarness />);
+  fireEvent.change(screen.getByLabelText("Dataset 1 source system"), {
+    target: { value: "IMF / Individual Master File" },
+  });
+  fireEvent.change(screen.getByLabelText("Dataset 1 ingestion method"), {
+    target: { value: "other" },
+  });
+  expect(screen.getByDisplayValue("IMF / Individual Master File")).toBeTruthy();
+  expect(screen.getByLabelText("Dataset 1 proposed ingestion approach")).toBeTruthy();
 });

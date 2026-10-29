@@ -33,7 +33,7 @@ const names = createStoreNames("edp_vending", "");
 const PROVIDER: SessionUser = {
   principalId: "scim-provider",
   displayName: "Pat Provider",
-  email: "pat.provider@example.test",
+  email: "pat.provider@example.gov",
   isAdmin: false,
   onboardingReviewerRoles: [],
 };
@@ -42,7 +42,7 @@ const BUSINESS_OFFICE: SessionUser = {
   ...PROVIDER,
   principalId: "scim-bo",
   displayName: "Bea Office",
-  email: "bea.office@example.test",
+  email: "bea.office@example.gov",
   onboardingReviewerRoles: ["business-office"],
 };
 
@@ -54,9 +54,11 @@ const intake = (n: number): OnboardingIntake => ({
   datasets: [
     {
       name: `Dataset ${n}`,
+      sourceSystem: "IMF / Individual Master File",
       domain: "individual-filing",
+      ingestionMethod: "eftu",
       datasetTag: `dataset_${n}`,
-      owners: [{ name: "Olive Owner", email: "olive.owner@example.test" }],
+      owners: [{ name: "Olive Owner", email: "olive.owner@example.gov" }],
     },
   ],
   workspaceNeeds: { isolation: "shared", teamSize: 4 },
@@ -73,7 +75,9 @@ let signedIn: SessionUser;
 let keys = 0;
 
 beforeEach(() => {
-  warehouse = createSqliteWarehouse({ files: ["store-admin.sql", "store-onboarding.sql"] });
+  warehouse = createSqliteWarehouse({
+    files: ["store-admin.sql", "store-teams.sql", "store-onboarding.sql"],
+  });
   attempts = [];
   scripted = [];
   signedIn = PROVIDER;

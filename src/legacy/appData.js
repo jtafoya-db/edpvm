@@ -15,7 +15,7 @@ export {};
     initials: "DW",
     title: "Tenant Data Analyst",
     tenant: "RAAS — Research, Applied Analytics & Statistics",
-    email: "dana.whitfield@example.test",
+    email: "dana.whitfield@example.gov",
     isOnboardingLead: true,
     isAdmin: true,
   };

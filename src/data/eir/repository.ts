@@ -19,6 +19,13 @@ import type { EirDefinition } from "./definition/types.ts";
 import { blockingGuidance, evaluateEirDraft, manualHandlingEvaluation } from "./evaluation.ts";
 import { generateEirPdf } from "./pdf.ts";
 import { definitionLabel } from "./definition/identity.ts";
+import {
+  automaticValidityOf,
+  DEFAULT_EIR_APPROVAL_CONFIG,
+  qualifiesForAutomaticValidity,
+  type EirApprovalConfig,
+  type EirAutomaticValidity,
+} from "./approval-mode.ts";
 
 export class EirDomainError extends Error {
   readonly status: 400 | 403 | 409 | 503;
@@ -138,6 +145,44 @@ export interface EirFileSubmission {
   expectedVersion?: number;
 }
 
+/** What Download PDF to sign sends (#235): the answers on screen, as they were at the click. */
+export interface EirPdfPreparation {
+  principalId: string;
+  personName: string;
+  values: EirFormValues;
+  /** The form version the screen showed; refused if the server would use another. */
+  formVersion?: string;
+  /** The draft version the screen read (`EirRecord.draftVersion`, 0 for none); a stale one is refused. */
+  expectedDraftVersion: number;
+  /** One per intent: a resend with the same key returns the first answer. */
+  idempotencyKey?: string;
+}
+
+/** {@link EirRepository.preparePdf}'s answer. */
+export interface EirPreparedPdf {
+  /** The EIR as the save left it (started, with its Record ID, and the draft). */
+  record: EirRecord;
+  /** The saved draft's evaluation, on the definition it's pinned to. */
+  evaluation: EirEvaluation;
+  /** The PDF to sign; absent when the evaluation blocks. */
+  pdf?: Uint8Array;
+}
+
+/** Refused when the record moved on since the screen read it: the server's words (`errors.ts`). */
+export const EIR_CHANGED_REFUSAL = "This changed since you opened it. Reload to see the latest.";
+
+/** Refused when one idempotency key is sent with another change: the server's words. */
+export const EIR_KEY_REUSED_REFUSAL =
+  "This request's idempotency key was already used for a different change.";
+
+/**
+ * The writes of a signed-PDF upload, in automatic approval mode (#204): the
+ * upload-time evaluation, the PDF, and the record's EIR change, submission,
+ * the person's action and the system's validity action.
+ */
+export type EirUploadWrite =
+  "evaluation" | "pdf" | "eir" | "submission" | "employee-action" | "system-action";
+
 export interface EirSubmissionFileStorage {
   write(path: string, bytes: Uint8Array, options: { overwrite: boolean }): Promise<void>;
 }
@@ -164,6 +209,14 @@ export interface EirRepository {
   ): Promise<EirRecord>;
   evaluateDraft(principalId: string): Promise<EirEvaluation>;
   generatePdf(principalId: string): Promise<Uint8Array>;
+  /**
+   * Download PDF to sign, in one call (#235): start the EIR if it isn't, save
+   * the draft (refused if its version isn't `expectedDraftVersion`), evaluate
+   * it against the definition it's pinned to, and, unless that blocks,
+   * return the PDF of those answers. All or nothing: a refusal saves nothing.
+   * A blocking evaluation is still saved, with the draft, and returns no PDF.
+   */
+  preparePdf(input: EirPdfPreparation): Promise<EirPreparedPdf>;
   submitWithFile(input: EirFileSubmission): Promise<EirRecord>;
   /**
    * Send response: answer safeguards questions on the EIR (or its renewal)
@@ -249,6 +302,93 @@ export function isRenewalStage(record: Pick<EirRecord, "stage">): boolean {
   return record.stage === "valid" || record.stage === "expired";
 }
 
+/**
+ * A saved draft's pre-check, on the definition it's pinned to (#201, #224):
+ * what Evaluate and Download PDF to sign record, and the upload runs again
+ * in automatic approval mode (#204), each on its own clock. A definition that
+ * isn't there or can't be loaded, or an evaluator that throws, is manual
+ * handling, never a refusal, a guess or eligible (`definitionLoaded: false`).
+ */
+export function evaluatePinnedDraft(input: {
+  evaluator: typeof evaluateEirDraft;
+  definitions: EirDefinitionLookup;
+  record: Pick<EirRecord, "draftFormVersion">;
+  values: EirFormValues;
+  draftVersion: number;
+  draftStartedAt: string;
+  effectiveAt: string;
+  config: Pick<EirApprovalConfig, "automaticValidityOutcomes">;
+}): { evaluation: EirEvaluation; definitionLoaded: boolean } {
+  const { formVersion, definition } = definitionForDraft(input.record, input.definitions);
+  try {
+    if (!definition) throw new Error("draft definition unavailable");
+    return {
+      evaluation: input.evaluator({
+        definition,
+        values: input.values,
+        draftVersion: input.draftVersion,
+        draftStartedAt: input.draftStartedAt,
+        effectiveAt: input.effectiveAt,
+        automaticValidityOutcomes: input.config.automaticValidityOutcomes,
+      }),
+      definitionLoaded: true,
+    };
+  } catch {
+    return {
+      evaluation: manualHandlingEvaluation({
+        draftVersion: input.draftVersion,
+        effectiveAt: input.effectiveAt,
+        formVersion,
+        ...(definition ? { definitionVersion: definition.form.version } : {}),
+      }),
+      definitionLoaded: false,
+    };
+  }
+}
+
+/**
+ * The system's validity decision on a just-submitted EIR or renewal, in
+ * automatic approval mode (#204): the same rules as a validator's `valid`
+ * (the configured validity period, from now; a renewal becomes the EIR),
+ * attributed to the app, with the pre-check it rests on. Both adapters call
+ * it on the record their upload has just staged, so the submission and this
+ * decision are saved together or not at all.
+ */
+export async function withAutomaticValidity(
+  submitted: EirRecord,
+  options: {
+    clock: EirClock;
+    validityDays: number;
+    reviewSlaBusinessDays: number;
+    provenance: EirAutomaticValidity;
+  },
+): Promise<EirRecord> {
+  const rules = createMemoryEirRepository({
+    clock: options.clock,
+    validityDays: options.validityDays,
+    reviewSlaBusinessDays: options.reviewSlaBusinessDays,
+    initialRecords: [submitted],
+  });
+  const before = submitted.actions.length;
+  const decided = await rules.decide(
+    submitted.principalId,
+    "valid",
+    EIR_SYSTEM_ACTOR.actorScimId,
+    undefined,
+    EIR_SYSTEM_ACTOR.actorName,
+  );
+  return {
+    ...decided,
+    // A decision's answer leaves out the draft's version; the next draft counts on from it.
+    ...(submitted.draftVersion !== undefined ? { draftVersion: submitted.draftVersion } : {}),
+    actions: decided.actions.map((action, index) =>
+      index >= before
+        ? { ...action, automaticValidity: structuredClone(options.provenance) }
+        : action,
+    ),
+  };
+}
+
 async function sha256(bytes: Uint8Array): Promise<string> {
   const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes.slice().buffer);
   return [...new Uint8Array(digest)].map((part) => part.toString(16).padStart(2, "0")).join("");
@@ -282,6 +422,17 @@ export function createMemoryEirRepository(
     definitions?: EirDefinitionLookup;
     evaluator?: typeof evaluateEirDraft;
     persistEvaluation?: (evaluation: EirEvaluation) => void;
+    /**
+     * Tests only: fail an upload at one of its writes, to prove a failure at
+     * any of them saves nothing from it (#204). The app never sets it.
+     */
+    writeFailpoint?: (write: EirUploadWrite) => void;
+    /**
+     * The deploy-time approval settings (#204): `manual-validator`, with only
+     * `pass` qualifying, when unset. The app's EIRs are on the server, which
+     * reads its own (`src/server/eir-approval-mode.ts`).
+     */
+    approval?: EirApprovalConfig;
   } = {},
 ): MemoryEirRepository {
   const clock = options.clock ?? (() => new Date());
@@ -309,7 +460,21 @@ export function createMemoryEirRepository(
   const records = new Map(
     (options.initialRecords ?? []).map((record) => [record.principalId, clone(record)]),
   );
+  const approval = options.approval ?? DEFAULT_EIR_APPROVAL_CONFIG;
+  const evaluator = options.evaluator ?? evaluateEirDraft;
   const evaluations = new Map<string, EirEvaluation>();
+  /** Each person's last evaluation sequence: the next recorded pre-check is one higher (#204). */
+  const sequences = new Map<string, number>();
+  /** Record `evaluation` as `principalId`'s latest, with the next sequence; nothing if it can't be. */
+  const recordEvaluation = (principalId: string, evaluation: EirEvaluation) => {
+    const sequenced = { ...evaluation, sequence: (sequences.get(principalId) ?? 0) + 1 };
+    options.persistEvaluation?.(sequenced);
+    sequences.set(principalId, sequenced.sequence);
+    evaluations.set(principalId, clone(sequenced));
+    return sequenced;
+  };
+  /** preparePdf's answers by person and key, for an idempotent resend. */
+  const preparedPdfs = new Map<string, { intent: string; result: EirPreparedPdf }>();
   const empty = (principalId: string): EirRecord => ({
     principalId,
     personName: "",
@@ -496,29 +661,18 @@ export function createMemoryEirRepository(
       if (!prior.draftValues || !prior.draftStartedAt || !prior.draftVersion) {
         throw new EirDomainError("Save the EIR draft before evaluating it.", 409);
       }
-      const effectiveAt = clock().toISOString();
-      const { formVersion, definition } = definitionForDraft(prior, definitions);
-      let evaluation: EirEvaluation;
+      let { evaluation } = evaluatePinnedDraft({
+        evaluator,
+        definitions,
+        record: prior,
+        values: prior.draftValues,
+        draftVersion: prior.draftVersion,
+        draftStartedAt: prior.draftStartedAt,
+        effectiveAt: clock().toISOString(),
+        config: approval,
+      });
       try {
-        if (!definition) throw new Error("draft definition unavailable");
-        evaluation = (options.evaluator ?? evaluateEirDraft)({
-          definition,
-          values: prior.draftValues,
-          draftVersion: prior.draftVersion,
-          draftStartedAt: prior.draftStartedAt,
-          effectiveAt,
-        });
-      } catch {
-        evaluation = manualHandlingEvaluation({
-          draftVersion: prior.draftVersion,
-          effectiveAt,
-          formVersion,
-          ...(definition ? { definitionVersion: definition.form.version } : {}),
-        });
-      }
-      try {
-        options.persistEvaluation?.(evaluation);
-        evaluations.set(principalId, clone(evaluation));
+        evaluation = recordEvaluation(principalId, evaluation);
       } catch {
         throw Object.assign(
           new EirDomainError(
@@ -547,6 +701,57 @@ export function createMemoryEirRepository(
       const form = forms.byVersion(evaluation.formVersion);
       if (!form) throw new EirDomainError(EIR_UNAVAILABLE_MESSAGE, 503);
       return generateEirPdf(prior.draftValues, { recordId: prior.recordId ?? principalId, form });
+    },
+    preparePdf: async (input) => {
+      const { principalId } = input;
+      const intent = JSON.stringify([
+        input.values,
+        input.formVersion ?? null,
+        input.expectedDraftVersion,
+      ]);
+      const key = input.idempotencyKey && `${principalId}\u0000${input.idempotencyKey}`;
+      const done = key ? preparedPdfs.get(key) : undefined;
+      if (done) {
+        if (done.intent !== intent) throw new EirDomainError(EIR_KEY_REUSED_REFUSAL, 409);
+        return clone(done.result);
+      }
+      const before = { record: records.get(principalId), evaluation: evaluations.get(principalId) };
+      if ((current(principalId).draftVersion ?? 0) !== input.expectedDraftVersion) {
+        throw new EirDomainError(EIR_CHANGED_REFUSAL, 409);
+      }
+      try {
+        if (!current(principalId).recordId) await repository.start(principalId, input.personName);
+        await repository.saveDraft(
+          principalId,
+          input.values,
+          input.expectedDraftVersion,
+          input.formVersion,
+        );
+        const evaluation = await repository.evaluateDraft(principalId);
+        const record = await repository.get(principalId);
+        const result: EirPreparedPdf = {
+          record,
+          evaluation,
+          ...(evaluation.outcome === "blocking"
+            ? {}
+            : { pdf: await repository.generatePdf(principalId) }),
+        };
+        if (key) preparedPdfs.set(key, { intent, result: clone(result) });
+        return result;
+      } catch (error) {
+        // All or nothing: put the EIR back as it was.
+        if (before.record) records.set(principalId, before.record);
+        else records.delete(principalId);
+        if (before.evaluation) evaluations.set(principalId, before.evaluation);
+        else evaluations.delete(principalId);
+        if ((error as { draftWasSaved?: unknown }).draftWasSaved) {
+          throw new EirDomainError(
+            "The pre-check couldn't be completed or recorded. Nothing was saved. Try again.",
+            503,
+          );
+        }
+        throw error;
+      }
     },
     submitWithFile: async (input: EirFileSubmission): Promise<EirRecord> => {
       requireForm();
@@ -579,6 +784,13 @@ export function createMemoryEirRepository(
         `/Volumes/local/memory/eir/${input.principalId}/${Date.now()}-${globalThis.crypto.randomUUID()}.pdf`;
       const bytes = new Uint8Array(await input.file.arrayBuffer());
       const metadata = { sha256: await sha256(bytes), sizeBytes: bytes.length };
+      // The draft checked above must still be the one saved, as Delta's block guards.
+      if (current(input.principalId).draftVersion !== currentDraft.draftVersion) {
+        throw new EirDomainError(
+          "The evaluated draft changed before the upload was recorded.",
+          409,
+        );
+      }
       const renewing = isRenewalStage(withExpiry(clone(current(input.principalId))));
       // Work out the new record without saving it (submit and renew don't
       // await, so nothing else runs while it's staged), write the file, then save.
@@ -605,9 +817,60 @@ export function createMemoryEirRepository(
       const toSave = staged;
       staged = null;
       shownFormVersion = undefined;
-      const record = await pending;
+      let record = await pending;
+      // Automatic mode (#204): the pre-check again, at the upload. When it
+      // qualifies, the staged submission also carries the system's validity
+      // decision; either way the result is recorded with it, or nothing is.
+      let atUpload: EirEvaluation | undefined;
+      if (approval.mode === "automatic") {
+        const fresh = evaluatePinnedDraft({
+          evaluator,
+          definitions,
+          record: currentDraft,
+          values: input.values,
+          draftVersion: currentDraft.draftVersion,
+          draftStartedAt: currentDraft.draftStartedAt ?? clock().toISOString(),
+          effectiveAt: clock().toISOString(),
+          config: approval,
+        });
+        atUpload = { ...fresh.evaluation, sequence: (sequences.get(input.principalId) ?? 0) + 1 };
+        if (
+          qualifiesForAutomaticValidity({
+            config: approval,
+            atUpload,
+            definitionLoaded: fresh.definitionLoaded,
+          })
+        ) {
+          record = await withAutomaticValidity(record, {
+            clock,
+            validityDays: validityDays(),
+            reviewSlaBusinessDays: reviewDays(),
+            provenance: automaticValidityOf(atUpload, globalThis.crypto.randomUUID(), approval),
+          });
+          toSave.splice(toSave.length - 1, 1, clone(record));
+        }
+        try {
+          options.writeFailpoint?.("evaluation");
+          options.persistEvaluation?.(atUpload);
+        } catch {
+          throw new EirDomainError(
+            "The upload's pre-check couldn't be recorded, so nothing was submitted. Try again.",
+            503,
+          );
+        }
+      }
+      options.writeFailpoint?.("pdf");
       await options.fileStorage?.write(path, bytes, { overwrite: false });
+      // The record's own writes are one value, saved last: a failure at any
+      // of them (or anything before) saves nothing from this upload.
+      const recordWrites: EirUploadWrite[] = ["eir", "submission", "employee-action"];
+      if (record.actions.at(-1)?.automaticValidity) recordWrites.push("system-action");
+      for (const write of recordWrites) options.writeFailpoint?.(write);
       for (const saved of toSave) records.set(saved.principalId, saved);
+      if (atUpload) {
+        sequences.set(input.principalId, atUpload.sequence!);
+        evaluations.set(input.principalId, clone(atUpload));
+      }
       return record;
     },
     submit: async (principalId, personName, volumePath, values, response, metadata) => {

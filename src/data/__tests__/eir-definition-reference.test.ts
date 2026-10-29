@@ -99,8 +99,11 @@ describe("EIR definition schema reference (#219)", () => {
     });
     expect(byPath.get("form.sections[].fields[].maxLength")).toMatchObject({
       required: false,
+      type: "Whole number of 1 or more",
       whenOmitted: "254 characters for an email question, 200 for any other.",
     });
+    expect(byPath.get("timelines[].min")).toMatchObject({ type: "Whole number of 0 or more" });
+    expect(byPath.get("timelines[].max")).toMatchObject({ type: "Whole number of 0 or more" });
     for (const key of keys.filter((k) => !k.required)) {
       expect(key.whenOmitted, key.path).toMatch(/\w/);
     }
@@ -602,13 +605,17 @@ describe("disposition meanings match the repository (#219)", () => {
     expect(dispositions.find((d) => d.name === "blocking")).toMatchObject({
       pdf: "refused",
       upload: "refused",
-      automaticValidityEligible: false,
+      automaticValidity: "never",
     });
   });
 
-  it.each(dispositions.map((d) => [d.name, d] as const))(
-    "a %s rule does to the PDF, upload and automatic validity what the reference says",
-    async (name, effect) => {
+  it.each(
+    dispositions.flatMap((d) =>
+      [false, true].map((named) => [d.name, named ? "naming" : "not naming", d, named] as const),
+    ),
+  )(
+    "a %s rule does to the PDF, upload and automatic validity what the reference says (deploy %s it)",
+    async (name, _label, effect, named) => {
       const definition = ndaRuleAs(name);
       const impl = memoryImplementation(createClock(), {
         definitions: {
@@ -616,13 +623,18 @@ describe("disposition meanings match the repository (#219)", () => {
           byId: (id) => (id === definition.form.version ? definition : undefined),
         },
         shownFormVersion: definition.form.version,
+        approval: {
+          mode: "manual-validator",
+          // A deploy can name only pass and warning (src/data/eir/approval-mode.ts).
+          automaticValidityOutcomes: named && name === "warning" ? ["pass", "warning"] : ["pass"],
+        },
       });
       const repository = impl.as(APPLICANT);
       const values = { ...PASSING, ndaSigned: "no" };
       await repository.saveDraft(APPLICANT.principalId, values);
       expect(await repository.evaluateDraft(APPLICANT.principalId)).toMatchObject({
         outcome: name,
-        automaticValidityEligible: effect.automaticValidityEligible,
+        automaticValidityEligible: effect.automaticValidity === "if-configured" && named,
       });
       const generated = repository.generatePdf(APPLICANT.principalId);
       if (effect.pdf === "refused") await expect(generated).rejects.toThrow("Sign the IRS NDA");

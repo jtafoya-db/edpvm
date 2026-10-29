@@ -129,7 +129,7 @@ function TopNav({ route, go, prefetchRoute }) {
               padding: 0,
             }}
           >
-            {D.user.initials}
+            {D.user.initials || <AppIcon name="person" size={18} color="#fff" />}
           </button>
         </div>
       </div>

@@ -31,13 +31,13 @@ import { createStoreNames } from "../sql-builder.ts";
 import { createTransactionRunner } from "../transaction.ts";
 import { createSqliteWarehouse, type SqliteWarehouse } from "./sqlite-warehouse.ts";
 
-const TESS = { datasetId: DATASET_ID, name: "Tess Tester", email: "tess.tester@example.test" };
+const TESS = { datasetId: DATASET_ID, name: "Tess Tester", email: "tess.tester@example.gov" };
 /** A second seeded owner of the dataset. */
 const QUINN: UserProfile = {
   ...OWNER,
   principalId: "scim-owner-2",
   name: "Quinn Second",
-  email: "quinn@example.test",
+  email: "quinn@example.gov",
 };
 
 function twoOwnerSeed() {
@@ -98,7 +98,7 @@ describe("races between two sessions", () => {
 
     expect(results.map((r) => r.created).sort()).toEqual([false, true]);
     expect(results.flatMap((r) => r.entries)).toHaveLength(1);
-    expect(count(warehouse, "teams__dataset_members", "person_email = 'tess.tester@example.test'")).toBe(
+    expect(count(warehouse, "teams__dataset_members", "person_email = 'tess.tester@example.gov'")).toBe(
       1,
     );
     expect(count(warehouse, "change_list__change_list_entries")).toBe(1);
@@ -133,7 +133,7 @@ describe("races between two sessions", () => {
     const rejected = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
     expect(rejected).toHaveLength(1);
     expect(rejected[0]!.reason.code).toBe("duplicate");
-    expect(count(warehouse, "teams__dataset_members", "person_email = 'tess.tester@example.test'")).toBe(
+    expect(count(warehouse, "teams__dataset_members", "person_email = 'tess.tester@example.gov'")).toBe(
       1,
     );
     expect(count(warehouse, "change_list__change_list_entries")).toBe(1);
@@ -269,7 +269,7 @@ describe("what one action writes", () => {
     const second = await a.datasetRoles.addMember({
       ...TESS,
       name: "Uma Second",
-      email: "uma.second@example.test",
+      email: "uma.second@example.gov",
       role: "tester",
     });
     expect([...first.entries, ...second.entries].map((entry) => entry.id)).toEqual([
@@ -298,20 +298,20 @@ describe("what one action writes", () => {
 
   it("records an ADR-0006 refusal in its own commit, moving the owner's version, though the action is refused", async () => {
     const { a, warehouse } = twoSessions(OWNER, QUINN);
-    await a.datasetTeam.addOwner({ datasetId: DATASET_ID, name: "Drew", email: "drew@example.test" });
+    await a.datasetTeam.addOwner({ datasetId: DATASET_ID, name: "Drew", email: "drew@example.gov" });
     const drew = createDeltaHarness({
-      currentUser: async () => ({ ...STRANGER, principalId: "scim-drew", email: "drew@example.test" }),
+      currentUser: async () => ({ ...STRANGER, principalId: "scim-drew", email: "drew@example.gov" }),
       warehouse,
       datasetSeed: twoOwnerSeed(),
       groupNaming: TEST_GROUP_NAMING,
       roleDescriptions: TEST_ROLE_DESCRIPTIONS,
     });
-    await drew.store.datasetRoles.addMember({ ...TESS, role: "tester" }); // binds drew@example.test
+    await drew.store.datasetRoles.addMember({ ...TESS, role: "tester" }); // binds drew@example.gov
     expect(
       count(
         warehouse,
         "teams__email_bindings",
-        "email = 'drew@example.test' AND principal_id = 'scim-drew'",
+        "email = 'drew@example.gov' AND principal_id = 'scim-drew'",
       ),
     ).toBe(1);
     expect(count(warehouse, "teams__dataset_owner_actions", "action = 'bound'")).toBe(1);
@@ -320,7 +320,7 @@ describe("what one action writes", () => {
       currentUser: async () => ({
         ...STRANGER,
         principalId: "scim-impostor",
-        email: "drew@example.test",
+        email: "drew@example.gov",
       }),
       warehouse,
       datasetSeed: twoOwnerSeed(),
@@ -339,7 +339,7 @@ describe("what one action writes", () => {
     });
     expect(refusal!["actor_principal_id"]).toBe("scim-impostor");
     const [owner] = warehouse.query<{ version: number; last_action_id: string }>(
-      `SELECT version, last_action_id FROM "teams__dataset_owners" WHERE person_email = 'drew@example.test'`,
+      `SELECT version, last_action_id FROM "teams__dataset_owners" WHERE person_email = 'drew@example.gov'`,
     );
     expect(owner).toEqual({ version: 3, last_action_id: refusal!["action_id"] }); // added, bound, refused
     expect(count(warehouse, "teams__dataset_members", "role = 'developer'")).toBe(0);
@@ -347,7 +347,7 @@ describe("what one action writes", () => {
 
   it("refuses an owner-protected command whose claim wasn't made first, and names the actor from the session only", async () => {
     const { a, warehouse } = twoSessions(OWNER, QUINN);
-    await a.datasetTeam.addOwner({ datasetId: DATASET_ID, name: "Drew", email: "drew@example.test" });
+    await a.datasetTeam.addOwner({ datasetId: DATASET_ID, name: "Drew", email: "drew@example.gov" });
     const names = createStoreNames("edp_test", "");
     const runner = createTransactionRunner({
       client: warehouse.client,
@@ -363,7 +363,7 @@ describe("what one action writes", () => {
     const drew: SessionUser = {
       principalId: "scim-drew",
       displayName: "Drew",
-      email: "drew@example.test",
+      email: "drew@example.gov",
       isAdmin: false,
       onboardingReviewerRoles: [],
     };
@@ -381,15 +381,15 @@ describe("what one action writes", () => {
 
   it("records an access-refused row when a non-cooperating client calls a protected command directly on a mismatch", async () => {
     const { a, warehouse } = twoSessions(OWNER, QUINN);
-    await a.datasetTeam.addOwner({ datasetId: DATASET_ID, name: "Drew", email: "drew@example.test" });
+    await a.datasetTeam.addOwner({ datasetId: DATASET_ID, name: "Drew", email: "drew@example.gov" });
     const drew = createDeltaHarness({
-      currentUser: async () => ({ ...STRANGER, principalId: "scim-drew", email: "drew@example.test" }),
+      currentUser: async () => ({ ...STRANGER, principalId: "scim-drew", email: "drew@example.gov" }),
       warehouse,
       datasetSeed: twoOwnerSeed(),
       groupNaming: TEST_GROUP_NAMING,
       roleDescriptions: TEST_ROLE_DESCRIPTIONS,
     });
-    await drew.store.datasetRoles.addMember({ ...TESS, role: "tester" }); // binds drew@example.test
+    await drew.store.datasetRoles.addMember({ ...TESS, role: "tester" }); // binds drew@example.gov
 
     // A client that skips the ownership read and its refusal call, and sends
     // the protected command straight to the runner.
@@ -411,7 +411,7 @@ describe("what one action writes", () => {
     const impostor: SessionUser = {
       principalId: "scim-impostor",
       displayName: "Imposter",
-      email: "drew@example.test",
+      email: "drew@example.gov",
       isAdmin: false,
       onboardingReviewerRoles: [],
     };
@@ -425,7 +425,7 @@ describe("what one action writes", () => {
         payload: {
           datasetId: DATASET_ID,
           name: "New Member",
-          email: "new.member@example.test",
+          email: "new.member@example.gov",
           role: "developer",
         },
       }),
@@ -441,7 +441,7 @@ describe("what one action writes", () => {
       refusedPrincipalId: "scim-impostor",
     });
     expect(refusal!["actor_principal_id"]).toBe("scim-impostor");
-    expect(count(warehouse, "teams__dataset_members", "person_email = 'new.member@example.test'")).toBe(
+    expect(count(warehouse, "teams__dataset_members", "person_email = 'new.member@example.gov'")).toBe(
       0,
     );
   });
@@ -483,6 +483,337 @@ describe("the change list's stage is derived (ADR-0008)", () => {
     ).toEqual([
       { action: "listed", from_stage: null, to_stage: "pending", actor_app: "tenant" },
       { action: "applied", from_stage: "pending", to_stage: "applied", actor_app: "staff" },
+    ]);
+  });
+
+  it("refuses with 409 when a matching removal reaches the store after the apply plan read", async () => {
+    const { a, warehouse, clock } = twoSessions(OWNER, QUINN);
+    const staff = createDeltaHarness({
+      currentUser: async () => STAFF,
+      warehouse,
+      now: clock.now,
+      datasetSeed: twoOwnerSeed(),
+      groupNaming: TEST_GROUP_NAMING,
+      roleDescriptions: TEST_ROLE_DESCRIPTIONS,
+    });
+    await a.datasetRoles.addMember({ ...TESS, role: "tester" });
+    const entry = warehouse.query<{ id: string; version: number }>(
+      `SELECT id, version FROM "change_list__change_list_entries"`,
+    )[0]!;
+    const { id, version } = entry;
+    const execute = warehouse.client.execute.bind(warehouse.client);
+    let injected = false;
+    warehouse.client.execute = async (statement, tag) => {
+      if (
+        !injected &&
+        statement.statement.startsWith("BEGIN ATOMIC") &&
+        statement.statement.includes("change_list_applications")
+      ) {
+        injected = true;
+        await a.datasetTeam.removeMember({ ...TESS, role: "tester" });
+      }
+      return execute(statement, tag);
+    };
+
+    const response = await staff.fetch("http://edp.test/api/commands/change-list/mark-applied", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        idempotencyKey: "00000000-0000-4000-8000-000000000311",
+        expectedVersion: version,
+        payload: { entryId: id },
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "superseded", message: "This change is no longer pending." },
+    });
+    expect(count(warehouse, "change_list__change_list_applications")).toBe(0);
+  });
+
+  it("does not let a matching email override differing principal IDs in the commit guard", async () => {
+    const { a, warehouse, clock } = twoSessions(OWNER, QUINN);
+    const staff = createDeltaHarness({
+      currentUser: async () => STAFF,
+      warehouse,
+      now: clock.now,
+      datasetSeed: twoOwnerSeed(),
+      groupNaming: TEST_GROUP_NAMING,
+      roleDescriptions: TEST_ROLE_DESCRIPTIONS,
+    });
+    await a.datasetRoles.addMember({ ...TESS, role: "tester" });
+    warehouse.query(
+      `UPDATE "change_list__change_list_entries" SET person_principal_id = 'scim-tess-old'`,
+    );
+    const entry = warehouse.query<{ id: string; version: number }>(
+      `SELECT id, version FROM "change_list__change_list_entries"`,
+    )[0]!;
+    const { id, version } = entry;
+    const execute = warehouse.client.execute.bind(warehouse.client);
+    let injected = false;
+    warehouse.client.execute = async (statement, tag) => {
+      if (
+        !injected &&
+        statement.statement.startsWith("BEGIN ATOMIC") &&
+        statement.statement.includes("change_list_applications")
+      ) {
+        injected = true;
+        await a.datasetTeam.removeMember({ ...TESS, role: "tester" });
+        warehouse.query(
+          `UPDATE "change_list__change_list_entries" SET person_principal_id = 'scim-tess-new' WHERE id <> :id`,
+          { id },
+        );
+      }
+      return execute(statement, tag);
+    };
+
+    const response = await staff.fetch("http://edp.test/api/commands/change-list/mark-applied", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        idempotencyKey: "00000000-0000-4000-8000-000000000312",
+        expectedVersion: version,
+        payload: { entryId: id },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(count(warehouse, "change_list__change_list_applications")).toBe(1);
+  });
+});
+
+describe("change-list membership observation uses the real server reader", () => {
+  it("rebuilds cached applications and owner visibility before adding snapshot verification", async () => {
+    const registry = createRegistry();
+    registerTeamsArea(registry, {
+      now: () => new Date("2026-10-01T12:00:00.000Z"),
+      groupMembershipReader: {
+        latestRun: async () => ({
+          runId: "run-88",
+          startedAt: "2026-10-01T11:58:00.000Z",
+          endedAt: "2026-10-01T11:59:00.000Z",
+          status: "succeeded",
+          groupsExpected: ["g88"],
+          groupsRead: ["g88"],
+          complete: true,
+        }),
+        listMemberships: async () => [
+          {
+            groupName: "edp-refund_anomalies-tester",
+            groupId: "g88",
+            kind: "dataset",
+            domain: "individual-filing",
+            datasetTag: "refund_anomalies",
+            managedBy: "manual",
+            userId: "scim-tess-1",
+            email: "tess.tester@example.gov",
+            displayName: "Tess Tester",
+            firstSeen: "2026-10-01T11:58:00.000Z",
+            lastSeen: "2026-10-01T11:59:00.000Z",
+          },
+        ],
+        listHistory: async () => ({ rows: [], nextCursor: null }),
+      },
+    });
+    const tables = new Map<string, Record<string, unknown>[]>([
+      [
+        "change_list.change_list_entries",
+        [
+          {
+            id: "entry-1",
+            display_number: 1,
+            kind: "add-member",
+            reason: "dataset-role-added",
+            dataset_id: DATASET_ID,
+            group_name: "edp-refund_anomalies-tester",
+            role: "tester",
+            target_payload: null,
+            person_display: "Tess Tester",
+            person_email: "tess.tester@example.gov",
+            person_principal_id: null,
+            grants: ["SELECT"],
+            version: 1,
+            created_at: "2026-10-01T11:00:00.000Z",
+            created_by_principal_id: OWNER.principalId,
+            caused_by_action_id: null,
+          },
+        ],
+      ],
+      [
+        "change_list.change_list_applications",
+        [
+          {
+            change_list_entry_id: "entry-1",
+            created_at: "2026-10-01T11:30:00.000Z",
+            created_by_principal_id: STAFF.principalId,
+          },
+        ],
+      ],
+      [
+        "initiatives.datasets",
+        [
+          {
+            id: DATASET_ID,
+            initiative_id: "INI-001",
+            name: "Refund anomaly scores",
+            domain_tag: "individual-filing",
+            dataset_tag: "refund_anomalies",
+            version: 1,
+          },
+        ],
+      ],
+      [
+        "teams.dataset_owners",
+        [
+          {
+            id: "owner-1",
+            dataset_id: DATASET_ID,
+            source: "seed",
+            person_display: OWNER.name,
+            person_email: OWNER.email,
+            person_principal_id: OWNER.principalId,
+            bound_at: null,
+            version: 1,
+            created_at: "2026-09-01T00:00:00.000Z",
+            created_by_principal_id: "system",
+            last_action_id: null,
+          },
+        ],
+      ],
+      ["teams.dataset_owner_actions", []],
+      ["teams.dataset_member_actions", []],
+    ]);
+    const snapshot = {
+      table: <T>(schema: string, table: string) =>
+        structuredClone(tables.get(`${schema}.${table}`) ?? []) as T[],
+      stats: () => ({ loadedAt: 0, elapsedMs: 0, rowCounts: {}, approxBytes: 0 }),
+    };
+    const definition = registry.findRead("change-list", "entries")!;
+    const context = (user: SessionUser) => ({
+      query: {},
+      user,
+      names: createStoreNames("catalog"),
+      snapshot,
+    });
+    const owner = {
+      principalId: OWNER.principalId,
+      displayName: OWNER.name,
+      email: OWNER.email!,
+      isAdmin: false,
+      onboardingReviewerRoles: [],
+    };
+
+    expect(await definition.snapshot!(context(owner))).toEqual([
+      expect.objectContaining({
+        id: "CL-0001",
+        applied: { by: STAFF.principalId, at: "2026-10-01T11:30:00.000Z" },
+        verified: { runId: "run-88", at: "2026-10-01T11:59:00.000Z" },
+      }),
+    ]);
+    expect(
+      await definition.snapshot!(
+        context({ ...owner, principalId: STRANGER.principalId, email: STRANGER.email! }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("reads snapshot metadata and rows through membershipReaderFor", async () => {
+    const registry = createRegistry();
+    registerTeamsArea(registry, {
+      membership: { catalog: "membership_catalog", schema: "membership" },
+      now: () => new Date("2026-10-01T12:00:00.000Z"),
+    });
+    const read = async <T extends object>({ statement }: { statement: string }): Promise<T[]> => {
+      if (statement.includes("change_list_entries")) {
+        return [
+          {
+            id: "entry-1",
+            display_number: 1,
+            kind: "add-member",
+            reason: "dataset-role-added",
+            dataset_id: DATASET_ID,
+            group_name: "edp-refund_anomalies-tester",
+            role: "tester",
+            target_payload: null,
+            person_display: "Tess Tester",
+            person_email: "tess.tester@example.gov",
+            person_principal_id: null,
+            grants: '["SELECT"]',
+            version: 1,
+            created_at: "2026-10-01T11:00:00.000Z",
+            created_by_principal_id: OWNER.principalId,
+            from_role: null,
+            to_role: null,
+            applied_at: null,
+            applied_by_principal_id: null,
+          },
+        ] as T[];
+      }
+      if (statement.includes("initiatives`.`datasets")) {
+        return [
+          {
+            id: DATASET_ID,
+            initiative_id: "INI-001",
+            name: "Refund anomaly scores",
+            domain_tag: "individual-filing",
+            dataset_tag: "refund_anomalies",
+            version: 1,
+          },
+        ] as T[];
+      }
+      if (statement.includes("snapshot_runs")) {
+        return [
+          {
+            run_id: "run-88",
+            started_at: "2026-10-01T11:58:00.000Z",
+            ended_at: "2026-10-01T11:59:00.000Z",
+            status: "succeeded",
+            groups_expected: ["g88"],
+            groups_read: ["g88"],
+          },
+        ] as T[];
+      }
+      if (statement.includes("group_members")) {
+        return [
+          {
+            group_name: "edp-refund_anomalies-tester",
+            group_id: "g88",
+            kind: "dataset",
+            domain: "individual-filing",
+            dataset_tag: "refund_anomalies",
+            managed_by: "manual",
+            user_id: "scim-tess-1",
+            email: "tess.tester@example.gov",
+            display_name: "Tess Tester",
+            first_seen: "2026-10-01T11:58:00.000Z",
+            last_seen: "2026-10-01T11:59:00.000Z",
+            removed_at: null,
+          },
+        ] as T[];
+      }
+      return [];
+    };
+
+    const result = await registry.findRead("change-list", "entries")!.run({
+      query: {},
+      user: {
+        principalId: STAFF.principalId,
+        displayName: STAFF.name,
+        email: STAFF.email!,
+        isAdmin: true,
+        onboardingReviewerRoles: [],
+      },
+      names: createStoreNames("catalog"),
+      read: read as never,
+    });
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: "CL-0001",
+        applied: null,
+        verified: { runId: "run-88", at: "2026-10-01T11:59:00.000Z" },
+      }),
     ]);
   });
 });
