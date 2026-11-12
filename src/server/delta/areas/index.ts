@@ -15,15 +15,20 @@ import { registerMembershipArea, type MembershipAreaConfig } from "./membership.
 import { registerConfigurationArea } from "./configuration.ts";
 import { ACTIVE_PRIVACY_NOTICE, type PrivacyNotice } from "../../../data/privacy/notice";
 import type { LoadedAccessMatrix } from "../../access-matrix.ts";
+import type { ManagerDirectory } from "../../../data/manager-directory";
+import { createSimulatedManagerDirectory } from "../../manager-directory";
+import { registerManagerDirectoryArea } from "./manager-directory";
 
 export function createAppRegistry(
   notice: PrivacyNotice = ACTIVE_PRIVACY_NOTICE,
   membership?: MembershipAreaConfig,
   accessMatrix?: () => LoadedAccessMatrix,
+  managerDirectory: ManagerDirectory = createSimulatedManagerDirectory(),
 ): Registry {
   const registry = createRegistry();
   registerAdminArea(registry);
   registerEirArea(registry);
+  registerManagerDirectoryArea(registry, managerDirectory);
   registerEirDefinitionsArea(registry);
   registerOnboardingArea(registry);
   registerPrivacyArea(registry, notice);

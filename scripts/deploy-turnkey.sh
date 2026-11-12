@@ -40,7 +40,8 @@
 # (PLAN GATE: no schema/volume delete or recreate; then build locally, stage
 # the build into databricks-app/, bundle deploy --auto-approve, bundle run) ->
 # provision_store -> EIR schema/volume (CREATE IF NOT EXISTS) -> grants
-# (validator + app service principal) -> app URL. In the MVP the EDP admin
+# (validator + app service principal) -> post-deploy smoke
+# (scripts/post-deploy-smoke.sh) -> app URL. In the MVP the EDP admin
 # group (edp_admin_group_id) holds every staff role, the Safeguards validator
 # role included (#226); the per-role group vars are reserved and ignored.
 # The EIR schema/volume and the app-SP + validator catalog grants are applied
@@ -73,6 +74,7 @@ PRODUCTION=no
 APPLY_GRANTS=1
 GRANTS_ONLY=0
 GRANT_VALIDATOR_VOLUME=0
+SKIP_SMOKE=0
 EXPLICIT_APP_NAME=""
 PASSTHROUGH=() # args forwarded verbatim to databricks and deploy.sh (-t, -p, --var ...)
 VAR_ARGS=()    # just the --var pairs, for the preflight
@@ -81,6 +83,7 @@ usage() {
   cat >&2 <<'USAGE'
 usage: scripts/deploy-turnkey.sh -t <target> [-p <profile>] [--production] \
          [--grants-only | --skip-grants] [--grant-validator-volume-read] \
+         [--skip-post-deploy-smoke] \
          --var catalog=<name> --var sql_warehouse_id=<id> [--var ...]
 
   -t, --target   bundle target (preview | dev | govdev | prod). Required.
@@ -104,6 +107,12 @@ usage: scripts/deploy-turnkey.sh -t <target> [-p <profile>] [--production] \
                  validator role in the MVP, direct USE SCHEMA + READ VOLUME
                  on the EIR volume (off by default: validators read PDFs
                  through the app). Record the decision.
+  --skip-post-deploy-smoke
+                 REDUCED ASSURANCE: don't run the post-deploy smoke (step 8),
+                 and don't require a token for it up front. Use only when the
+                 profile can't mint one: `databricks auth token` works only for
+                 U2M (`databricks auth login`) profiles, not PAT or M2M. Run
+                 scripts/post-deploy-smoke.sh from a U2M profile afterwards.
 USAGE
   exit 2
 }
@@ -146,6 +155,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --grant-validator-volume-read)
       GRANT_VALIDATOR_VOLUME=1
+      shift
+      ;;
+    --skip-post-deploy-smoke)
+      SKIP_SMOKE=1
       shift
       ;;
     --var)
@@ -271,10 +284,10 @@ assert_narrow_principal() {
   esac
 }
 
-echo "==> [1/8] preflight: required inputs, and the catalog exists"
+echo "==> [1/9] preflight: required inputs, and the catalog exists"
 node scripts/deploy-preflight.ts "${VAR_ARGS[@]}" -t "$TARGET" "${PROFILE_ARG[@]}"
 
-echo "==> [2/8] bundle validate + resolved-config gate"
+echo "==> [2/9] bundle validate + resolved-config gate"
 CONFIG_JSON="$(databricks bundle validate "${PASSTHROUGH[@]}" -o json)"
 # Gate the RESOLVED configuration (not just CLI vars): the rendered store and
 # EIR catalogs must match, and no app env entry may be value-less — this catches
@@ -311,8 +324,31 @@ fi
 echo "    resolved config is valid (store/EIR catalog = ${STORE_CATALOG}; prefix = '${STORE_PREFIX}'; no value-less env)."
 echo "    store schemas from the DDL: ${STORE_SCHEMAS}"
 
+# The post-deploy smoke (step 8) needs a Bearer token for the app URL. Check it
+# can get one NOW, before any workspace mutation, so a PAT or M2M profile fails
+# here instead of after provisioning and grants. The token itself is discarded.
+SMOKE_RERUN="scripts/post-deploy-smoke.sh ${APP_NAME}${PROFILE:+ -p $PROFILE}"
+if [[ "$GRANTS_ONLY" -eq 0 && "$SKIP_SMOKE" -eq 0 ]]; then
+  token_err="$(mktemp)"
+  smoke_token=""
+  if token_json="$(databricks auth token "${PROFILE_ARG[@]}" 2>"$token_err")"; then
+    smoke_token="$(printf '%s' "$token_json" | node scripts/post-deploy-smoke.ts --read access-token)"
+  fi
+  token_detail="$(tr -d '\r' <"$token_err")"
+  rm -f "$token_err"
+  unset token_json
+  if [[ -z "$smoke_token" ]]; then
+    echo "deploy-turnkey: the post-deploy smoke can't get a token: 'databricks auth token${PROFILE:+ -p $PROFILE}' failed${token_detail:+: $token_detail}" >&2
+    echo "  It works only for U2M profiles (databricks auth login${PROFILE:+ -p $PROFILE}); PAT and M2M profiles can't mint one." >&2
+    echo "  Nothing was changed. Log in with U2M, or pass --skip-post-deploy-smoke to deploy without the smoke (reduced assurance)." >&2
+    exit 1
+  fi
+  unset smoke_token
+  echo "    post-deploy smoke can get a token (databricks auth token${PROFILE:+ -p $PROFILE})."
+fi
+
 if [[ "$GRANTS_ONLY" -eq 1 ]]; then
-  echo "==> [3-6/8] --grants-only: skipping build, bundle deploy/run, provisioning and EIR create"
+  echo "==> [3-6/9] --grants-only: skipping build, bundle deploy/run, provisioning and EIR create"
   # scripts/deploy.sh enforces this on a full run; --grants-only never calls it,
   # and would otherwise grant the production app's SP on this target's schemas.
   if [[ "$TARGET" != prod && "$APP_NAME" == edp-vending-machine ]]; then
@@ -320,7 +356,7 @@ if [[ "$GRANTS_ONLY" -eq 1 ]]; then
     exit 1
   fi
 else
-  echo "==> [3/8] plan gate, build + deploy (scripts/deploy.sh)"
+  echo "==> [3/9] plan gate, build + deploy (scripts/deploy.sh)"
   # scripts/deploy.sh runs the PLAN GATE first: `bundle plan -o json` piped to
   # `bundle-config.ts --check-plan`, which fails if any UC schema or volume would
   # be deleted or recreated (#141: signed EIR records and PDFs must survive any
@@ -335,13 +371,13 @@ else
   # The marker deploy.sh requires: it refuses to run unless this wrapper calls it.
   EDP_DEPLOY_VIA_TURNKEY=1 scripts/deploy.sh "${DEPLOY_ARGS[@]}"
 
-  echo "==> [4/8] bundle run provision_store (store schemas + tables, idempotent)"
+  echo "==> [4/9] bundle run provision_store (store schemas + tables, idempotent)"
   databricks bundle run provision_store "${PASSTHROUGH[@]}"
 
-  echo "==> [5/8] bundle run provision_membership_snapshot (membership tables, idempotent)"
+  echo "==> [5/9] bundle run provision_membership_snapshot (membership tables, idempotent)"
   databricks bundle run provision_membership_snapshot "${PASSTHROUGH[@]}"
 
-  echo "==> [6/8] EIR schema + volume (CREATE IF NOT EXISTS, idempotent)"
+  echo "==> [6/9] EIR schema + volume (CREATE IF NOT EXISTS, idempotent)"
   # For prod these are also bundle-managed (with lifecycle.prevent_destroy, so
   # `bundle destroy` refuses to drop them); the IF NOT EXISTS here is a no-op there and the real create for preview/dev,
   # where mode:development would rewrite a bundle-managed UC name.
@@ -424,7 +460,7 @@ require_object() {
 }
 
 if [[ "$APPLY_GRANTS" -eq 1 ]]; then
-  echo "==> [7/8] UC grants (validator group + app service principal)"
+  echo "==> [7/9] UC grants (validator group + app service principal)"
 
   VALIDATOR_NAME=""
   if [[ "$GRANT_VALIDATOR_VOLUME" -eq 1 ]]; then
@@ -465,8 +501,20 @@ print(json.load(sys.stdin).get("service_principal_client_id", ""))')"
   fi
   GRANT_PASS=apply apply_grants
 else
-  echo "==> [7/8] skipping UC grants (--skip-grants)"
+  echo "==> [7/9] skipping UC grants (--skip-grants)"
 fi
 
-echo "==> [8/8] done. App URL:"
+if [[ "$GRANTS_ONLY" -eq 1 ]]; then
+  echo "==> [8/9] --grants-only: skipping the post-deploy smoke"
+elif [[ "$SKIP_SMOKE" -eq 1 ]]; then
+  echo "==> [8/9] skipping the post-deploy smoke (--skip-post-deploy-smoke)"
+  echo "deploy-turnkey: REDUCED ASSURANCE: the deployment state, runtime env and /api/seed-config were NOT checked. Check them from a U2M profile: ${SMOKE_RERUN}" >&2
+else
+  echo "==> [8/9] post-deploy smoke (deployment state, runtime env, GET /api/seed-config)"
+  # After provisioning and grants, so a smoke failure never leaves them unapplied.
+  # Re-run it by hand to diagnose: scripts/post-deploy-smoke.sh <app> [-p <profile>].
+  scripts/post-deploy-smoke.sh "$APP_NAME" "${PROFILE_ARG[@]}"
+fi
+
+echo "==> [9/9] done. App URL:"
 databricks apps get "$APP_NAME" "${PROFILE_ARG[@]}" -o json | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("url","(not available)"))'

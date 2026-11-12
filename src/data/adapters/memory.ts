@@ -35,9 +35,11 @@ import {
 import { ACTIVE_PRIVACY_NOTICE } from "../privacy/notice";
 import type { PrivacyAcknowledgmentRepository } from "../privacy/repository";
 import { createMemoryGroupMembershipReader } from "../group-membership";
+import type { ManagerDirectory } from "../manager-directory";
 
 /** Optional overrides for the dataset/change-list and onboarding repositories. Tests inject these. */
 export interface MemoryStoreOptions extends AccessStoreOptions {
+  managerDirectory?: ManagerDirectory;
   /** Who is signed in; replaces `catalog.getUser()` (the real `/api/session` identity). */
   currentUser?: () => Promise<UserProfile>;
   clock?: EirClock;
@@ -224,6 +226,10 @@ export function createMemoryStore(
     options.eirForms ?? memoryEirFormSource(definitions.forms, definitions.definitions);
 
   return {
+    managerDirectory: options.managerDirectory ?? {
+      active: false,
+      managerOf: async () => ({ active: false, state: "missing" }),
+    },
     groupMemberships:
       options.groupMembershipReader ??
       createMemoryGroupMembershipReader([], async () =>

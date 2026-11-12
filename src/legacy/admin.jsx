@@ -95,7 +95,7 @@ function BundleMapping({ go }) {
       <window.Panel pad={0} style={{ overflow: "hidden" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderBottom: "1px solid var(--border-default)" }}>
           <h3 style={{ fontFamily: "var(--font-sans)", fontSize: "var(--font-size-2xs)", fontWeight: 700, margin: 0 }}>Access bundle registry · {D.bundles.length}</h3>
-          <button style={{ ...primaryBtn, padding: "7px 13px", fontSize: "var(--font-size-3xs)" }}><AppIcon name="add" size={15} color="#fff" /> New bundle</button>
+          <button style={{ ...primaryBtn, padding: "7px 13px", fontSize: "var(--font-size-3xs)" }}><AppIcon name="add" size={15} color="var(--text-on-fill)" /> New bundle</button>
         </div>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
@@ -223,7 +223,7 @@ function ProvisioningHealth({ go, ctx }) {
                   <div style={{ color: "var(--color-gray-cool-30)" }}>Catalog does not exist for tenant. Approvals OK; create catalog then retry.</div>
                 </div>
                 <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-                  <button onClick={() => ctx.flash("Retry queued — provisioning will re-run")} style={{ ...primaryBtn, flex: 1, justifyContent: "center", padding: 11 }}><AppIcon name="refresh" size={16} color="#fff" /> Retry</button>
+                  <button onClick={() => ctx.flash("Retry queued — provisioning will re-run")} style={{ ...primaryBtn, flex: 1, justifyContent: "center", padding: 11 }}><AppIcon name="refresh" size={16} color="var(--text-on-fill)" /> Retry</button>
                   <button onClick={() => ctx.flash("Opened mapping editor")} style={{ ...outlineBtn, flex: 1, justifyContent: "center", padding: 11 }}><AppIcon name="tune" size={16} color="var(--theme-primary)" /> Remap</button>
                 </div>
                 <div style={{ fontSize: "var(--font-size-micro)", color: "var(--text-muted)", marginTop: 12, lineHeight: 1.5 }}>Audit history is preserved. The requester is notified automatically; they don't need to resubmit.</div>
@@ -665,7 +665,7 @@ function PipelineTracker({ go, ctx }) {
   const counts = (k) => items.filter((i) => i.state === k).length;
 
   const chip = (on) => ({
-    background: on ? "var(--theme-primary)" : "var(--surface-default)", color: on ? "#fff" : "var(--color-gray-cool-70)",
+    background: on ? "var(--theme-primary-fill)" : "var(--surface-default)", color: on ? "var(--text-on-fill)" : "var(--color-gray-cool-70)",
     border: on ? "1.5px solid var(--theme-primary)" : "1px solid var(--border-default)", borderRadius: 999,
     padding: "6px 12px", fontSize: "var(--font-size-3xs)", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)",
   });
@@ -742,7 +742,7 @@ function PipelineTracker({ go, ctx }) {
             </div>
             <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
               <button onClick={() => ctx.flash("Decision recorded and synced to " + cur.jira)} style={{ ...primaryBtn, flex: 1, justifyContent: "center", padding: 10 }}>
-                <AppIcon name="check" size={16} color="#fff" /> Record decision
+                <AppIcon name="check" size={16} color="var(--text-on-fill)" /> Record decision
               </button>
               <a href={JIRA_BASE + cur.jira} target="_blank" rel="noreferrer" style={{ ...outlineBtn, flex: 1, justifyContent: "center", padding: 9, textDecoration: "none" }}>
                 <AppIcon name="launch" size={16} color="var(--theme-primary)" /> Open in Jira

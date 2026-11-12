@@ -23,6 +23,10 @@ export * from "./queries";
 export { useWriteIntent, type WriteIntents } from "./intent";
 export { intakeAnswers, toOnboardingIntake } from "./intake";
 export {
+  exportOnboardingPackageMarkdown,
+  type OnboardingMarkdownExportOptions,
+} from "./markdown-export";
+export {
   INITIATIVE_OWNER_ID,
   initiativeOwnerText,
   isPrincipalIdFormat,

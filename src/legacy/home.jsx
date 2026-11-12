@@ -23,11 +23,11 @@ function HomeScreen({ ctx }) {
   return (
     <div>
       {/* hero */}
-      <div style={{ background: "linear-gradient(180deg, var(--surface-dark) 0%, #1b3a63 100%)", color: "#fff" }}>
+      <div style={{ background: "linear-gradient(180deg, var(--surface-dark) 0%, #1b3a63 100%)", color: "var(--text-on-fill)" }}>
         <div style={{ maxWidth: 1240, margin: "0 auto", padding: "64px 24px 72px" }}>
           <div style={{ maxWidth: 720 }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "rgba(255,255,255,.1)", border: "1px solid rgba(255,255,255,.18)", borderRadius: "var(--radius-pill)", padding: "5px 13px", fontSize: "var(--font-size-3xs)", fontWeight: 600, marginBottom: 22 }}>
-              <AppIcon name="account_balance" size={15} color="#fff" /> A Databricks App for the IRS Enterprise Data Platform
+              <AppIcon name="account_balance" size={15} color="var(--text-on-fill)" /> A Databricks App for the IRS Enterprise Data Platform
             </div>
             <h1 style={{ fontFamily: "var(--font-heading)", fontSize: "var(--font-size-3xl)", fontWeight: 700, lineHeight: 1.1, margin: "0 0 16px", letterSpacing: "-.01em" }}>
               Onboard new data into the Enterprise Data Platform.
@@ -39,10 +39,10 @@ function HomeScreen({ ctx }) {
             </p>
             <button
               onClick={() => go("onboarding")}
-              style={{ display: "inline-flex", alignItems: "center", gap: 9, background: "var(--theme-primary)", color: "#fff", border: "none", borderRadius: "var(--radius-md)", padding: "14px 24px", fontFamily: "var(--font-sans)", fontSize: "var(--font-size-sm)", fontWeight: 700, cursor: "pointer", boxShadow: "var(--shadow-3)" }}
+              style={{ display: "inline-flex", alignItems: "center", gap: 9, background: "var(--theme-primary-fill)", color: "var(--text-on-fill)", border: "none", borderRadius: "var(--radius-md)", padding: "14px 24px", fontFamily: "var(--font-sans)", fontSize: "var(--font-size-sm)", fontWeight: 700, cursor: "pointer", boxShadow: "var(--shadow-3)" }}
             >
-              <AppIcon name="database" size={19} color="#fff" /> Start the onboarding wizard
-              <AppIcon name="arrow_forward" size={18} color="#fff" />
+              <AppIcon name="database" size={19} color="var(--text-on-fill)" /> Start the onboarding wizard
+              <AppIcon name="arrow_forward" size={18} color="var(--text-on-fill)" />
             </button>
           </div>
         </div>
@@ -78,9 +78,9 @@ function HomeScreen({ ctx }) {
             </div>
             <button
               onClick={() => go("onboarding")}
-              style={{ display: "inline-flex", alignItems: "center", gap: 9, background: "var(--theme-primary)", color: "#fff", border: "none", borderRadius: "var(--radius-md)", padding: "13px 22px", fontFamily: "var(--font-sans)", fontSize: "var(--font-size-2xs)", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
+              style={{ display: "inline-flex", alignItems: "center", gap: 9, background: "var(--theme-primary-fill)", color: "var(--text-on-fill)", border: "none", borderRadius: "var(--radius-md)", padding: "13px 22px", fontFamily: "var(--font-sans)", fontSize: "var(--font-size-2xs)", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}
             >
-              <AppIcon name="database" size={17} color="#fff" /> Launch onboarding wizard
+              <AppIcon name="database" size={17} color="var(--text-on-fill)" /> Launch onboarding wizard
             </button>
           </Panel>
         </div>

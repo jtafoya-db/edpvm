@@ -104,7 +104,10 @@ Configure npm to run scripts with Git Bash's `bash.exe`, because
 rejects. For example, run
 `npm config set script-shell "C:\Program Files\Git\bin\bash.exe"`. Run
 `export MSYS_NO_PATHCONV=1` in the Git Bash session before the deploy script so
-MSYS does not rewrite Databricks CLI arguments as Windows paths. Keep Git
+MSYS does not rewrite Databricks CLI arguments as Windows paths. (`deploy.sh`
+and `post-deploy-smoke.sh` also export it themselves, and pass native programs
+only paths relative to the checkout, so the `/Workspace/...` arguments to
+`workspace export-dir`/`import-dir` reach the CLI unchanged.) Keep Git
 Bash's `/usr/bin` ahead of `C:\Windows\System32` on `PATH` (the Git Bash
 default), because the deploy script uses Git Bash's `find`, `sort`, and
 `env -u`.
@@ -203,12 +206,61 @@ only if a dependency manifest reaches `databricks-app/`, so
 anything except `app.yaml`, `serve.mjs`, `build-info.json`, `server/` and
 `public/`.
 
-`app.yaml` sets the default production env. When you deploy from the bundle,
-the app `config` in `databricks.yml` supplies the command and env, and its
-`command` must match `app.yaml`'s; a test checks this. That precedence has been
-observed on preview and synthetic-demo deploys, not yet on production. Runtime-only settings
-stay in that app config: `EIR_*`, `EDP_STORE_*`, `NODE_ENV` and the group ids.
+The committed `app.yaml` holds the default production env, and its `command`
+must match the bundle's (a test checks this). **It is not what gets uploaded.**
+The CLI's `bundle deploy` uploads the app source and sends the target's app
+`config` (command and env) in the Apps deployment request. GovCloud's Apps
+service ignored those request fields, so the app ran with the committed
+`app.yaml`, which has no `VITE_DATA_BACKEND` or `EDP_CLIENT_MINIFIED`, and
+`serve.mjs` exited. So `scripts/deploy.sh` now overwrites the staged
+`app.yaml` with one generated from what `bundle validate -o json` resolved for
+the target (`resources.apps.edp_vending_machine.config`: command and env,
+`value_from` written as `valueFrom`, every value a string;
+[`src/deploy/appYaml.ts`](../src/deploy/appYaml.ts)). The uploaded file alone
+starts the app correctly, whether the platform honors the deployment env or
+not; where it does, both carry the same values. The script copies the
+committed file to `.output/app.yaml.committed` first and puts it back when it
+exits, so the checkout stays clean and a later deploy to another target starts
+from the committed file. If an interrupted run left a generated copy behind
+(its first line is `# GENERATED`), the next deploy refuses and tells you to run
+`git checkout -- databricks-app/app.yaml`. Runtime-only settings stay in the
+bundle's app config: `EIR_*`, `EDP_STORE_*`, `NODE_ENV` and the group ids.
 `VITE_DATA_BACKEND` is the only build-time setting.
+
+**Simulated EIR manager directory (#342).** The safe default is
+`EDP_SIMULATED_DIRECTORY_ENABLED=false` and `EDP_SIMULATED_DIRECTORY_STATE=missing`. A state other
+than `missing` is honored only when the enable flag is exactly `true` **and**
+`EDP_STORE_SCHEMA_PREFIX` is a PR preview prefix (`edp_vm_pr<N>_`). This two-part server guard means
+a production or pilot app cannot display a synthetic manager even if the enable flag is set by
+mistake. Inside a guarded PR preview, an unknown state becomes `sync-failed` for this panel; it does
+not prevent other reads or commands from starting. Outside a guarded preview, every configured
+value—including an unknown value—resolves to the safe `missing` state.
+Outside that guarded preview, the EIR page renders no manager-directory panel, stub notice, or
+loading text, and the browser does not request the manager-directory endpoint. The server exposes
+only a positive preview-active signal through the sanitized session profile; absent or unknown
+values fail closed to hidden.
+
+For PR-preview UAT, select one state at deploy time (repeat for each state being checked):
+
+```bash
+scripts/deploy-turnkey.sh -t preview -p example-workspace \
+  --var app_name=edp-vm-pr<N> \
+  --var catalog=example_catalog \
+  --var store_schema_prefix=edp_vm_pr<N>_ \
+  --var membership_schema=membership_pr<N> \
+  --var data_backend=delta \
+  --var sql_warehouse_id=1111111111111111 \
+  --var eir_volume_name=eir_pr<N> \
+  --var edp_admin_group_id=11111111111111 \
+  --var seed_dataset_owner_ids=<your-SCIM-user-id> \
+  --var simulated_manager_directory_enabled=true \
+  --var simulated_manager_directory_state=ok
+```
+
+The state may be `ok`, `missing`, `stale`, `ambiguous`, or `sync-failed`. The equivalent direct App
+environment settings are `EDP_SIMULATED_DIRECTORY_ENABLED` and
+`EDP_SIMULATED_DIRECTORY_STATE`, but the preview-prefix guard still applies. Never set these to
+show synthetic data on a pilot or production app.
 
 ## Deploy — `scripts/deploy-turnkey.sh`
 
@@ -309,6 +361,101 @@ to get an unminified build. The wrapper clears `EDP_UNMINIFIED_BUILD` for this
 target and refuses a `--var`/`BUNDLE_VAR_minify_client` override. The older
 `VITE_EDP_UNMINIFIED_BUILD=1` switch no longer exists and has no effect.
 
+After grants, the wrapper runs the post-deploy smoke,
+[`scripts/post-deploy-smoke.sh`](../scripts/post-deploy-smoke.sh) `<app>
+[-p <profile>]` (step 8). It fails unless `apps get` reports the active
+deployment `SUCCEEDED` with a URL, the deployment's `env_vars` (`apps
+get-deployment`) or the `app.yaml` in the deployment's workspace source sets
+`VITE_DATA_BACKEND` and `EDP_CLIENT_MINIFIED`, and an authenticated `GET
+<app-url>/api/seed-config` returns 200. The token comes from `databricks auth
+token -p <profile>`, which only works for U2M (`databricks auth login`)
+profiles. It reaches the HTTP client only on stdin, never in a command line or
+an environment variable: `curl -K -`, or node's `fetch` reading stdin when
+there's no `curl` (`EDP_SMOKE_HTTP_CLIENT=curl|node` forces one). It retries 502/503/504 and no-response up to
+`EDP_SMOKE_ATTEMPTS` (10) times, `EDP_SMOKE_DELAY_SECONDS` (6) apart, while the
+app starts. Each failure prints the next diagnostic command. It runs after
+provisioning and grants so a smoke failure never leaves them unapplied; it is
+skipped with `--grants-only`. Run it by hand any time to re-check an app.
+
+**Token check up front.** Right after the resolved-config gate (step 2), before
+anything is planned, built or uploaded, the wrapper runs `databricks auth
+token -p <profile>` and fails, changing nothing, if it can't get a token. A
+PAT or service-principal (M2M) profile fails there, not after provisioning and
+grants. To deploy with such a profile anyway, pass `--skip-post-deploy-smoke`:
+the wrapper skips the token check and step 8 and prints a `REDUCED ASSURANCE`
+warning with the command to run the smoke later from a U2M profile. Whether
+the Apps proxy accepts a PAT as the Bearer for the app URL has not been
+verified, so the smoke doesn't try one.
+
+### Diagnosing a GovCloud deploy
+
+The logs websocket may not be reachable from the deployer's network, so each
+failure class has a check that doesn't need it. Start with the probe:
+
+```bash
+scripts/post-deploy-smoke.sh <app-name> -p <profile>
+# or by hand:
+databricks auth token -p <profile>          # copy access_token
+curl -i -H "Authorization: Bearer <access_token>" <app-url>/api/seed-config
+```
+
+`/api/seed-config` answers before the server touches the store or SSR, so it
+works before provisioning and grants. Read the response:
+
+| Response                                           | Meaning                                                                                                                             | Next                                                                                                                                                                                                    |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `200 {"datasetOwnerIds":[...]}`                    | The launcher accepted its env and the server modules load.                                                                          | Look at the store and grants instead.                                                                                                                                                                   |
+| `502`/`503` "App Not Available"                    | `serve.mjs` exited at start: missing or mismatched `VITE_DATA_BACKEND` / `EDP_CLIENT_MINIFIED`, or bad SLA env.                     | `databricks apps get-deployment <app> <deployment-id> -p <profile> -o json`, and check the uploaded `app.yaml`: `databricks workspace export <source_code_path>/app.yaml --file app.yaml -p <profile>`. |
+| `500 {"error":true,"status":500,"unhandled":true}` | Nitro couldn't load a server module: files missing from the upload, or a module that throws at load (a Zod 3 / `(void 0).` bundle). | Export the workspace copy and diff it with the build (below). Rebuild from a clean `.output/`.                                                                                                          |
+| `500` with an HTML error page                      | The server loaded; this request's handler threw.                                                                                    | Reproduce locally with `node serve.mjs` (below).                                                                                                                                                        |
+| `302`/`401`/`403`                                  | Sign-in redirect or token refused.                                                                                                  | Check the profile with `databricks auth token -p <profile>`; re-run `databricks auth login`.                                                                                                            |
+
+Compare the upload with the build:
+
+```bash
+databricks workspace export-dir <source_code_path> /tmp/ws-copy -p <profile>
+node scripts/app-manifest.ts --write databricks-app .output/local.manifest.json
+node scripts/app-manifest.ts --verify .output/local.manifest.json /tmp/ws-copy
+```
+
+`<source_code_path>` is `active_deployment.source_code_path` in
+`databricks apps get <app> -p <profile> -o json`.
+
+Run the built server locally the way the app compute does:
+
+```bash
+EDP_UNMINIFIED_BUILD=1 VITE_DATA_BACKEND=delta npm run build:databricks
+npm run smoke:serve             # stages .output/, starts serve.mjs, GET /api/seed-config must be 200
+EDP_SMOKE_NODE=/path/to/node22 npm run smoke:serve   # Databricks Apps runs Node 22
+```
+
+`smoke:serve` defaults to `--backend delta --minified false` (the govdev
+build); pass `-- --backend memory --minified true` for a default `npm run
+build:databricks`. Those flags must describe how `.output/` was built, since
+`serve.mjs` checks them against the `build-info.json` the smoke writes, not
+against the bundle. On failure it prints `serve.mjs`'s output.
+
+**Manual recovery.** If a deploy uploaded a partial source and you need the app
+up without re-running the wrapper, upload the staged directory with the
+generated `app.yaml` and redeploy from it. `deploy.sh` restores the committed
+(production-default) `app.yaml` when it exits and keeps the generated one at
+`.output/app.yaml.generated`; never upload the committed one to a govdev app.
+
+```bash
+# from the checkout scripts/deploy.sh just staged (databricks-app/server, public, build-info.json)
+export MSYS_NO_PATHCONV=1
+cp .output/app.yaml.generated databricks-app/app.yaml
+# delete first: import-dir --overwrite never removes extra files.
+databricks workspace delete <source_code_path> --recursive -p <profile>
+databricks workspace import-dir databricks-app <source_code_path> --overwrite -p <profile>
+git checkout -- databricks-app/app.yaml
+databricks apps deploy <app-name> --source-code-path <source_code_path> -p <profile>
+scripts/post-deploy-smoke.sh <app-name> -p <profile>
+```
+
+Re-run `scripts/deploy-turnkey.sh` afterwards so the bundle state, provisioning
+and grants match.
+
 ### The build-and-ship step — `scripts/deploy.sh`
 
 The wrapper's step 3 is [`scripts/deploy.sh`](../scripts/deploy.sh), which
@@ -325,9 +472,16 @@ scripts/deploy.sh -t prod --production [-p <profile>] [--var …]
   1. databricks bundle validate <args> -o json   → resolved target, mode, app name, data_backend
   2. check the resolved values (below)
   3. databricks bundle plan <args> -o json        → plan gate: refuse any schema/volume delete or recreate
-  4. VITE_DATA_BACKEND=<data_backend> npm run build:databricks
-  5. stage .output/server, .output/public and build-info.json into databricks-app/
+  4. rm -rf .output .nitro; VITE_DATA_BACKEND=<data_backend> npm run build:databricks
+     (client gate + server bundle gate)
+  5. stage .output/server, .output/public and build-info.json into databricks-app/,
+     generate databricks-app/app.yaml from the resolved config and check it against
+     build-info.json, write .output/databricks-app.manifest.json
   6. databricks bundle deploy <args> --auto-approve
+  6a. databricks workspace export-dir <source_code_path> .output/databricks-app.workspace-copy -t <target> [-p <profile>]
+      → compare with the manifest; on any missing, different or extra file:
+        databricks workspace delete <source_code_path> --recursive
+        databricks workspace import-dir databricks-app <source_code_path> --overwrite, then compare again
   7. databricks bundle run edp_vending_machine <args>
 ```
 
@@ -384,8 +538,65 @@ when the checkout has uncommitted or untracked changes, so the app's start log
 shows a build that isn't a commit. `serve.mjs` refuses to start if any required
 runtime field is missing.
 
-The script clears the previous staged build before it builds, so a failed build
-leaves nothing to ship. After staging, and before `bundle deploy`, it validates
+The script clears the previous staged build and `.output/` (and `.nitro/`)
+before it builds, so a failed build leaves nothing to ship and a stale build
+can't be staged. `build:databricks` ends with the server bundle gate
+([`scripts/server-bundle-gate.mjs`](../scripts/server-bundle-gate.mjs)): it
+fails if the resolved `zod` isn't 4.x, if a server file carries Zod 3's
+schema-def signature `typeName: <kind>.Zod<Type>` (minified
+`typeName:e.ZodString`; `zod/v3` has 47 of these and `zod/v4` none, and Zod 4's
+compatibility `ZodFirstPartyTypeKind` enum alone isn't flagged), or calls both
+Zod 3 factories `objectType(` and `stringType(` (either alone could be
+unrelated code). It also fails if any server file has a `(void 0).<ident>(`
+call: an unresolved namespace member, as when `z.iso.date()` was bundled as
+`(void 0).date()`. That match runs on the whole file, so the call is caught
+whatever precedes it (`return(void 0).date()`) and however it's split across
+lines; line numbers come from the match offset. Zod 4's own
+`this.safeParse(void 0).success` is a property access, not a call, and
+passes. Before upload, the generated `app.yaml` must set
+`VITE_DATA_BACKEND` and `EDP_CLIENT_MINIFIED` to the values in
+`build-info.json`, run `node serve.mjs`, and set no env name twice; otherwise
+nothing is uploaded.
+
+**Upload verification.** After `bundle deploy` the script exports the
+workspace copy of the app source (`source_code_path` as `bundle validate`
+resolved it) and compares every staged file's path, size and sha256 with the
+manifest ([`src/deploy/appManifest.ts`](../src/deploy/appManifest.ts)).
+Missing, differing and extra files are all mismatches: an extra file (a stale
+chunk, a stray `package.json`) is part of what the app starts from. On a
+mismatch it deletes the app source dir with `workspace delete --recursive`
+(`import-dir --overwrite` never removes extra files), re-uploads
+`databricks-app/` with `workspace import-dir`, and compares all three again.
+If it's still wrong it prints the file list and exits before `bundle run`, so
+the app never restarts on a bad upload.
+
+The delete is scoped: right after `bundle validate`, before building, the
+script requires the resolved `source_code_path` to be exactly
+`<workspace.file_path>/databricks-app`, with the files path at least two levels
+inside `/Workspace/`. Both paths must already be canonical: no `//`, trailing
+slash, backslash, `%`-encoding, control character, `.`/`..` segment, or
+leading/trailing whitespace in any segment. A non-canonical path is rejected,
+never normalized, and the script refuses to deploy; it checks again just before the
+delete. Manifest writing also refuses a staged file the workspace would import
+as a notebook (`.py`, `.sql`, `.scala`, `.r`, `.ipynb`), since export would
+rename or convert it and the byte-for-byte check could never pass. The current
+build stages none. After a repair, the bundle's sync snapshot still believes
+the old remote files exist, so the next deploy may need the same repair; it's
+automatic.
+A GovCloud deploy from Windows Git Bash had uploaded the source without
+`server/_ssr/ssr.mjs` and `server/_chunks/ssr-renderer.mjs`. `serve.mjs`
+started (it imports only `server/index.mjs`) and every request returned Nitro's
+`{"error":true,"status":500,"unhandled":true}`; `import-dir` uploaded the same
+files fine.
+
+Why sync dropped them is **not confirmed**. Two upstream reports fit: the
+bundle's `**` glob matching only one directory level
+([databricks/cli#4831](https://github.com/databricks/cli/issues/4831), so
+`databricks-app/server/**` would match `server/index.mjs` but not
+`server/_ssr/ssr.mjs`), and Windows-only `.gitignore` handling in bundle sync
+([databricks/cli#1572](https://github.com/databricks/cli/issues/1572)). Commercial
+deploys from macOS upload the nested files, which points at the Windows path.
+The verification doesn't depend on the cause. After staging, and before `bundle deploy`, it validates
 the app source root against the allowlist `app.yaml`, `serve.mjs`,
 `build-info.json`, `server/` and `public/`. Any other root entry, including
 `package.json` or `requirements.txt`, fails closed with the path to remove or

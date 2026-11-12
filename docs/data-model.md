@@ -379,6 +379,36 @@ ADR-0008 names these `changes.*`; they live in the `change_list` schema with the
 
 ### EIR (`eir`)
 
+#### Simulated manager-directory read (#342 stub)
+
+The employee EIR screen has a server-side `managerOf(principalId)` port exposed through the
+existing `eir/manager-directory` HTTP/data seam. The server supplies the signed-in person's
+principal ID; the endpoint accepts no person or email selector, so one employee cannot request
+another employee's result. Its current adapter is deterministic and simulated, makes no network
+calls, uses no personal credentials, and is visibly labelled as a stub. The directory's confirmed
+name is VLDAP. Its owning organization, service identity, attributes, and real integration remain
+unresolved in #341.
+
+The employee-facing panel and its stub notice are absent unless
+`EDP_SIMULATED_DIRECTORY_ENABLED=true` and the store prefix matches `edp_vm_pr<N>_`. The sanitized
+session profile carries only a positive preview-active signal; absent or unknown values hide the
+feature and the browser does not request the manager-directory endpoint. The port and authenticated
+endpoint remain available for #343.
+
+The current `DirectoryManager` attributes (`principalId`, `displayName`, and `email`) are
+provisional. They do not decide the production attribute allowlist, which remains pending #341
+acceptance criterion 5.
+
+This read does not prefill or change `managerId`, `managerEmail`, or any other approved EIR form
+field, and it does not route an approval. Only an `ok` result displays simulated manager details;
+`missing`, `stale`, `ambiguous`, and `sync-failed` fail closed with plain-language disclosure.
+Production work remains blocked by the directory/approval contract (#341), the directory
+projection and Safeguards decision (#249), service-principal authority (#142), retention (#147),
+the IRS-target identity proof (#143), and provisioning an approved directory service account.
+
+No Delta table, DDL, retention choice, or #144 application-table ledger row is added by this stub.
+Those belong to the unresolved production decisions, not this simulated port.
+
 **`eirs`**: one row per person with an **EIR**.
 
 | Column                          | Type        | Meaning                                                                                        |

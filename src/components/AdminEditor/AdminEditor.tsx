@@ -146,8 +146,8 @@ const primaryBtn: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   gap: 8,
-  background: "var(--theme-primary)",
-  color: "#fff",
+  background: "var(--theme-primary-fill)",
+  color: "var(--text-on-fill)",
   border: "none",
   borderRadius: "var(--radius-md)",
   padding: "10px 18px",
@@ -965,7 +965,7 @@ export function AdminEditor({
             pending={pending.isActionPending("admin-intake-editor", "save")}
             locked={pending.isRecordPending("admin-intake-editor")}
           >
-            <Icon name="check" size={16} color="#fff" /> Save changes
+            <Icon name="check" size={16} color="var(--text-on-fill)" /> Save changes
           </PendingActionButton>
           <PendingActionStatus pending={pending.isRecordPending("admin-intake-editor")} />
         </div>

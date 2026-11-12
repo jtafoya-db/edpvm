@@ -95,8 +95,8 @@ const primaryBtn: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   gap: 8,
-  background: "var(--theme-primary)",
-  color: "#fff",
+  background: "var(--theme-primary-fill)",
+  color: "var(--text-on-fill)",
   border: "none",
   borderRadius: "var(--radius-md)",
   padding: "11px 20px",
@@ -302,7 +302,7 @@ const SizingEstimator: WidgetComponent = ({ ctx }) => {
         disabled={estimating}
         style={{ ...primaryBtn, marginTop: 20, opacity: estimating ? 0.6 : 1 }}
       >
-        <ctx.Icon name="tune" size={17} color="#fff" />{" "}
+        <ctx.Icon name="tune" size={17} color="var(--text-on-fill)" />{" "}
         {estimating
           ? "Estimating…"
           : estimated

@@ -59,6 +59,8 @@ export interface UserProfile {
    * Present only when it's on; production never has it (#312).
    */
   sampleAccessRequests?: true;
+  /** The simulated directory panel is active under the server's PR-preview-only guard. */
+  managerDirectoryPreview?: true;
   /** Onboarding reviewer roles held, derived server-side (#86): both for an EDP admin group member (#226). Absent ⇒ none. */
   onboardingReviewerRoles?: OnboardingReviewerRole[];
   /** Effective deploy-time SLA settings, read server-side and returned by /api/session. */

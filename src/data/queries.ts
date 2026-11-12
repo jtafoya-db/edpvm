@@ -51,6 +51,7 @@ import type {
   GroupMembershipHistoryPage,
   SnapshotRun,
 } from "./group-membership";
+import type { ManagerDirectoryResult } from "./manager-directory";
 
 /** Canonical query keys. Prefixes let one invalidate a whole family at once. */
 export const queryKeys = {
@@ -67,6 +68,7 @@ export const queryKeys = {
   myAccess: () => ["status", "my-access"] as const,
   eir: (principalId: string) => ["eir", "person", principalId] as const,
   eirInbox: () => ["eir", "inbox"] as const,
+  eirManagerDirectory: (principalId: string) => ["eir", "manager-directory", principalId] as const,
   eirFormsAll: ["eir", "forms"] as const,
   eirForms: (versions: readonly string[]) => ["eir", "forms", ...versions] as const,
   eirDefinitions: ["eir-definitions"] as const,
@@ -219,6 +221,19 @@ export function useEir(principalId: string): UseQueryResult<EirRecord> {
     enabled: Boolean(principalId),
     retry: eirReadRetry,
     retryDelay: eirReadRetryDelay,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useEirManagerDirectory(
+  principalId: string,
+): UseQueryResult<ManagerDirectoryResult> {
+  const store = useStore();
+  return useQuery<ManagerDirectoryResult, Error>({
+    queryKey: queryKeys.eirManagerDirectory(principalId),
+    queryFn: () => store.managerDirectory.managerOf(principalId),
+    enabled: Boolean(principalId),
+    retry: false,
     refetchOnWindowFocus: false,
   });
 }

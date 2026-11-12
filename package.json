@@ -108,11 +108,12 @@
   "scripts": {
     "build": "vite build",
     "build:dev": "vite build --mode development",
-    "build:databricks": "NITRO_PRESET=node-server vite build && node scripts/client-bundle-gate.mjs",
+    "build:databricks": "NITRO_PRESET=node-server vite build && node scripts/client-bundle-gate.mjs && node scripts/server-bundle-gate.mjs",
     "dev": "vite dev",
     "format": "prettier --write .",
     "lint": "eslint .",
     "preview": "vite preview",
+    "smoke:serve": "node scripts/serve-smoke.mjs",
     "test": "vitest run --environment jsdom && vitest run --config vitest.browser.config.ts",
     "test:watch": "vitest --environment jsdom"
   },

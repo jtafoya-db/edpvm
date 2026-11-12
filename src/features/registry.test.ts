@@ -7,7 +7,7 @@ describe("FEATURES", () => {
     const entries = Object.values(FEATURES);
     const ids = entries.map((feature) => feature.id);
 
-    expect(entries).toHaveLength(29);
+    expect(entries).toHaveLength(30);
     expect(new Set(ids).size).toBe(ids.length);
     expect(Object.keys(FEATURES)).toEqual(ids);
   });
@@ -48,6 +48,7 @@ describe("FEATURES", () => {
 
     // Session-only access request state remains an explicit stub.
     expect(FEATURES["access-request-persistence"].status).toBe("stub");
+    expect(FEATURES["eir-manager-directory"].status).toBe("stub");
 
     // Every mock-backed screen surface must be an honest coming-soon.
     for (const id of [

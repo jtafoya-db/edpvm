@@ -166,8 +166,8 @@ function ProfileScreen({ ctx }) {
               width: 60,
               height: 60,
               borderRadius: "var(--radius-pill)",
-              background: "var(--theme-primary)",
-              color: "#fff",
+              background: "var(--theme-primary-fill)",
+              color: "var(--text-on-fill)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -177,7 +177,7 @@ function ProfileScreen({ ctx }) {
               flexShrink: 0,
             }}
           >
-            {D.user.initials || <AppIcon name="person" size={30} color="#fff" />}
+            {D.user.initials || <AppIcon name="person" size={30} color="var(--text-on-fill)" />}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <h1

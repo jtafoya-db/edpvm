@@ -129,6 +129,36 @@ describe("Delta request row mappings", () => {
 });
 
 describe("Delta adapter contract", () => {
+  it("wires the current person's manager-directory read to the Delta API", async () => {
+    const transport: DeltaApiTransport = {
+      read: vi.fn(async () => ({
+        active: true,
+        state: "ok",
+        manager: {
+          principalId: "manager-1",
+          displayName: "Simulated Manager",
+          email: "simulated.manager@example.gov",
+        },
+        syncedAt: "2026-10-30T12:00:00.000Z",
+      })) as DeltaApiTransport["read"],
+      command: vi.fn(),
+      legacyWrite: vi.fn(),
+    };
+    const store = createDeltaStore({ transport, managerDirectoryActive: true });
+
+    expect(store.managerDirectory.active).toBe(true);
+
+    await expect(store.managerDirectory.managerOf("employee-1")).resolves.toMatchObject({
+      state: "ok",
+      manager: { principalId: "manager-1" },
+    });
+    expect(transport.read).toHaveBeenCalledWith("eir", "manager-directory");
+  });
+
+  it("keeps the manager-directory preview inactive unless server-confirmed", () => {
+    expect(createDeltaStore().managerDirectory.active).toBe(false);
+  });
+
   it("creates, reads, transitions, and appends through the API, with the server naming the actor", async () => {
     const server = fakeServer({ principalId: "scim-42", username: "analyst@example.gov" });
     const store = createDeltaStore({ transport: server.transport });

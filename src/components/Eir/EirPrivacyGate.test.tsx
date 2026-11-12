@@ -387,7 +387,8 @@ it("privacy screen: uses the EIR page chrome, breadcrumb, styled actions, and a 
   expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("Home / My EIR");
   expect(document.querySelector("main")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Acknowledge and continue" })).toHaveStyle({
-    background: "var(--theme-primary)",
+    background: "var(--theme-primary-fill)",
+    color: "var(--text-on-fill)",
   });
   expect(screen.getByText(ACTIVE_PRIVACY_NOTICE.help)).toBeVisible();
   const supportLink = screen.getByRole("link", { name: "Email the EDP support team" });

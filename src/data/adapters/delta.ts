@@ -53,6 +53,7 @@ import {
 } from "../eir/definition/delta-repository";
 import { createDeltaPrivacyAcknowledgmentRepository } from "../privacy/delta-repository";
 import type { GroupMembershipReader } from "../group-membership";
+import type { ManagerDirectory } from "../manager-directory";
 
 export {
   attestationToRow,
@@ -286,6 +287,8 @@ export function httpTransport(
 
 export interface DeltaStoreConfig {
   transport?: DeltaApiTransport;
+  /** Server-confirmed PR-preview simulation guard; false/absent hides the panel. */
+  managerDirectoryActive?: boolean;
   /** The ordered stage labels of #72's cart request (the prototype's `STAGES`). */
   stages?: () => string[];
   /**
@@ -658,7 +661,12 @@ export function createDeltaStore(config: DeltaStoreConfig = {}): DataStore {
       }),
     latestRun: () => api.read("membership", "latest-run"),
   };
+  const managerDirectory: ManagerDirectory = {
+    active: config.managerDirectoryActive === true,
+    managerOf: () => api.read("eir", "manager-directory"),
+  };
   return {
+    managerDirectory,
     groupMemberships,
     catalog,
     requests,

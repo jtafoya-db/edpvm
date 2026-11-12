@@ -42,6 +42,7 @@
  */
 import { eirSelfValidationFromEnv } from "./eir-test-mode.ts";
 import { sampleAccessRequestsFromEnv } from "./sample-access-requests.ts";
+import { simulatedManagerDirectoryActive } from "./manager-directory.ts";
 import type { UserProfile } from "../data/types";
 import type { SessionUser } from "./delta/registry.ts";
 import { configuredSlaConfig } from "./sla-config.ts";
@@ -184,6 +185,12 @@ function toUserProfile(identity: ResolvedIdentity, env?: unknown): UserProfile {
       : {}),
     // Only a PR preview with the switch on has sample access requests (#312).
     ...(sampleAccessRequestsFromEnv(env) ? { sampleAccessRequests: true } : {}),
+    ...(simulatedManagerDirectoryActive(
+      envValue(env, "EDP_SIMULATED_DIRECTORY_ENABLED"),
+      envValue(env, "EDP_STORE_SCHEMA_PREFIX"),
+    )
+      ? { managerDirectoryPreview: true }
+      : {}),
   };
 }
 

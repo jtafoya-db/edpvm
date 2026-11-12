@@ -32,6 +32,7 @@ import type { OnboardingStore } from "./onboarding/store";
 import type { AccessRequestStore } from "./access-requests/store";
 import type { DatasetTeamStore } from "./datasets/team-store";
 import type { GroupMembershipReader } from "./group-membership";
+import type { ManagerDirectory } from "./manager-directory";
 
 /** Reference/catalog reads: domains, datasets, bundles, systems, personas, tenants, user. */
 export interface CatalogStore {
@@ -78,6 +79,7 @@ export type { OnboardingStore } from "./onboarding/store";
 
 /** The full seam handed to the app. One object, one field per repository. */
 export interface DataStore {
+  managerDirectory: ManagerDirectory;
   groupMemberships: GroupMembershipReader;
   catalog: CatalogStore;
   requests: RequestStore;
