@@ -194,7 +194,7 @@ function EditRolePanel({
         </div>
         <div style={actions}>
           <button type="button" onClick={confirm} style={s.primaryBtn}>
-            <Icon name="check" size={18} color="#fff" />
+            <Icon name="check" size={18} color="var(--text-on-fill)" />
             Confirm role change
           </button>
           <button
@@ -252,7 +252,7 @@ function EditRolePanel({
         <div style={{ ...actions, marginTop: 22 }}>
           <button type="submit" style={s.primaryBtn}>
             Review role change
-            <Icon name="arrow_forward" size={18} color="#fff" />
+            <Icon name="arrow_forward" size={18} color="var(--text-on-fill)" />
           </button>
           <button type="button" onClick={onCancel} style={s.outlineBtn}>
             Cancel

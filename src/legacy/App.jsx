@@ -91,7 +91,7 @@ function Toast({ toast }) {
             transform: "translateX(-50%)",
             zIndex: 100,
             background: "var(--surface-dark)",
-            color: "#fff",
+            color: "var(--text-on-fill)",
             borderRadius: "var(--radius-md)",
             padding: "12px 20px",
             boxShadow: "var(--shadow-4)",

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { IdentityResolutionError } from "../../identity";
+import { createSimulatedManagerDirectory } from "../../manager-directory";
 import { handleDeltaApiRequest, type DeltaApiDeps } from "../api.ts";
 import { createAppRegistry } from "../areas/index.ts";
 import {
@@ -1942,6 +1943,53 @@ describe("Delta API: server configuration", () => {
   });
 });
 
+describe("Delta API: simulated EIR manager directory", () => {
+  const employee = (principalId: string): SessionUser => ({
+    principalId,
+    displayName: principalId,
+    email: `${principalId}@example.gov`,
+    isAdmin: false,
+    onboardingReviewerRoles: [],
+  });
+  const registry = () =>
+    createAppRegistry(
+      undefined,
+      undefined,
+      undefined,
+      createSimulatedManagerDirectory({ active: true, state: "ok" }),
+    );
+
+  it("returns only the server-resolved employee's simulated manager", async () => {
+    const { deps: d } = deps(happy, employee("employee-1"), ["tenant"], {
+      registry: registry(),
+    });
+
+    const response = await handleDeltaApiRequest(get("/api/reads/eir/manager-directory"), d);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      active: true,
+      state: "ok",
+      manager: { principalId: "simulated-manager-for-employee-1" },
+    });
+  });
+
+  it("refuses a caller-supplied identity without disclosing that employee's result", async () => {
+    const { deps: d } = deps(happy, employee("employee-1"), ["tenant"], {
+      registry: registry(),
+    });
+
+    const response = await handleDeltaApiRequest(
+      get("/api/reads/eir/manager-directory?principalId=employee-2"),
+      d,
+    );
+    const body = await response.text();
+
+    expect(response.status).toBe(400);
+    expect(body).not.toContain("simulated-manager-for-employee-2");
+  });
+});
+
 describe("Delta API: staff endpoints fail closed", () => {
   it("refuses a non-staff user the admin pipeline with 403, before any SQL", async () => {
     const { deps: d, fake } = deps(happy, TENANT);
@@ -1978,6 +2026,7 @@ describe("Delta API: staff endpoints fail closed", () => {
       "change-list/entries", // non-staff: only entries on datasets the session owns
       "eir-definitions/forms", // EIR form definitions (labels, help, rules): no one's answers
       "eir/generated-pdf", // exact current evaluated draft for the session; takes no query
+      "eir/manager-directory", // simulated manager for the session; takes no query
       "eir/mine", // eirs.id = UUID v5 of the session's principal ID; takes no query
       "initiatives/dataset-member-summaries", // dataset list plus aggregate member facts, no member emails
       "initiatives/datasets", // the shared catalogue: datasets and their owners

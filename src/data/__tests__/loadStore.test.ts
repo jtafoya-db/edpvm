@@ -60,14 +60,14 @@ const INTAKE = {
   initiativeOwner: { kind: "self" as const },
 };
 
-function stubBackend(backend: "memory" | "delta") {
+function stubBackend(backend: "memory" | "delta", profile: UserProfile = PROFILE) {
   vi.stubEnv("VITE_DATA_BACKEND", backend);
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url === "/api/session") {
-      return Response.json(PROFILE);
+      return Response.json(profile);
     }
     if (url === "/api/seed-config") {
       return Response.json({ datasetOwnerIds: ["seed-owner"] });
@@ -90,6 +90,17 @@ function stubBackend(backend: "memory" | "delta") {
 }
 
 describe("loadStore browser seam", () => {
+  it.each(["memory", "delta"] as const)(
+    "passes the server-confirmed manager-directory preview guard into the %s store",
+    async (backend) => {
+      stubBackend(backend, { ...PROFILE, managerDirectoryPreview: true });
+
+      const store = await loadStore();
+
+      expect(store.managerDirectory.active).toBe(true);
+    },
+  );
+
   it.each(["memory", "delta"] as const)(
     "passes /api/session SLA config into the %s store stubs",
     async (backend) => {

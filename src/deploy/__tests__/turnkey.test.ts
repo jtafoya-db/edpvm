@@ -58,7 +58,8 @@ function resolved(target: "preview" | "prod", appName?: string, membershipCatalo
       apps: {
         edp_vending_machine: {
           name: appName ?? (prod ? "edp-vending-machine" : "edp-vm-pr1"),
-          config: { env },
+          source_code_path: `${FILE_PATH}/databricks-app`,
+          config: { command: ["node", "serve.mjs"], env },
           resources: [{ name: "sql-warehouse", sql_warehouse: { id: "1111111111111111" } }],
         },
       },
@@ -125,6 +126,10 @@ interface TurnkeyOptions {
   resolvedAppName?: string;
   /** The membership catalog `bundle validate` resolves, if separate from the store catalog. */
   resolvedMembershipCatalog?: string;
+  /** The HTTP status the fake app returns for /api/seed-config (200 by default). */
+  seedConfigStatus?: number;
+  /** `databricks auth token` fails, as it does for a PAT or M2M profile. */
+  tokenFails?: boolean;
 }
 
 function turnkey(opts: TurnkeyOptions = {}) {
@@ -183,18 +188,40 @@ case "$1 $2" in
     if [[ "$3" == "/api/2.0/preview/scim/v2/Groups/11111111111111" ]]; then echo '{"displayName":"edp-admins"}'; fi ;;
   "api post") ${membershipGrantFailure} echo '{"statement_id":"s1","status":{"state":"SUCCEEDED"}}' ;;
   "apps get")
+    deployment='"active_deployment":{"deployment_id":"d1","source_code_path":"${FILE_PATH}/databricks-app","status":{"state":"SUCCEEDED"}}'
     case "${opts.app ?? "present"}" in
       absent) echo "Error: App with name $3 does not exist or is deleted." >&2; exit 1 ;;
-      no-sp) echo '{"url":"https://edp-vm-pr1.example"}' ;;
-      *) echo '{"service_principal_client_id":"sp-1","url":"https://edp-vm-pr1.example"}' ;;
+      no-sp) printf '{"url":"https://edp-vm-pr1.example",%s}\\n' "$deployment" ;;
+      *) printf '{"service_principal_client_id":"sp-1","url":"https://edp-vm-pr1.example",%s}\\n' "$deployment" ;;
     esac ;;
+  "apps get-deployment") echo '{"deployment_id":"d1","status":{"state":"SUCCEEDED"}}' ;;
+  "auth token")
+    if [ "${opts.tokenFails ? "yes" : "no"}" = yes ]; then echo "Error: auth token works only for U2M (databricks auth login)" >&2; exit 1; fi
+    echo '{"access_token":"tok-123","token_type":"Bearer"}' ;;
+  "bundle deploy")
+    dest="${tools}/ws${FILE_PATH}/databricks-app"
+    rm -rf "$dest"; mkdir -p "$dest"; cp -R databricks-app/. "$dest/" ;;
+  "workspace export-dir")
+    mkdir -p "$4"; cp -R "${tools}/ws$3/." "$4/" ;;
+  "workspace export")
+    out=""; prev=""; for a in "$@"; do [ "$prev" = --file ] && out=$a; prev=$a; done
+    cp "${tools}/ws$3" "$out" ;;
 esac`,
+  );
+  fake(
+    "curl",
+    `config=$(cat)
+echo "curl $* config=$config" >> "${log}"
+out=""; prev=""; for a in "$@"; do [ "$prev" = -o ] && out=$a; prev=$a; done
+printf '%s' '{"datasetOwnerIds":[]}' > "$out"
+printf '%s' "${opts.seedConfigStatus ?? 200}"`,
   );
   fake(
     "npm",
     `echo "npm $* VITE_DATA_BACKEND=$VITE_DATA_BACKEND" >> "${log}"
-mkdir -p .output/server .output/public
+mkdir -p .output/server/_ssr .output/public
 echo 'export {}' > .output/server/index.mjs
+echo 'export {}' > .output/server/_ssr/ssr.mjs
 echo ok > .output/public/robots.txt`,
   );
   const env: Record<string, string | undefined> = { ...process.env };
@@ -208,6 +235,8 @@ echo ok > .output/public/robots.txt`,
       cwd: dir,
       env: {
         ...env,
+        EDP_SMOKE_ATTEMPTS: "2",
+        EDP_SMOKE_DELAY_SECONDS: "0",
         NODE_PATH: join(ROOT, "node_modules"),
         PATH: `${bin}:${process.env["PATH"]}`,
       },
@@ -240,17 +269,89 @@ describe("scripts/deploy-turnkey.sh — one deploy path", SPAWNS, () => {
       "databricks bundle run provision_membership_snapshot",
       "databricks api post",
       "databricks apps get",
+      "databricks apps get-deployment edp-vm-pr1 d1 -p ws",
+      "curl",
     ].map((prefix) => indexOf(calls, prefix));
     expect(
       order.every((i) => i >= 0),
       calls.join("\n"),
     ).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
+    // auth token runs twice: the up-front check, before anything is planned or
+    // built, and the smoke itself, after grants.
+    const tokenCalls = calls.flatMap((call, i) =>
+      call === "databricks auth token -p ws" ? [i] : [],
+    );
+    expect(tokenCalls).toHaveLength(2);
+    expect(tokenCalls[0]).toBeLessThan(indexOf(calls, "databricks bundle plan"));
+    expect(tokenCalls[1]).toBeGreaterThan(indexOf(calls, "databricks apps get-deployment"));
     // deploy.sh's --auto-approve is the only deploy, and it follows the plan gate.
     expect(calls.filter((c) => c.startsWith("databricks bundle deploy"))).toEqual([
       `databricks bundle deploy ${PREVIEW_ARGS.join(" ")} --auto-approve`,
     ]);
     expect(run.stdout).toContain("https://edp-vm-pr1.example");
+  });
+
+  it("smoke-checks the deployed app after the grants, with the token on stdin, not argv", () => {
+    const { run, calls } = turnkey();
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.stdout).toContain("/api/seed-config returned 200");
+    const curl = calls.find((call) => call.startsWith("curl "));
+    expect(curl).toContain("https://edp-vm-pr1.example/api/seed-config");
+    expect(curl).toMatch(
+      /^curl (?!.*tok-123.* config=).* config=header = "Authorization: Bearer tok-123"$/,
+    );
+  });
+
+  it("fails the deploy with a fingerprint and next command when /api/seed-config isn't 200", () => {
+    const { run } = turnkey({ seedConfigStatus: 502 });
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toMatch(
+      /seed-config: GET https:\/\/edp-vm-pr1\.example\/api\/seed-config returned HTTP 502/,
+    );
+    expect(run.stderr).toMatch(/serve\.mjs exited at startup/);
+    expect(run.stderr).toMatch(/next: curl -i/);
+    // It retried while the app might still be starting.
+    expect(run.stderr).toMatch(/attempt 1\/2/);
+  });
+
+  it("fails fast, before any workspace mutation, when the smoke can't get a token", () => {
+    const { run, calls } = turnkey({ tokenFails: true });
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toMatch(/databricks auth token -p ws/);
+    expect(run.stderr).toMatch(/--skip-post-deploy-smoke/);
+    expect(run.stderr).toContain("only for U2M");
+    expect(indexOf(calls, "databricks auth token")).toBeGreaterThan(
+      indexOf(calls, "databricks bundle validate"),
+    );
+    for (const mutation of [
+      "npm",
+      "databricks bundle plan",
+      "databricks bundle deploy",
+      "databricks bundle run",
+      "databricks api post",
+    ]) {
+      expect(indexOf(calls, mutation), mutation).toBe(-1);
+    }
+  });
+
+  it("deploys with --skip-post-deploy-smoke, warning about reduced assurance and never fetching a token", () => {
+    const { run, calls } = turnkey({
+      tokenFails: true,
+      args: [...PREVIEW_ARGS, "--skip-post-deploy-smoke"],
+    });
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.stderr).toMatch(/REDUCED ASSURANCE/);
+    expect(run.stderr).toMatch(/scripts\/post-deploy-smoke\.sh edp-vm-pr1 -p ws/);
+    expect(indexOf(calls, "databricks auth token")).toBe(-1);
+    expect(indexOf(calls, "curl")).toBe(-1);
+    expect(indexOf(calls, "databricks bundle deploy")).toBeGreaterThan(-1);
+  });
+
+  it("doesn't need a token for --grants-only, which runs no smoke", () => {
+    const { run, calls } = turnkey({ tokenFails: true, args: [...PREVIEW_ARGS, "--grants-only"] });
+    expect(run.status, run.stderr).toBe(0);
+    expect(indexOf(calls, "databricks auth token")).toBe(-1);
   });
 
   it("provisions membership before grants and preserves EIR grants if a membership grant fails", () => {

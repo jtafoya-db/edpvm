@@ -130,7 +130,7 @@ function Row({ k, v }) {
   );
 }
 
-const primaryBtn = { display: "inline-flex", alignItems: "center", gap: 8, background: "var(--theme-primary)", color: "#fff", border: "none", borderRadius: "var(--radius-md)", padding: "11px 18px", fontFamily: "var(--font-sans)", fontSize: "var(--font-size-2xs)", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" };
+const primaryBtn = { display: "inline-flex", alignItems: "center", gap: 8, background: "var(--theme-primary-fill)", color: "var(--text-on-fill)", border: "none", borderRadius: "var(--radius-md)", padding: "11px 18px", fontFamily: "var(--font-sans)", fontSize: "var(--font-size-2xs)", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" };
 const outlineBtn = { display: "inline-flex", alignItems: "center", gap: 8, background: "var(--surface-default)", color: "var(--theme-primary)", border: "1.5px solid var(--theme-primary)", borderRadius: "var(--radius-md)", padding: "10px 18px", fontFamily: "var(--font-sans)", fontSize: "var(--font-size-2xs)", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" };
 
 Object.assign(window, { DomainScreen, Stat, SideHead, Row, primaryBtn, outlineBtn });

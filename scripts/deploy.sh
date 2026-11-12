@@ -20,15 +20,35 @@
 #      deploy below is auto-approved (#141).
 #   3. `npm run build:databricks` with that target's VITE_DATA_BACKEND and
 #      committed minify_client policy.
-#   4. Stage .output/ into databricks-app/, the app's source.
-#   5. `bundle deploy`, then `bundle run` to restart the app on the new build.
+#      It starts from a clean .output/ so a stale artifact can't ship, and
+#      the build's server bundle gate refuses Zod 3 / `(void 0).` output.
+#   4. Stage .output/ into databricks-app/, the app's source, and generate the
+#      staged app.yaml from the RESOLVED app config (command + env), so the
+#      upload starts the app even where the Apps service ignores the
+#      deployment request's env (GovCloud). It refuses to upload an app.yaml
+#      without VITE_DATA_BACKEND / EDP_CLIENT_MINIFIED matching
+#      build-info.json, and puts the committed app.yaml back on exit.
+#   5. `bundle deploy`, then verify the workspace copy against a manifest of
+#      the staged tree (missing, differing or extra files). On a mismatch,
+#      delete the app source dir (only ever <bundle files>/databricks-app),
+#      re-upload it with `workspace import-dir`, and verify again; then
+#      `bundle run` to restart the app.
 #
 # Run `npm ci` first; the build uses this checkout's node_modules.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+# Windows Git Bash: don't rewrite /Workspace/... arguments into Windows paths.
+# Every local path this script hands a native program is relative, so nothing
+# needs the conversion.
+export MSYS_NO_PATHCONV=1
 
 APP_DIR=databricks-app
+# Deploy scratch: inside the gitignored .output/, relative to the checkout.
+MANIFEST=.output/databricks-app.manifest.json
+WORKSPACE_COPY=.output/databricks-app.workspace-copy
+COMMITTED_APP_YAML=.output/app.yaml.committed
+GENERATED_APP_YAML=.output/app.yaml.generated
 PROD_TARGET=prod
 PROD_APP_NAME=edp-vending-machine
 MIN_NODE_MAJOR=24
@@ -82,6 +102,7 @@ done
 # short-flag clusters like -qtX on deploy) than a pattern list can safely
 # cover. --production is taken out; the rest goes to the CLI unchanged.
 targets=()
+profiles=()
 app_names=()
 production=no
 args=()
@@ -121,6 +142,7 @@ while [ "$i" -lt "${#argv[@]}" ]; do
   [ -n "$value" ] && [[ $value != -* ]] || refuse "$arg needs a value, not '$value'."
   case "$arg" in
     -t | --target | -t=* | --target=* | -t?*) targets+=("$value") ;;
+    -p | --profile | -p=* | --profile=* | -p?*) profiles+=("$value") ;;
     --var | --var=*)
       if [[ $value == app_name=* ]]; then
         app_names+=("${value#app_name=}")
@@ -168,9 +190,16 @@ read_bundle() {
         target: bundle.bundle?.target ?? "",
         mode: bundle.bundle?.mode ?? "",
         host: bundle.workspace?.host ?? "",
+        file_path: bundle.workspace?.file_path ?? "",
         data_backend: bundle.variables?.data_backend?.value || "memory",
         minify_client: bundle.variables?.minify_client?.value ?? "",
         app_name: bundle.resources?.apps?.edp_vending_machine?.name ?? "",
+        source_code_path: (() => {
+          const path = bundle.resources?.apps?.edp_vending_machine?.source_code_path ?? "";
+          if (path.startsWith("/")) return path;
+          const root = bundle.workspace?.file_path ?? "";
+          return root && path ? `${root}/${path.replace(/^\.\//, "")}` : "";
+        })(),
       }[process.argv[1]];
       process.stdout.write(value);
     });
@@ -225,6 +254,12 @@ elif [ "$resolved_app_name" = "$PROD_APP_NAME" ]; then
 fi
 data_backend=$(read_bundle data_backend)
 
+# The resolved app source in the workspace. A failed upload check deletes and
+# re-uploads it, so it must be exactly <bundle files path>/databricks-app;
+# refuse anything else now, before building or uploading.
+source_path=$(read_bundle source_code_path)
+node scripts/app-manifest.ts --scope "$source_path" "$(read_bundle file_path)"
+
 # The deploy is auto-approved, so the CLI won't stop at its destructive-action
 # prompt. Refuse a plan that deletes or recreates a schema or volume instead:
 # signed EIR records and PDFs must survive any deploy (#141).
@@ -237,8 +272,9 @@ else
   commit=unknown
 fi
 
-# Clear the previous artifact first, so a failed build leaves nothing to ship.
-rm -rf "$APP_DIR/server" "$APP_DIR/public" "$APP_DIR/build-info.json"
+# Clear the previous artifact and build output first, so a failed build leaves
+# nothing to ship and a stale .output/ can't be staged.
+rm -rf .output .nitro "$APP_DIR/server" "$APP_DIR/public" "$APP_DIR/build-info.json"
 
 echo "[deploy] building $resolved_app_name (target $resolved_target, ${resolved_mode:-unknown} mode, ${resolved_host:-profile host}) with VITE_DATA_BACKEND=$data_backend (minified=$minified)"
 if [ "$minified" = true ]; then
@@ -258,6 +294,20 @@ DATA_BACKEND="$data_backend" MINIFIED="$minified" COMMIT="$commit" node -e '
   };
   require("node:fs").writeFileSync(process.argv[1], JSON.stringify(info, null, 2) + "\n");
 ' "$APP_DIR/build-info.json"
+
+# The staged app.yaml comes from the resolved config for this target, not the
+# committed production defaults. Keep the committed copy and put it back
+# however this script exits, so the checkout stays clean.
+if head -n 1 "$APP_DIR/app.yaml" | grep -q '^# GENERATED'; then
+  echo "[deploy] $APP_DIR/app.yaml is a generated copy left by an interrupted deploy. Restore it: git checkout -- $APP_DIR/app.yaml" >&2
+  exit 1
+fi
+cp "$APP_DIR/app.yaml" "$COMMITTED_APP_YAML"
+trap 'cp "$COMMITTED_APP_YAML" "$APP_DIR/app.yaml" 2>/dev/null || true' EXIT
+printf '%s' "$bundle_json" | node scripts/app-yaml.ts --render "$APP_DIR/app.yaml"
+node scripts/app-yaml.ts --check "$APP_DIR/app.yaml" "$APP_DIR/build-info.json"
+# Kept for a manual recovery upload (docs/databricks-app.md -> "Diagnosing a GovCloud deploy").
+cp "$APP_DIR/app.yaml" "$GENERATED_APP_YAML"
 
 too_big=$(find "$APP_DIR" -type f -size +"${MAX_FILE_BYTES}"c)
 if [ -n "$too_big" ]; then
@@ -288,5 +338,33 @@ if [ "${#unexpected_root_entries[@]}" -gt 0 ]; then
 fi
 echo "[deploy] staged $(find "$APP_DIR" -type f | wc -l) files, $(du -sh "$APP_DIR" | cut -f1), commit $commit"
 
+node scripts/app-manifest.ts --write "$APP_DIR" "$MANIFEST"
+
 databricks bundle deploy "${args[@]}" --auto-approve
+
+# Verify the upload: bundle sync has dropped gitignored build files that
+# sync.include should add (server/_ssr/, server/_chunks/ from Windows Git Bash).
+# Workspace commands take the target and profile, not --var.
+workspace_args=(-t "$target")
+[ "${#profiles[@]}" -eq 0 ] || workspace_args+=(-p "${profiles[${#profiles[@]}-1]}")
+verify_upload() {
+  rm -rf "$WORKSPACE_COPY"
+  databricks workspace export-dir "$source_path" "$WORKSPACE_COPY" "${workspace_args[@]}" >/dev/null &&
+    node scripts/app-manifest.ts --verify "$MANIFEST" "$WORKSPACE_COPY"
+}
+if ! verify_upload; then
+  # import-dir --overwrite never deletes extra files, so replace the whole
+  # app source dir (scope checked above, and again here) and re-upload.
+  node scripts/app-manifest.ts --scope "$source_path" "$(read_bundle file_path)"
+  echo "[deploy] repairing the upload: databricks workspace delete $source_path --recursive, then import-dir $APP_DIR" >&2
+  databricks workspace delete "$source_path" --recursive "${workspace_args[@]}" >/dev/null
+  databricks workspace import-dir "$APP_DIR" "$source_path" --overwrite "${workspace_args[@]}" >/dev/null
+  if ! verify_upload; then
+    echo "[deploy] the workspace copy at $source_path is still wrong after re-upload (missing, differing or extra files above); not starting the app." >&2
+    echo "[deploy] Recover by hand: docs/databricks-app.md -> \"Diagnosing a GovCloud deploy\"." >&2
+    exit 1
+  fi
+fi
+rm -rf "$WORKSPACE_COPY"
+
 databricks bundle run edp_vending_machine "${args[@]}"

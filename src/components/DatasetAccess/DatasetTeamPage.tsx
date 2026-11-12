@@ -191,7 +191,7 @@ function Team({
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             {addChoices.length > 0 ? (
               <button type="button" onClick={() => setPanel({ kind: "add" })} style={s.primaryBtn}>
-                <Icon name="add" size={18} color="#fff" />
+                <Icon name="add" size={18} color="var(--text-on-fill)" />
                 Add team member
               </button>
             ) : null}

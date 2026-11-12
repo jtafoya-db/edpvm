@@ -167,7 +167,7 @@ export function AddPersonForm({
         )}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 18 }}>
           <button type="button" onClick={confirm} style={s.primaryBtn}>
-            <Icon name="check" size={18} color="#fff" />
+            <Icon name="check" size={18} color="var(--text-on-fill)" />
             {asOwner ? "Confirm new owner" : "Confirm add"}
           </button>
           <button
@@ -260,7 +260,7 @@ export function AddPersonForm({
       <div style={{ marginTop: 22 }}>
         <button type="submit" style={s.primaryBtn}>
           {asOwner ? "Review new owner" : "Review add"}
-          <Icon name="arrow_forward" size={18} color="#fff" />
+          <Icon name="arrow_forward" size={18} color="var(--text-on-fill)" />
         </button>
       </div>
     </form>

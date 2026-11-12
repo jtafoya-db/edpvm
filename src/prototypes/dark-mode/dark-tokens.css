@@ -1,0 +1,159 @@
+/*
+ * THROWAWAY PROTOTYPE for the dark-mode spike (#347). Not imported by the app:
+ * only the spike's browser test and screenshot harness load it. Values are
+ * provisional, picked from the USWDS palette; choosing the real dark palette is
+ * follow-up ticket DM-1 in docs/research/dark-mode-spike.md.
+ *
+ * Why `:root.dark` and not `.dark`: BrokerApp imports the USWDS token sheet
+ * after styles.css, and its `:root` (specificity 0,1,0) would beat an earlier
+ * `.dark` (also 0,1,0) on source order. `:root.dark` (0,2,0) wins wherever the
+ * sheets load.
+ *
+ * Why `@media screen`: printing (and Save as PDF) drops background colours by
+ * default, so dark-mode text would print light-on-white. Scoping the overrides
+ * to screens makes print use the light tokens with no extra print sheet.
+ *
+ * Semantic values that need a grey this sheet also remaps below use the hex
+ * literal, so they don't pick up the remapped value.
+ */
+
+@media screen {
+  :root.dark {
+    color-scheme: dark;
+
+    /* ---- USWDS semantic roles: the layer ~1,200 component references use ---- */
+    --theme-base-lightest: var(--color-gray-cool-90);
+    --theme-base-lighter: #3d4551;
+    --theme-base-light: #71767a;
+    --theme-base: var(--color-gray-cool-40);
+    --theme-base-dark: var(--color-gray-cool-30);
+    --theme-base-darker: var(--color-gray-cool-20);
+    --theme-base-darkest: #edeff0;
+    --theme-ink: #edeff0;
+
+    /* Primary is a text colour 28 times and a fill 14 times (behind literal
+     #fff). No single blue passes AA for both on a dark surface, so this picks
+     the text role; white-on-primary fills fail until DM-2 splits the token. */
+    --theme-primary-lighter: var(--color-blue-warm-80v);
+    --theme-primary-light: var(--color-blue-warm-60v);
+    --theme-primary: var(--color-blue-30v);
+    --theme-primary-fill: var(--color-blue-60v);
+    --theme-primary-vivid: var(--color-blue-30v);
+    --theme-primary-dark: var(--color-blue-20v);
+    --theme-primary-darker: var(--color-blue-10v);
+
+    --theme-secondary-lighter: var(--color-red-cool-80v);
+    --theme-secondary-light: var(--color-red-cool-60v);
+    --theme-secondary: var(--color-red-cool-30v);
+    --theme-secondary-dark: var(--color-red-cool-20v);
+    --theme-secondary-darker: var(--color-red-cool-10v);
+
+    /* State ladders invert: "-lighter" stays the tint fill, "-dark(er)" stays
+     the text on that tint, so components keep their pairings. */
+    --theme-error-lighter: var(--color-red-warm-80v);
+    --theme-error-light: var(--color-red-warm-60v);
+    --theme-error: var(--color-red-warm-40v);
+    --theme-error-dark: var(--color-red-cool-30v);
+    --theme-error-darker: var(--color-red-cool-20v);
+
+    --theme-warning-lighter: var(--color-gold-80v);
+    --theme-warning-light: var(--color-gold-60v);
+    --theme-warning: var(--color-gold-30v);
+    --theme-warning-dark: var(--color-gold-20v);
+    --theme-warning-darker: var(--color-gold-10v);
+
+    --theme-success-lighter: var(--color-green-cool-80v);
+    --theme-success-light: var(--color-green-cool-60v);
+    --theme-success: var(--color-green-cool-40v);
+    --theme-success-dark: var(--color-green-cool-30v);
+    --theme-success-darker: var(--color-green-cool-20v);
+
+    --theme-info-lighter: var(--color-cyan-80v);
+    --theme-info-light: var(--color-cyan-60v);
+    --theme-info: var(--color-cyan-30v);
+    --theme-info-dark: var(--color-cyan-20v);
+    --theme-info-darker: var(--color-cyan-10v);
+
+    --theme-accent-warm-lighter: var(--color-orange-80v);
+    --theme-accent-warm-light: var(--color-orange-60v);
+    --theme-accent-warm: var(--color-orange-40v);
+    --theme-accent-warm-dark: var(--color-orange-20v);
+    --theme-accent-warm-darker: var(--color-orange-10v);
+
+    --theme-accent-cool-lighter: var(--color-blue-cool-80v);
+    --theme-accent-cool-light: var(--color-blue-cool-60v);
+    --theme-accent-cool: var(--color-cyan-30v);
+    --theme-accent-cool-dark: var(--color-blue-cool-20v);
+    --theme-accent-cool-darker: var(--color-blue-cool-10v);
+
+    --theme-disabled-lighter: #3d4551;
+    --theme-disabled-light: #565c65;
+    --theme-disabled: var(--color-gray-cool-40);
+    --theme-disabled-dark: var(--color-gray-cool-30);
+    --theme-disabled-darker: var(--color-gray-cool-10);
+
+    --surface-default: var(--color-gray-cool-80);
+    --surface-subtle: #26282b;
+    --surface-muted: var(--color-gray-cool-90);
+    --surface-dark: var(--color-blue-warm-80v);
+    --text-default: #edeff0;
+    --text-muted: var(--color-gray-cool-30);
+    --text-reverse: var(--color-gray-cool-90);
+    --text-on-fill: #fff;
+    --border-default: #3d4551;
+    --border-strong: var(--color-gray-cool-40);
+
+    --link-default: var(--color-blue-30v);
+    --link-hover: var(--color-blue-20v);
+    --link-active: var(--color-blue-10v);
+    --link-visited: var(--color-violet-30v);
+
+    --shadow-1: 0 1px 4px 0 rgba(0, 0, 0, 0.5);
+
+    /* ---- Stopgap: palette tokens components reference directly ------------
+     Each one is used in a single role today (text OR fill), so it can be
+     remapped in place. DM-3 moves these call sites to semantic roles and
+     deletes this block. */
+    --color-white: var(--surface-default);
+    --color-gray-cool-1: #26282b;
+    --color-gray-cool-2: #26282b;
+    --color-gray-cool-3: #26282b;
+    --color-gray-5: var(--color-gray-cool-90);
+    --color-gray-cool-5: #34373b;
+    --color-gray-cool-50: var(--color-gray-cool-40);
+    --color-gray-cool-60: var(--color-gray-cool-30);
+    --color-gray-cool-70: var(--color-gray-cool-20);
+    --color-blue-5v: var(--color-blue-warm-80v);
+    --color-blue-warm-70v: var(--color-blue-20v);
+    --color-orange-5v: var(--color-orange-80v);
+    --color-gold-5v: var(--color-gold-80v);
+    --color-gold-70v: var(--color-gold-10v);
+    --color-violet-10v: var(--color-violet-80v);
+    --color-violet-60v: var(--color-violet-30v);
+    --color-red-cool-10v: var(--color-red-cool-80v);
+    --color-cyan-5: var(--color-cyan-80v);
+
+    /* ---- shadcn / Tailwind tokens, aligned to the USWDS dark surfaces ------ */
+    --background: var(--color-gray-cool-90);
+    --foreground: #edeff0;
+    --card: var(--color-gray-cool-80);
+    --card-foreground: #edeff0;
+    --popover: var(--color-gray-cool-80);
+    --popover-foreground: #edeff0;
+    --muted: #26282b;
+    --muted-foreground: var(--color-gray-cool-30);
+    --border: #3d4551;
+    --input: #71767a;
+    --ring: var(--color-blue-30v);
+  }
+}
+
+/* styles.css's own `.dark` block (shadcn's defaults) isn't screen-scoped, and
+   it sets the body colours. Put them back for print until DM-1 moves that
+   block under `@media screen` too. */
+@media print {
+  :root.dark {
+    --background: oklch(1 0 0);
+    --foreground: oklch(0.129 0.042 264.695);
+  }
+}

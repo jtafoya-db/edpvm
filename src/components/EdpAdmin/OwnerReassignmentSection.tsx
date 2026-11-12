@@ -123,7 +123,7 @@ function SelectedOwners({
       <div style={{ ...s.titleRow, alignItems: "center", flexWrap: "wrap" }}>
         <h2 style={{ ...s.h1, fontSize: "var(--font-size-lg)" }}>{dataset.name}</h2>
         <button type="button" onClick={() => setAdding(true)} style={s.primaryBtn}>
-          <chrome.Icon name="add" size={18} color="#fff" />
+          <chrome.Icon name="add" size={18} color="var(--text-on-fill)" />
           Add team member
         </button>
       </div>

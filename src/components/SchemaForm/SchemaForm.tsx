@@ -169,8 +169,8 @@ const primaryBtn: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   gap: 8,
-  background: "var(--theme-primary)",
-  color: "#fff",
+  background: "var(--theme-primary-fill)",
+  color: "var(--text-on-fill)",
   border: "none",
   borderRadius: "var(--radius-md)",
   padding: "11px 20px",
@@ -852,7 +852,7 @@ export function SchemaForm({
               onClick={continueToNextStep}
               style={{ ...primaryBtn, ...navTarget }}
             >
-              Continue <Icon name="arrow_forward" size={16} color="#fff" />
+              Continue <Icon name="arrow_forward" size={16} color="var(--text-on-fill)" />
             </button>
           ) : (
             <button
@@ -874,7 +874,7 @@ export function SchemaForm({
                 ...(submitting ? { opacity: 0.6, cursor: "progress" } : {}),
               }}
             >
-              <Icon name="check" size={17} color="#fff" />{" "}
+              <Icon name="check" size={17} color="var(--text-on-fill)" />{" "}
               {submitting ? submittingLabel : submitLabel}
             </button>
           )}

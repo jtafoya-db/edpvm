@@ -122,7 +122,8 @@ function SendBackAnswer({
         {editing ? null : (
           <div>
             <button type="button" style={primaryBtn} onClick={onEdit}>
-              <Icon name="edit" size={17} color="#fff" /> Review the intake and resubmit
+              <Icon name="edit" size={17} color="var(--text-on-fill)" /> Review the intake and
+              resubmit
             </button>
           </div>
         )}

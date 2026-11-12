@@ -234,7 +234,7 @@ function RequestForm({
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 18 }}>
             <button type="button" onClick={confirm} style={s.primaryBtn}>
-              <Icon name="check" size={18} color="#fff" />
+              <Icon name="check" size={18} color="var(--text-on-fill)" />
               Send request
             </button>
             <button type="button" onClick={() => setReviewing(false)} style={s.outlineBtn}>
@@ -312,7 +312,7 @@ function RequestForm({
           <div style={{ marginTop: 22 }}>
             <button type="submit" style={s.primaryBtn}>
               Review request
-              <Icon name="arrow_forward" size={18} color="#fff" />
+              <Icon name="arrow_forward" size={18} color="var(--text-on-fill)" />
             </button>
           </div>
         </form>

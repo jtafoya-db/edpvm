@@ -162,7 +162,14 @@ export const FEATURES = {
     label: "EIR form fields",
     status: "live",
     notes:
-      "EDP's EIR form, rendered from the validated built-in EIR definition bootstrap-2 (version 0, src/data/eir/definition/bootstrap-2.eir.yaml) while no published version is active; if it can't be loaded the EIR is shown as unavailable. The person types their manager; there's no HR-system lookup. Every rule blocks the PDF and says what to go do (#217); drafts begun on the bootstrap definition (or form 1.3) keep its rules. The rule set and its placeholder wording are a non-production MVP default pending Safeguards (#148); nothing is validated automatically.",
+      "EDP's EIR form, rendered from the validated built-in EIR definition bootstrap-2 (version 0, src/data/eir/definition/bootstrap-2.eir.yaml) while no published version is active; if it can't be loaded the EIR is shown as unavailable. The person still types the manager fields that are submitted; the separate simulated directory panel does not replace them. Every rule blocks the PDF and says what to go do (#217); drafts begun on the bootstrap definition (or form 1.3) keep its rules. The rule set and its placeholder wording are a non-production MVP default pending Safeguards (#148); nothing is validated automatically.",
+  },
+  "eir-manager-directory": {
+    id: "eir-manager-directory",
+    label: "EIR manager directory",
+    status: "stub",
+    notes:
+      "Hidden outside guarded PR previews. When the simulated directory is enabled, this notice shows simulated VLDAP results only; its owning organization, service identity, attributes, and real integration remain unresolved in #341. No real directory, routing, or authoritative manager data is connected.",
   },
 
   // ---- A genuinely future (not-yet-built) capability ----------------------

@@ -179,6 +179,7 @@ function InboxItem({
           <ResubmissionResponse request={request} stage={STAGE_FOR_REVIEWER[role]} />
           <IntakePackage
             request={request}
+            reviewerExport
             changes={pendingResubmission(request, STAGE_FOR_REVIEWER[role])?.record.changes}
           />
           {/* Matching is EDP staff's (#103, 103-B); the store refuses anyone else. */}
@@ -206,7 +207,7 @@ function InboxItem({
                 {...busy}
                 onClick={() => open("approve")}
               >
-                <Icon name="check" size={17} color="#fff" /> Approve
+                <Icon name="check" size={17} color="var(--text-on-fill)" /> Approve
               </button>
               <button
                 type="button"
@@ -254,7 +255,7 @@ function InboxItem({
                   {...busy}
                   onClick={() => submit({ type: "approve" })}
                 >
-                  <Icon name="check" size={17} color="#fff" />{" "}
+                  <Icon name="check" size={17} color="var(--text-on-fill)" />{" "}
                   {saving ? "Saving…" : "Confirm approval"}
                 </button>
                 <button type="button" style={outlineBtn} {...busy} onClick={cancel}>

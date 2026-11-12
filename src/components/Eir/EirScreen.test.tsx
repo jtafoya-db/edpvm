@@ -18,6 +18,7 @@ import { readBootstrapEirSource } from "@/data/eir/definition/bootstrap-source";
 import { createMemoryPrivacyAcknowledgmentRepository } from "@/data/privacy/repository";
 import { EIR_VALUES } from "@/data/__tests__/eir-fixtures";
 import { EirScreen, type EirScreenProps } from "./EirScreen";
+import { EirEmployeeWorkflow } from "./EirEmployeeWorkflow";
 import { EirValidatorSection } from "./EirValidatorSection";
 
 const values = EIR_VALUES;
@@ -130,6 +131,212 @@ describe("My EIR for a safeguards validator (#159)", () => {
     for (const name of ["Mark valid", /Send back/, "Reject", "Revoke", /Approve/]) {
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     }
+  });
+});
+
+describe("simulated EIR manager directory disclosure (#342)", () => {
+  const states = ["missing", "stale", "ambiguous", "sync-failed"] as const;
+
+  function renderDirectoryState(
+    state: (typeof states)[number] | "ok" | "unexpected",
+    active: boolean | null = true,
+  ) {
+    const result =
+      state === "ok"
+        ? {
+            active: true,
+            state,
+            manager: {
+              principalId: "simulated-manager-for-acknowledged-test-person",
+              displayName: "Simulated Manager",
+              email: "simulated.manager@example.gov",
+            },
+            syncedAt: "2026-10-30T12:00:00.000Z",
+          }
+        : { active: true, state };
+    const fetchDirectory = vi.fn(async () =>
+      Response.json(result, { headers: { "content-type": "application/json" } }),
+    );
+    const directoryTransport = httpTransport(fetchDirectory as unknown as typeof fetch);
+    const store = createAcknowledgedMemoryStore(makeSnapshot(), {
+      managerDirectory: {
+        ...(active === null ? {} : { active }),
+        managerOf: () => directoryTransport.read("eir", "manager-directory"),
+      },
+    });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <StoreProvider store={store}>
+          <EirScreen />
+        </StoreProvider>
+      </QueryClientProvider>,
+    );
+    return fetchDirectory;
+  }
+
+  it("renders nothing and makes no directory request outside a guarded preview", async () => {
+    const fetchDirectory = renderDirectoryState("ok", false);
+
+    expect(await screen.findByText("Current stage")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("complementary", {
+        name: "EIR manager directory configuration notice",
+      }),
+    ).toBeNull();
+    expect(screen.queryByText("Loading the simulated manager result…")).toBeNull();
+    expect(fetchDirectory).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the client activation signal is absent", async () => {
+    const fetchDirectory = renderDirectoryState("ok", null);
+
+    expect(await screen.findByText("Current stage")).toBeInTheDocument();
+    expect(screen.queryByText("Simulated directory manager")).toBeNull();
+    expect(fetchDirectory).not.toHaveBeenCalled();
+  });
+
+  it("shows the simulated manager and freshness without replacing submitted manager fields", async () => {
+    const fetchDirectory = renderDirectoryState("ok");
+
+    const panel = await screen.findByRole("complementary", {
+      name: "EIR manager directory configuration notice",
+    });
+    await waitFor(() => expect(panel).toHaveTextContent("Simulated Manager"));
+    expect(within(panel).getByRole("heading", { level: 2 })).toHaveTextContent(
+      "Simulated directory manager",
+    );
+    expect(panel).toHaveTextContent("simulated.manager@example.gov");
+    expect(panel).toHaveTextContent("Last simulated sync: Oct 30, 2026");
+    expect(panel).toHaveTextContent("does not fill or replace the manager fields you submit");
+    expect(screen.getByLabelText(/^Manager's work email/)).toHaveValue("");
+    expect(fetchDirectory).toHaveBeenCalledWith("/api/reads/eir/manager-directory", {
+      method: "GET",
+      headers: { accept: "application/json" },
+    });
+  });
+
+  it.each([
+    ["missing", "No simulated manager result is available"],
+    ["stale", "The simulated manager result is stale"],
+    ["ambiguous", "The simulation found more than one possible manager"],
+    ["sync-failed", "The simulated manager lookup failed"],
+  ] as const)("fails closed for %s directory state", async (state, disclosure) => {
+    const fetchDirectory = renderDirectoryState(state);
+
+    const panel = await screen.findByRole("complementary", {
+      name: "EIR manager directory configuration notice",
+    });
+    await waitFor(() => expect(panel).toHaveTextContent(disclosure));
+    expect(panel).toHaveTextContent("Do not treat this as authoritative or use it for routing");
+    expect(panel).toHaveTextContent("Type your manager's details in the form below");
+    expect(panel).not.toHaveTextContent("Enter the approved EIR manager fields yourself");
+    expect(panel).not.toHaveTextContent("simulated.manager@example.gov");
+    expect(fetchDirectory).toHaveBeenCalledWith("/api/reads/eir/manager-directory", {
+      method: "GET",
+      headers: { accept: "application/json" },
+    });
+  });
+
+  it("maps an unrecognised server state to the sync-failed disclosure", async () => {
+    renderDirectoryState("unexpected");
+
+    const notice = await screen.findByRole("complementary", {
+      name: "EIR manager directory configuration notice",
+    });
+    await waitFor(() => expect(notice).toHaveTextContent("The simulated manager lookup failed"));
+    expect(notice).not.toHaveTextContent("simulated.manager@example.gov");
+  });
+
+  it("announces loading politely without adding a nested landmark", async () => {
+    const lookup = deferred<{ active: true; state: "missing" }>();
+    const store = createAcknowledgedMemoryStore(makeSnapshot(), {
+      managerDirectory: { active: true, managerOf: () => lookup.promise },
+    });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <StoreProvider store={store}>
+          <EirScreen />
+        </StoreProvider>
+      </QueryClientProvider>,
+    );
+
+    const loading = await screen.findByText("Loading the simulated manager result…");
+    expect(loading).toHaveAttribute("aria-live", "polite");
+    expect(loading).toHaveAttribute("aria-atomic", "true");
+    const notice = screen.getByRole("complementary", {
+      name: "EIR manager directory configuration notice",
+    });
+    expect(within(notice).queryByRole("region")).toBeNull();
+    expect(notice).not.toHaveTextContent("The simulated manager lookup failed");
+
+    lookup.resolve({ active: true, state: "missing" });
+    await waitFor(() => expect(loading).toBeEmptyDOMElement());
+    expect(loading).toBeInTheDocument();
+    expect(notice).toHaveTextContent("No simulated manager result is available");
+  });
+
+  it("does not show a directory failure while the current user is still loading", async () => {
+    const user =
+      deferred<
+        Awaited<ReturnType<ReturnType<typeof createAcknowledgedMemoryStore>["catalog"]["getUser"]>>
+      >();
+    const store = createAcknowledgedMemoryStore(makeSnapshot(), {
+      managerDirectory: {
+        active: true,
+        managerOf: async () => ({ active: true, state: "missing" }),
+      },
+    });
+    store.catalog.getUser = () => user.promise;
+    const managerOf = vi.spyOn(store.managerDirectory, "managerOf");
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <StoreProvider store={store}>
+          <EirEmployeeWorkflow />
+        </StoreProvider>
+      </QueryClientProvider>,
+    );
+
+    const panel = await screen.findByRole("complementary", {
+      name: "EIR manager directory configuration notice",
+    });
+    expect(panel).toHaveTextContent("Loading the simulated manager result");
+    expect(screen.queryByText("The simulated manager lookup failed.")).toBeNull();
+    expect(managerOf).not.toHaveBeenCalled();
+  });
+
+  it("does not show or request a directory result when the current-user read fails", async () => {
+    const store = createAcknowledgedMemoryStore(makeSnapshot(), {
+      managerDirectory: {
+        active: true,
+        managerOf: async () => ({ active: true, state: "missing" }),
+      },
+    });
+    const attempted = deferred<void>();
+    store.catalog.getUser = async () => {
+      attempted.resolve();
+      throw Object.assign(new Error("HTTP 500 user read"), { status: 500 });
+    };
+    const managerOf = vi.spyOn(store.managerDirectory, "managerOf");
+
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <StoreProvider store={store}>
+          <EirEmployeeWorkflow />
+        </StoreProvider>
+      </QueryClientProvider>,
+    );
+
+    await act(async () => {
+      await attempted.promise;
+      await flushPromises();
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't load your EIR");
+    expect(screen.queryByText("Loading the simulated manager result…")).toBeNull();
+    expect(screen.queryByText("The simulated manager lookup failed.")).toBeNull();
+    expect(managerOf).not.toHaveBeenCalled();
   });
 });
 
@@ -567,7 +774,11 @@ describe("EirScreen query-hook wiring", () => {
         name: "Enterprise Data Platform - Employee Identity Record (EIR)",
       }),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/STUB:/)).toBeNull();
+    expect(
+      screen.queryByRole("complementary", {
+        name: "EIR manager directory configuration notice",
+      }),
+    ).toBeNull();
     // The validator sees the renewal's answers, by section, with nothing to flag.
     const answers = await screen.findByText(
       /^Renewal answers · EIR-[0-9A-HJKMNP-TV-Z]{6} · bootstrap-2 \(version 0\)$/,

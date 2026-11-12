@@ -7,6 +7,7 @@ import React from "react";
 
 import {
   datasetChangeField,
+  exportOnboardingPackageMarkdown,
   intakeAnswers,
   initiativeOwnerText,
   intakeChangeField,
@@ -637,16 +638,19 @@ function StepAnswers({
  * are the fields the provider's resubmission changed (#227): each is marked
  * where it shows, and its step opens on its own.
  */
-export function IntakePackage({
-  request,
-  changes = [],
-  schema = SCHEMA,
-}: {
-  request: Pick<OnboardingRequest, "id" | "intake"> &
-    Partial<Pick<OnboardingRequest, "initiativeOwner" | "ownerVerification" | "ownerMatches">>;
+type IntakePackageRequest = Pick<OnboardingRequest, "id" | "intake"> &
+  Partial<Pick<OnboardingRequest, "initiativeOwner" | "ownerVerification" | "ownerMatches">>;
+
+type IntakePackageProps = {
   changes?: readonly OnboardingIntakeChange[] | undefined;
   schema?: IntakeSchema;
-}) {
+} & (
+  | { request: OnboardingRequest; reviewerExport: true }
+  | { request: IntakePackageRequest; reviewerExport?: false | undefined }
+);
+
+export function IntakePackage(props: IntakePackageProps) {
+  const { request, changes = [], schema = SCHEMA } = props;
   const { Accordion } = useChrome();
   const domainName = useDomainName();
   const answers = intakeAnswers(request.intake);
@@ -660,6 +664,9 @@ export function IntakePackage({
   const headingId = `${request.id}-package`;
   const matchOf: MatchOf = (ownerId) =>
     ownerId ? request.ownerMatches?.find((owner) => owner.ownerId === ownerId) : undefined;
+  const exportMarkdown = props.reviewerExport
+    ? exportOnboardingPackageMarkdown(props.request, { schema, domainName })
+    : null;
 
   return (
     <section aria-labelledby={headingId} style={{ display: "grid", gap: 10 }}>
@@ -683,9 +690,20 @@ export function IntakePackage({
         >
           Intake package
         </h3>
-        <button type="button" style={linkBtn} onClick={() => setAllOpen(!allOpen)}>
-          {allOpen ? "Close all steps" : "Open all steps"}
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          {exportMarkdown ? (
+            <a
+              href={`data:text/markdown;charset=utf-8,${encodeURIComponent(exportMarkdown)}`}
+              download={`${request.id}-intake-package.md`}
+              style={linkBtn}
+            >
+              Download intake package as Markdown
+            </a>
+          ) : null}
+          <button type="button" style={linkBtn} onClick={() => setAllOpen(!allOpen)}>
+            {allOpen ? "Close all steps" : "Open all steps"}
+          </button>
+        </div>
       </div>
       <p style={body}>
         Every answer the data provider gave in the onboarding wizard, by wizard step.

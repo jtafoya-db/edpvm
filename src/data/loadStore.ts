@@ -34,6 +34,7 @@ let singleton: Promise<DataStore> | null = null;
  */
 function readDeltaConfig(profile: UserProfile | null): DeltaStoreConfig {
   return {
+    managerDirectoryActive: profile?.managerDirectoryPreview === true,
     stages: () => readAppDataSeed().STAGES,
     domains: () => readAppDataSeed().domains,
     accessStores: {
@@ -69,11 +70,25 @@ async function buildStore(): Promise<DataStore> {
   }
   const currentUser = profile ? { currentUser: async () => profile } : {};
   const slaConfig = profile?.slaConfig ? { slaConfig: profile.slaConfig } : {};
+  const managerDirectory =
+    profile?.managerDirectoryPreview === true
+      ? {
+          managerDirectory: {
+            active: true,
+            managerOf: () =>
+              httpTransport().read<import("./manager-directory").ManagerDirectoryResult>(
+                "eir",
+                "manager-directory",
+              ),
+          },
+        }
+      : {};
   return activeBackend() === "delta"
     ? createDeltaStore(readDeltaConfig(profile))
     : createMemoryStore(readAppDataSeed(), {
         ...currentUser,
         ...slaConfig,
+        ...managerDirectory,
         // EIRs persist on the server in every mode, as since #98: on Delta now (#126).
         eirRepository: createDeltaEirRepository({ transport: httpTransport() }),
         // So are their definitions (#201).

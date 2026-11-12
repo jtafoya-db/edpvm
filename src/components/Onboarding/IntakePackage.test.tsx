@@ -477,6 +477,24 @@ describe.each(BACKENDS)("who sees the full package ($label backend)", ({ make })
     await expectFullPackage(await screen.findByRole("article", { name: new RegExp(created.id) }));
   });
 
+  it("the reviewer can download the current package as Confluence-compatible Markdown", async () => {
+    const { store, created } = await submitted();
+    renderAs(store, BUSINESS_OFFICE, <OnboardingInbox role="business-office" />);
+    const item = await screen.findByRole("article", { name: new RegExp(created.id) });
+    await domainsNamed(item);
+    const download = within(item).getByRole("link", {
+      name: "Download intake package as Markdown",
+    });
+    expect(download).toHaveAttribute("download", `${created.id}-intake-package.md`);
+    const href = download.getAttribute("href")!;
+    expect(href).toMatch(/^data:text\/markdown;charset=utf-8,/);
+    const markdown = decodeURIComponent(href.split(",", 2)[1]!);
+    expect(markdown).toContain(`# ${created.title}`);
+    expect(markdown).toContain("## Decision record");
+    expect(markdown).toContain("| Domain | Individual Filing |");
+    expect(markdown).not.toMatch(/<[^>]+>/);
+  });
+
   it("the CCB sees every answer", async () => {
     const { store, created } = await submitted();
     await as(store, BUSINESS_OFFICE).decide(created.id, { type: "approve" });
@@ -490,6 +508,9 @@ describe.each(BACKENDS)("who sees the full package ($label backend)", ({ make })
     await expectFullPackage(
       await screen.findByRole("article", { name: new RegExp(created.title) }),
     );
+    expect(
+      screen.queryByRole("link", { name: "Download intake package as Markdown" }),
+    ).not.toBeInTheDocument();
   });
 
   it("someone unrelated sees nothing of it", async () => {

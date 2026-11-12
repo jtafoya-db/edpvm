@@ -364,6 +364,10 @@ function prose(path: string, source: string): Prose[] {
  * that says it's stored.
  */
 const STORED: { pattern: RegExp; why: string }[] = [
+  {
+    pattern: /\b(?:eir-)?manager-directory\b|\bsimulated-manager-for-[\w-]+\b/g,
+    why: "the #342 EIR line-manager capability and synthetic principal ids",
+  },
   { pattern: /\bowner-holds-manager\b/g, why: "the refusal's error code" },
   {
     pattern: /\bedp-[\w{}]+-manager(?:-[\w{}]+)?(?![\w-])/g,
@@ -378,10 +382,25 @@ const STORED: { pattern: RegExp; why: string }[] = [
 /** Occurrences that may still say manager, each tied to the files it's in. */
 const ALLOWED: { path: RegExp; field?: string; pattern: RegExp; why: string }[] = [
   {
+    path: /^src\/(?:data|server)\/.*manager-directory(?:\.test)?\.ts$/,
+    pattern: /\bmanagers?\b/gi,
+    why: "#342's dedicated EIR line-manager port and contract tests",
+  },
+  {
     path: EIR_PATHS,
     pattern:
-      /\b(?:your|their|listed|current|alternative) manager\b|\bmanager's\b|\bmanager ID\b|\bmanager(?:-[\w]+)+|\btest\.manager[\w.@]*|\bsample\.manager@example\.gov\b|\blast name Manager\b/gi,
+      /\b(?:your|their|listed|current|alternative|simulated|directory|possible) manager\b|\bmanager's\b|\bmanager (?:result|lookup|fields)\b|\bEIR manager directory configuration notice\b|\bmanager ID\b|\bmanager(?:-[\w]+)+|\b(?:test|simulated)\.manager[\w.@]*|\bsample\.manager@example\.gov\b|\blast name Manager\b/gi,
     why: "EIR: the person's line manager",
+  },
+  {
+    path: /^src\/data\/__tests__\/delta-store\.test\.ts$/,
+    pattern: /\bmanager-1\b|\bSimulated Manager\b|\bsimulated\.manager@example\.gov\b/g,
+    why: "#342's synthetic EIR line-manager response fixture",
+  },
+  {
+    path: /^src\/server\/delta\/config\.ts$/,
+    pattern: /\bsimulated manager panel\b/g,
+    why: "#342's server-only EIR line-manager port",
   },
   {
     path: EIR_PATHS,
@@ -396,8 +415,20 @@ const ALLOWED: { path: RegExp; field?: string; pattern: RegExp; why: string }[] 
   },
   {
     path: /^src\/features\/registry\.ts$/,
-    pattern: /\bThe person types their manager\b/g,
+    pattern:
+      /\bThe person still types the manager fields\b|\bEIR manager directory\b|\bauthoritative manager data\b/g,
     why: "the EIR form's note: the person's line manager",
+  },
+  {
+    path: /^docs\/data-model\.md$/,
+    pattern: /\bSimulated manager-directory read\b|\bsimulated manager details\b/g,
+    why: "#342's documented simulated EIR line-manager boundary",
+  },
+  {
+    path: /^docs\/databricks-app\.md$/,
+    pattern:
+      /\bSimulated EIR manager directory\b|\bsynthetic manager\b|\bsimulated_manager_directory_(?:enabled|state)\b/g,
+    why: "#342's documented preview-only EIR line-manager controls",
   },
   {
     path: /^(src\/server\/delta\/__tests__\/teams-area\.test|scripts\/delta-teams-live-check)\.ts$/,

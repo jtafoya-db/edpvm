@@ -12,6 +12,7 @@ import {
   LEGACY_EIR_FORMS,
   isStructuredEirVersion,
   useEir,
+  useEirManagerDirectory,
   describeEirErrors,
   emptyAnswersOn,
   prefilledAnswersOn,
@@ -33,7 +34,10 @@ import {
   eirFormName,
   preflightDefinitionFor,
   preflightEir,
+  isManagerDirectoryState,
+  useStore,
 } from "@/data";
+import { FeatureGate } from "@/features/FeatureGate";
 import { SaveNotices } from "@/components/SaveStatus";
 import { useSave, useSaves } from "@/data/optimistic-save";
 import { EIR_CHANGED_RELOAD, isEirChangedRefusal } from "@/data/eir/errors";
@@ -191,6 +195,81 @@ function EirUnavailable({ ctx, chrome }: EirScreenProps) {
       </div>
     </Page>
   );
+}
+
+const directoryDisclosure = {
+  missing: "No simulated manager result is available.",
+  stale: "The simulated manager result is stale.",
+  ambiguous: "The simulation found more than one possible manager.",
+  "sync-failed": "The simulated manager lookup failed.",
+} as const;
+
+function ManagerDirectoryPanel({ principalId }: { principalId: string }) {
+  const result = useEirManagerDirectory(principalId);
+  const value = result.data;
+  const loading = !principalId || result.isPending;
+  const state = loading
+    ? undefined
+    : result.isError ||
+        !isManagerDirectoryState(value?.state) ||
+        (value.state === "ok" && !value.manager)
+      ? "sync-failed"
+      : value.state;
+  const manager = state === "ok" ? value?.manager : undefined;
+  if (!loading && value?.active !== true) return null;
+  return (
+    <FeatureGate id="eir-manager-directory" presentation="notice">
+      <div style={{ marginTop: 12 }}>
+        <h2 style={{ margin: "0 0 6px", fontSize: "var(--font-size-sm)" }}>
+          Simulated directory manager
+        </h2>
+        <span
+          aria-label="Simulated manager lookup status"
+          aria-live="polite"
+          aria-atomic="true"
+          style={{ display: "block" }}
+        >
+          {loading ? "Loading the simulated manager result…" : ""}
+        </span>
+        {manager ? (
+          <>
+            <p style={{ margin: "6px 0" }}>
+              <strong>{manager.displayName}</strong> — {manager.email}
+            </p>
+            <p style={{ margin: "6px 0" }}>
+              Last simulated sync:{" "}
+              {value?.syncedAt
+                ? new Date(value.syncedAt).toLocaleDateString("en-US", {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                  })
+                : "not provided by the simulation"}
+            </p>
+            <p style={{ margin: "6px 0 0" }}>
+              This simulated result does not fill or replace the manager fields you submit and is
+              not used for approval routing.
+            </p>
+          </>
+        ) : state && state !== "ok" ? (
+          <>
+            <p style={{ margin: "6px 0" }}>{directoryDisclosure[state]}</p>
+            <p style={{ margin: "6px 0 0" }}>
+              Do not treat this as authoritative or use it for routing. Type your manager's details
+              in the form below.
+            </p>
+          </>
+        ) : null}
+      </div>
+    </FeatureGate>
+  );
+}
+
+function ManagerDirectoryPreview({ principalId }: { principalId: string }) {
+  const store = useStore();
+  return store.managerDirectory.active === true ? (
+    <ManagerDirectoryPanel principalId={principalId} />
+  ) : null;
 }
 
 /** The answer IDs a form stores: its fields and the attestation. */
@@ -424,9 +503,12 @@ function EirEmployeeJourney({ ctx, chrome }: EirScreenProps) {
   }
   if (!loadRetrying && (user.isLoading || formsLoading)) {
     return (
-      <div role="status" style={{ padding: 32, fontFamily: "var(--font-sans)" }}>
-        {showSlowLoad ? "Still loading your EIR…" : "Loading EIR…"}
-      </div>
+      <>
+        <div role="status" style={{ padding: 32, fontFamily: "var(--font-sans)" }}>
+          {showSlowLoad ? "Still loading your EIR…" : "Loading EIR…"}
+        </div>
+        {user.isLoading ? <ManagerDirectoryPreview principalId={principalId} /> : null}
+      </>
     );
   }
   if (!user.data || record.isError || user.isError || formsRead.isError || loadRetrying) {
@@ -1081,6 +1163,7 @@ function EirEmployeeJourney({ ctx, chrome }: EirScreenProps) {
             </p>
           ) : null}
         </Panel>
+        <ManagerDirectoryPreview principalId={principalId} />
 
         {isSubmitted ? (
           submitted ? (
@@ -1192,7 +1275,7 @@ function EirEmployeeJourney({ ctx, chrome }: EirScreenProps) {
                     pending={pending.isActionPending(principalId, "download-pdf")}
                     locked={busy}
                   >
-                    <Icon name="description" size={16} color="#fff" />
+                    <Icon name="description" size={16} color="var(--text-on-fill)" />
                     Download PDF to sign
                   </PendingActionButton>
                   <PendingActionButton

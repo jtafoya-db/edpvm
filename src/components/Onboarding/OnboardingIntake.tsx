@@ -443,7 +443,8 @@ export function OnboardingConfirmation({
 
         <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
           <button type="button" onClick={() => go("onboarding-requests")} style={primaryBtn}>
-            <Icon name="arrow_forward" size={16} color="#fff" /> View my onboarding requests
+            <Icon name="arrow_forward" size={16} color="var(--text-on-fill)" /> View my onboarding
+            requests
           </button>
           <button type="button" onClick={onReset} style={outlineBtn}>
             <Icon name="add" size={16} color="var(--theme-primary)" /> Onboard another initiative

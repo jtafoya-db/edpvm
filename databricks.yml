@@ -93,6 +93,18 @@ variables:
       validator decide their own EIR, for testing. The server also requires a
       PR preview's store prefix (edp_vm_pr<N>_). Production must never set it.
     default: "false"
+  simulated_manager_directory_enabled:
+    description: >-
+      PR previews only (#342): "true" permits a selected simulated manager-directory
+      state. The server also requires a PR preview store prefix (edp_vm_pr<N>_);
+      production cannot enable synthetic manager data.
+    default: "false"
+  simulated_manager_directory_state:
+    description: >-
+      Simulated EIR manager-directory result for preview UAT: ok, missing, stale,
+      ambiguous, or sync-failed. Safe default: missing. Ignored unless the preview
+      guard is enabled; an unknown value displays sync-failed only in this panel.
+    default: missing
   sample_access_requests:
     description: >-
       PR previews only (#312), off unless asked for: "true" gives the first
@@ -322,6 +334,10 @@ resources:
           # "false" except on the preview target (src/server/eir-test-mode.ts).
           - name: EDP_EIR_ALLOW_SELF_VALIDATION
             value: ${var.eir_allow_self_validation}
+          - name: EDP_SIMULATED_DIRECTORY_ENABLED
+            value: ${var.simulated_manager_directory_enabled}
+          - name: EDP_SIMULATED_DIRECTORY_STATE
+            value: ${var.simulated_manager_directory_state}
           # "false" unless a preview deploy asks (src/server/sample-access-requests.ts).
           - name: EDP_SAMPLE_ACCESS_REQUESTS
             value: ${var.sample_access_requests}

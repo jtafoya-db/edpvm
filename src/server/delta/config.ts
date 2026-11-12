@@ -15,6 +15,9 @@
  *   (src/server/pilot-config.ts). Invalid, and the API refuses every request.
  * - `EDP_ACCESS_MATRIX_JSON`: a complete dataset-access policy replacement;
  *   `none` loads the approved repo default. It is parsed only by matrix reads.
+ * - `EDP_SIMULATED_DIRECTORY_ENABLED`, `EDP_SIMULATED_DIRECTORY_STATE`:
+ *   #342's simulated manager panel; non-missing states require the exact
+ *   preview flag and a PR-preview store prefix.
  * - `DATABRICKS_TOKEN`: local development only, instead of the client
  *   credentials; ignored when `NODE_ENV=production`.
  */
@@ -23,6 +26,11 @@ import { configuredSeed, PilotConfigError, type ConfiguredSeed } from "../pilot-
 import { errorResponse, handleDeltaApiRequest, json, type DeltaApiDeps } from "./api.ts";
 import { configuredDatasetsLoader, needsConfiguredDatasets } from "./areas/teams-seed.ts";
 import { createAppRegistry } from "./areas/index.ts";
+import {
+  createSimulatedManagerDirectory,
+  simulatedManagerDirectoryActive,
+  simulatedManagerDirectoryState,
+} from "../manager-directory";
 import type { AppSurface, CommandDefinition } from "./registry.ts";
 import { createStoreNames } from "./sql-builder.ts";
 import { createServicePrincipalTokenSource, createStatementExecutionClient } from "./sql-client.ts";
@@ -121,6 +129,17 @@ export function deltaApiFromEnv(env: unknown): DeltaApiDeps {
         accessMatrixJson: envValue(env, "EDP_ACCESS_MATRIX_JSON"),
         allowDraft: envValue(env, "EDP_ACCESS_MATRIX_ALLOW_DRAFT"),
       }),
+    createSimulatedManagerDirectory({
+      active: simulatedManagerDirectoryActive(
+        envValue(env, "EDP_SIMULATED_DIRECTORY_ENABLED"),
+        envValue(env, "EDP_STORE_SCHEMA_PREFIX"),
+      ),
+      state: simulatedManagerDirectoryState(
+        envValue(env, "EDP_SIMULATED_DIRECTORY_STATE"),
+        envValue(env, "EDP_SIMULATED_DIRECTORY_ENABLED"),
+        envValue(env, "EDP_STORE_SCHEMA_PREFIX"),
+      ),
+    }),
   );
   const runner = createTransactionRunner({
     client,

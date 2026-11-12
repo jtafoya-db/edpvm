@@ -20,6 +20,7 @@ export {
   useMyAccess,
   useSubmitRequest,
   useEir,
+  useEirManagerDirectory,
   useEirInbox,
   useSaveEirDraft,
   useEvaluateEirDraft,
@@ -75,4 +76,5 @@ export * from "./lifecycle";
 export * from "./canonical-request";
 export * from "./sla";
 export * from "./group-membership";
+export * from "./manager-directory";
 export * from "./onboarding";

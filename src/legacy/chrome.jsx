@@ -73,7 +73,7 @@ function TopNav({ route, go, prefetchRoute }) {
               justifyContent: "center",
             }}
           >
-            <AppIcon name="account_balance" size={22} color="#fff" />
+            <AppIcon name="account_balance" size={22} color="var(--text-on-fill)" />
           </div>
           <span style={{ lineHeight: 1.1 }}>
             <strong
@@ -116,8 +116,8 @@ function TopNav({ route, go, prefetchRoute }) {
               width: 36,
               height: 36,
               borderRadius: "var(--radius-pill)",
-              background: "var(--theme-primary)",
-              color: "#fff",
+              background: "var(--theme-primary-fill)",
+              color: "var(--text-on-fill)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -129,7 +129,7 @@ function TopNav({ route, go, prefetchRoute }) {
               padding: 0,
             }}
           >
-            {D.user.initials || <AppIcon name="person" size={18} color="#fff" />}
+            {D.user.initials || <AppIcon name="person" size={18} color="var(--text-on-fill)" />}
           </button>
         </div>
       </div>
@@ -205,7 +205,7 @@ function TopNav({ route, go, prefetchRoute }) {
 function AppFooter({ go }) {
   return (
     <footer style={{ marginTop: 64 }}>
-      <div style={{ background: "var(--surface-dark)", color: "#fff" }}>
+      <div style={{ background: "var(--surface-dark)", color: "var(--text-on-fill)" }}>
         <div
           style={{
             maxWidth: 1240,
@@ -218,7 +218,7 @@ function AppFooter({ go }) {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <AppIcon name="account_balance" size={34} color="#fff" />
+            <AppIcon name="account_balance" size={34} color="var(--text-on-fill)" />
             <div>
               <div
                 style={{
@@ -307,7 +307,7 @@ function FooterCol({ h, items, go }) {
                 go(r);
               }}
               style={{
-                color: "#fff",
+                color: "var(--text-on-fill)",
                 fontSize: "var(--font-size-2xs)",
                 textDecoration: "none",
                 opacity: 0.9,

@@ -540,6 +540,7 @@
   --theme-primary-lighter: var(--color-blue-10);
   --theme-primary-light: var(--color-blue-30);
   --theme-primary: var(--color-blue-60v);
+  --theme-primary-fill: var(--color-blue-60v);
   --theme-primary-vivid: var(--color-blue-warm-60v);
   --theme-primary-dark: var(--color-blue-warm-70v);
   --theme-primary-darker: var(--color-blue-warm-80v);
@@ -613,6 +614,7 @@
   --text-default: var(--theme-ink);
   --text-muted: var(--color-gray-cool-60);
   --text-reverse: var(--color-white);
+  --text-on-fill: var(--color-white);
   --border-default: var(--color-gray-cool-10);
   --border-strong: var(--color-gray-cool-30);
 

@@ -312,7 +312,7 @@ function OpenRequest({
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 14 }}>
               <button type="button" onClick={onApprove} style={s.primaryBtn}>
-                <Icon name="check" size={18} color="#fff" />
+                <Icon name="check" size={18} color="var(--text-on-fill)" />
                 Confirm approval
               </button>
               <button type="button" onClick={() => setMode("idle")} style={s.outlineBtn}>
